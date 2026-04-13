@@ -84,6 +84,20 @@ The CLI only creates stubs. Read each seed document and fill in:
 that read noise follows Poisson-Gaussian mixture (Eq. 12), parameterized by gain k
 and offset sigma_read" is a document. Create documents, not summaries.
 
+### Stage 1A2: 1B ↔ 1C Orchestration Loop
+
+**Your job:** After Stage 1A completes, run the iterative Stage 1B/1C loop from a
+single orchestration prompt that creates/spawns the worker and review agents.
+
+Read `prompts/stage-1a2-orchestration.prompt.md` for detailed instructions.
+
+This phase should:
+- launch Stage 1B evaluator/debate/remediation agents
+- launch Stage 1C fresh review agents
+- run `research-depth` and `review` cycles
+- route actionable ITERATE gaps back to Stage 1B
+- stop on PROCEED or iteration cap
+
 ### Stage 1B: Depth Pass
 
 **Your job:** Evaluate Wiki v1 from three perspectives, conduct a real debate,

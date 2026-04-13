@@ -50,15 +50,10 @@ meta-compiler research-breadth
 # LLM enriches wiki pages (see prompts/stage-1a-breadth.prompt.md)
 meta-compiler validate-stage --stage 1a
 
-# Stage 1B: Depth pass
-meta-compiler research-depth
-# LLM does epistemic evaluation (see prompts/stage-1b-evaluators.prompt.md)
-meta-compiler validate-stage --stage 1b
-
-# Stage 1C: Review
-meta-compiler review
-# LLM presents verdicts, human decides PROCEED or ITERATE
-meta-compiler validate-stage --stage 1c
+# Stage 1A2: Orchestrate the 1B <-> 1C loop from one prompt
+# Use prompts/stage-1a2-orchestration.prompt.md
+# This prompt spawns/coordinates 1B and 1C worker/reviewer agents and runs
+# research-depth/review iterations until PROCEED or iteration cap
 
 # Stage 2: Vision elicitation
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
