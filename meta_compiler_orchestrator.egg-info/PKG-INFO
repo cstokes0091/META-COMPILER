@@ -14,7 +14,7 @@ into structured workspaces for LLM-driven programming, writing, and technical ta
 **This tool runs in VSCode with an LLM assistant as the intelligence layer.** It is
 model-agnostic — works with any reasoning model in any VSCode-integrated coding
 assistant (Copilot, Claude Code, Cursor, Windsurf, etc.). See `LLM_INSTRUCTIONS.md` for full
-workflow instructions. Stage-specific prompts are in `prompts/*.prompt.md`.
+workflow instructions. Stage-specific prompts are in `prompts/`.
 
 ## Install
 

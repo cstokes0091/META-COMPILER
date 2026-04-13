@@ -26,7 +26,6 @@ meta_compiler_orchestrator.egg-info/entry_points.txt
 meta_compiler_orchestrator.egg-info/requires.txt
 meta_compiler_orchestrator.egg-info/top_level.txt
 tests/test_decision_log_validation.py
-tests/test_init_prompt_provisioning.py
 tests/test_manifest_validation.py
 tests/test_review_consensus.py
 tests/test_scaffold_validation.py
