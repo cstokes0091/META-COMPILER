@@ -19,6 +19,8 @@ Stage 0: Project Initialization (human)
      ↓ seed docs + problem statement
 Stage 1A: Breadth Research (agent)
      ↓ Wiki v1
+Stage 1A2: Orchestration Loop Controller (agent)
+     ↓ 1B ↔ 1C Loop Managed From One Prompt
 Stage 1B: Depth Pass (3 agents → debate → synthesis)
      ↓ Wiki v2 + Gap Report + Debate Transcript
 Stage 1C: Fresh Review Panel (3 independent agents, fresh context)
@@ -224,6 +226,23 @@ status: raw | reviewed | validated
 ## Source Notes
 [Verbatim extractions with page numbers — these are NOT summaries]
 ```
+
+---
+
+### Stage 1A2: 1B ↔ 1C Orchestration
+
+**Actor:** Loop Orchestrator agent
+
+**Input:** Stage 1B and Stage 1C prompt contracts + wiki/review artifacts
+
+**Behavior:**
+- Spawn and coordinate Stage 1B evaluator/debate/remediation agents
+- Spawn and coordinate Stage 1C fresh-review agents
+- Run the 1B→1C loop from one control prompt
+- Route actionable ITERATE findings from 1C back to 1B
+- Stop on PROCEED or iteration cap
+
+**Output:** Final proceed/iterate packet with blocking-gap status and Stage 2 readiness
 
 ---
 
