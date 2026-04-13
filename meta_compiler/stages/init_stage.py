@@ -13,6 +13,32 @@ from ..io import dump_yaml
 from ..utils import iso_now
 
 
+def _source_prompts_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "prompts"
+
+
+def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]:
+    source_dir = _source_prompts_dir()
+    if not source_dir.exists():
+        raise RuntimeError(f"Prompt templates directory not found: {source_dir}")
+
+    prompt_templates = sorted(source_dir.glob("*.prompt.md"))
+    if not prompt_templates:
+        raise RuntimeError(f"No prompt templates found in: {source_dir}")
+
+    target_dir = workspace_root / "prompts"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: list[str] = []
+    for source in prompt_templates:
+        target = target_dir / source.name
+        if not force and target.exists():
+            continue
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        copied.append(str(target))
+    return copied
+
+
 def _problem_statement_template(project_name: str, problem_domain: str, project_type: str) -> str:
     return f"""# PROBLEM_STATEMENT
 
@@ -55,6 +81,7 @@ def run_meta_init(
             _problem_statement_template(project_name, problem_domain, project_type),
             encoding="utf-8",
         )
+    copied_prompts = _provision_workspace_prompts(workspace_root=workspace_root, force=force)
 
     seed_count = len(list_seed_files(paths))
     now = iso_now()
@@ -89,5 +116,8 @@ def run_meta_init(
     return {
         "manifest_path": str(paths.manifest_path),
         "problem_statement_path": str(problem_statement_path),
+        "prompt_dir": str(workspace_root / "prompts"),
+        "prompt_count": len(list((workspace_root / "prompts").glob("*.prompt.md"))),
+        "prompts_copied": copied_prompts,
         "seed_count": seed_count,
     }

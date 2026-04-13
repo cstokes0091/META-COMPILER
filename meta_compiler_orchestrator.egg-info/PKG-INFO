@@ -11,8 +11,10 @@ Requires-Dist: PyYAML>=6.0.2
 Research-first project scaffolding system. Compiles seed documents + human intent
 into structured workspaces for LLM-driven programming, writing, and technical tasks.
 
-**This tool runs in VSCode with Claude Code as the intelligence layer.** See
-`CLAUDE.md` for full workflow instructions. Stage-specific prompts are in `prompts/`.
+**This tool runs in VSCode with an LLM assistant as the intelligence layer.** It is
+model-agnostic — works with any reasoning model in any VSCode-integrated coding
+assistant (Copilot, Claude Code, Cursor, Windsurf, etc.). See `LLM_INSTRUCTIONS.md` for full
+workflow instructions. Stage-specific prompts are in `prompts/`.
 
 ## Install
 
@@ -49,29 +51,31 @@ meta-compiler validate-stage --stage all
 # Stage 0: Initialize
 meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type hybrid
 # Edit PROBLEM_STATEMENT.md, add seeds to workspace-artifacts/seeds/
+# `meta-init` also provisions stage prompts into prompts/*.prompt.md
 
 # Stage 1A: Breadth research
 meta-compiler research-breadth
-# Claude Code enriches wiki pages (see prompts/stage-1a-breadth.md)
+# LLM enriches wiki pages (see prompts/stage-1a-breadth.prompt.md)
 meta-compiler validate-stage --stage 1a
 
 # Stage 1B: Depth pass
 meta-compiler research-depth
-# Claude Code does epistemic evaluation (see prompts/stage-1b-evaluators.md)
+# LLM does epistemic evaluation (see prompts/stage-1b-evaluators.prompt.md)
 meta-compiler validate-stage --stage 1b
 
 # Stage 1C: Review
 meta-compiler review
-# Claude Code presents verdicts, human decides PROCEED or ITERATE
+# LLM presents verdicts, human decides PROCEED or ITERATE
 meta-compiler validate-stage --stage 1c
 
 # Stage 2: Vision elicitation
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
-# Claude Code refines Decision Log via dialog (see prompts/stage-2-dialog.md)
+# LLM refines Decision Log via dialog (see prompts/stage-2-dialog.prompt.md)
 meta-compiler validate-stage --stage 2
 
 # Stage 3: Scaffold
 meta-compiler scaffold
+# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md)
 meta-compiler validate-stage --stage 3
 
 # Run scaffold self-tests
@@ -89,7 +93,7 @@ meta-compiler wiki-update
 
 # When scope or requirements change
 meta-compiler stage2-reentry --reason "expanded to include X" --sections "architecture,requirements"
-# Claude Code conducts scoped revision dialog
+# LLM conducts scoped revision dialog
 meta-compiler finalize-reentry
 meta-compiler scaffold  # Re-scaffold with new decisions
 ```

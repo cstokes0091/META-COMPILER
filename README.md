@@ -6,7 +6,7 @@ into structured workspaces for LLM-driven programming, writing, and technical ta
 **This tool runs in VSCode with an LLM assistant as the intelligence layer.** It is
 model-agnostic — works with any reasoning model in any VSCode-integrated coding
 assistant (Copilot, Claude Code, Cursor, Windsurf, etc.). See `LLM_INSTRUCTIONS.md` for full
-workflow instructions. Stage-specific prompts are in `prompts/`.
+workflow instructions. Stage-specific prompts are in `prompts/*.prompt.md`.
 
 ## Install
 
@@ -43,15 +43,16 @@ meta-compiler validate-stage --stage all
 # Stage 0: Initialize
 meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type hybrid
 # Edit PROBLEM_STATEMENT.md, add seeds to workspace-artifacts/seeds/
+# `meta-init` also provisions stage prompts into prompts/*.prompt.md
 
 # Stage 1A: Breadth research
 meta-compiler research-breadth
-# LLM enriches wiki pages (see prompts/stage-1a-breadth.md)
+# LLM enriches wiki pages (see prompts/stage-1a-breadth.prompt.md)
 meta-compiler validate-stage --stage 1a
 
 # Stage 1B: Depth pass
 meta-compiler research-depth
-# LLM does epistemic evaluation (see prompts/stage-1b-evaluators.md)
+# LLM does epistemic evaluation (see prompts/stage-1b-evaluators.prompt.md)
 meta-compiler validate-stage --stage 1b
 
 # Stage 1C: Review
@@ -61,11 +62,12 @@ meta-compiler validate-stage --stage 1c
 
 # Stage 2: Vision elicitation
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
-# LLM refines Decision Log via dialog (see prompts/stage-2-dialog.md)
+# LLM refines Decision Log via dialog (see prompts/stage-2-dialog.prompt.md)
 meta-compiler validate-stage --stage 2
 
 # Stage 3: Scaffold
 meta-compiler scaffold
+# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md)
 meta-compiler validate-stage --stage 3
 
 # Run scaffold self-tests
