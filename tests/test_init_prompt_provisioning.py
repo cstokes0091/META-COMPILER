@@ -42,7 +42,7 @@ def test_meta_init_prompt_overwrite_respects_force(tmp_path: Path):
         project_type="hybrid",
     )
 
-    prompt_name = _template_prompt_names()[0]
+    prompt_name = "stage-1a-breadth.prompt.md"
     workspace_prompt = workspace_root / "prompts" / prompt_name
     template_prompt = _source_prompts_dir() / prompt_name
 
