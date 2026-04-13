@@ -2,7 +2,7 @@
 
 Loads the latest Decision Log, creates a new version with revision metadata,
 performs cascade analysis on changed sections, and produces a template for
-Claude Code to fill via human dialog.
+the LLM assistant to fill via human dialog.
 """
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ def run_stage2_reentry(
         if not key.startswith("_prior_"):
             clean_log["decision_log"][key] = value
 
-    # Write the prompt context file for Claude Code
+    # Write the prompt context file for the LLM assistant
     wiki = WikiQueryInterface(paths=paths, prefer_v2=True)
     context_path = paths.runtime_dir / f"reentry_context_v{new_version}.md"
     _write_reentry_context(
@@ -202,7 +202,7 @@ def run_stage2_reentry(
         "template_path": str(template_path),
         "context_path": str(context_path),
         "next_step": (
-            "Claude Code should read the reentry context file and conduct "
+            "the LLM assistant should read the reentry context file and conduct "
             "an asymmetric dialog with the user to fill revised sections. "
             "Then run: meta-compiler finalize-reentry"
         ),
@@ -218,7 +218,7 @@ def _write_reentry_context(
     reason: str,
     new_version: int,
 ) -> None:
-    """Write a context file that Claude Code reads to conduct the re-entry dialog."""
+    """Write a context file that the LLM assistant reads to conduct the re-entry dialog."""
     prior = prior_log["decision_log"]
     lines = [
         "# Stage 2 Re-entry Context",
@@ -265,7 +265,7 @@ def _write_reentry_context(
         lines.append("")
 
     lines.extend([
-        "## Instructions for Claude Code",
+        "## Instructions for the LLM assistant",
         "",
         "1. Read this context and the prior Decision Log",
         "2. For each section marked for revision, conduct asymmetric dialog:",
@@ -287,7 +287,7 @@ def run_finalize_reentry(
     artifacts_root: Path,
     version: int | None = None,
 ) -> dict[str, Any]:
-    """Finalize a re-entry Decision Log after Claude Code fills it."""
+    """Finalize a re-entry Decision Log after the LLM assistant fills it."""
     paths = build_paths(artifacts_root)
 
     if version is None:

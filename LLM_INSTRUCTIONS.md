@@ -4,10 +4,14 @@ This is a research-first project scaffolding system. It compiles raw information
 (seed documents + human intent) into structured workspaces that LLMs can execute
 against for programming, writing, and technical tasks.
 
-**You (Claude Code) are the intelligence layer.** The `meta-compiler` CLI handles
-bookkeeping (validation, manifests, file management). You handle reasoning
+**You (the LLM assistant) are the intelligence layer.** The `meta-compiler` CLI
+handles bookkeeping (validation, manifests, file management). You handle reasoning
 (research, evaluation, dialog, extraction). The human provides vision and judgment
 between stages.
+
+This system is LLM-agnostic. It works with any reasoning model capable of reading
+files, following structured instructions, and producing schema-compliant artifacts
+inside a VSCode-style environment (Copilot, Claude Code, Cursor, Windsurf, etc.).
 
 ## Quick Reference
 

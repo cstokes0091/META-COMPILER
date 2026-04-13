@@ -33,7 +33,7 @@ Use wiki tool interface to query for alternatives not previously considered.
 - [gap-remediation-v2] GAP-007: Expected topic 'projects' from problem statement has weak or missing coverage
 - [gap-remediation-v2] GAP-008: Expected topic 'scaffolding' from problem statement has weak or missing coverage
 
-## Instructions for Claude Code
+## Instructions for the LLM Assistant
 
 1. Read this context and the prior Decision Log
 2. For each section marked for revision, conduct asymmetric dialog:
