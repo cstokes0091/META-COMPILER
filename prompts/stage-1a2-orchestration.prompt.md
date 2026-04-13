@@ -61,10 +61,6 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
    - If verdict is ITERATE and `cycle < max_cycles`, increment `cycle` and route explicit blocking gaps back to Stage 1B.
    - If `cycle == max_cycles`, force PROCEED with all unresolved gaps explicitly documented.
 
-## Verdict Values
-- `PROCEED`: Research quality is sufficient to continue into Stage 2.
-- `ITERATE`: Blocking gaps remain and must be routed back to Stage 1B for another cycle.
-
 5. **Handoff package**
    - Final consensus summary (proceed/iterate rationale)
    - Blocking gaps list (resolved + unresolved)
@@ -73,6 +69,10 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
      ```bash
      meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
      ```
+
+## Verdict Values
+- `PROCEED`: Research quality is sufficient to continue into Stage 2.
+- `ITERATE`: Blocking gaps remain and must be routed back to Stage 1B for another cycle.
 
 ## Output Contract
 - One orchestrated run controls all 1B/1C sub-agents and loop retries.
