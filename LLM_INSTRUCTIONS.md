@@ -53,6 +53,7 @@ meta-compiler meta-init --project-name "My Project" --problem-domain "domain des
 
 Then edit `PROBLEM_STATEMENT.md` with real project context. Add seed documents
 (papers, specs, prior work) to `workspace-artifacts/seeds/`.
+`meta-init` also provisions stage prompts in `prompts/*.prompt.md`.
 
 The problem statement provides "tension" that scopes all downstream research.
 Without it, breadth search is unbounded.
@@ -63,7 +64,7 @@ Without it, breadth search is unbounded.
 and claims into wiki pages. Build citations. This is the most critical stage for
 information fidelity.
 
-Read `prompts/stage-1a-breadth.md` for detailed instructions.
+Read `prompts/stage-1a-breadth.prompt.md` for detailed instructions.
 
 ```bash
 meta-compiler research-breadth        # Creates baseline wiki structure
@@ -88,7 +89,7 @@ and offset sigma_read" is a document. Create documents, not summaries.
 **Your job:** Evaluate Wiki v1 from three perspectives, conduct a real debate,
 fill gaps. This is epistemic lint, not structural lint.
 
-Read `prompts/stage-1b-evaluators.md` for detailed instructions.
+Read `prompts/stage-1b-evaluators.prompt.md` for detailed instructions.
 
 ```bash
 meta-compiler research-depth          # Creates evaluation framework
@@ -116,7 +117,7 @@ Update wiki pages to fill gaps where possible. Document what cannot be resolved.
 
 **Your job:** With fresh eyes, evaluate whether the wiki is sufficient to proceed.
 
-Read `prompts/stage-1c-review.md` for detailed instructions.
+Read `prompts/stage-1c-review.prompt.md` for detailed instructions.
 
 ```bash
 meta-compiler review
@@ -136,7 +137,7 @@ The human decides: PROCEED or ITERATE back to Stage 1B.
 **Your job:** Conduct an asymmetric dialog with the human. YOU ask questions
 based on wiki content, the human provides intent and decisions.
 
-Read `prompts/stage-2-dialog.md` for detailed instructions.
+Read `prompts/stage-2-dialog.prompt.md` for detailed instructions.
 
 ```bash
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
@@ -158,6 +159,8 @@ is systematic disambiguation using researched options, not open-ended brainstorm
 ### Stage 3: Scaffold
 
 **Your job:** The CLI handles this mechanically. Review the output.
+
+Read `prompts/stage-3-scaffold.prompt.md` for detailed instructions.
 
 ```bash
 meta-compiler scaffold
@@ -222,7 +225,7 @@ Every claim must trace to a citation ID. Citations are dual-format:
 
 ## Prompt Files
 
-Stage-specific instructions are in `prompts/`. Read the relevant prompt before
+Stage-specific instructions are in `prompts/*.prompt.md`. Read the relevant prompt before
 executing each stage. They contain the epistemic criteria, dialog patterns, and
 output schemas that make each stage effective.
 
