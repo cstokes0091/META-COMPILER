@@ -20,7 +20,7 @@ Stage 0: Project Initialization (human)
 Stage 1A: Breadth Research (agent)
      ↓ Wiki v1
 Stage 1A2: Orchestration Loop Controller (agent)
-     ↓ manages iterative 1B ↔ 1C execution from one prompt
+     ↓ 1B ↔ 1C Loop Managed From One Prompt
 Stage 1B: Depth Pass (3 agents → debate → synthesis)
      ↓ Wiki v2 + Gap Report + Debate Transcript
 Stage 1C: Fresh Review Panel (3 independent agents, fresh context)

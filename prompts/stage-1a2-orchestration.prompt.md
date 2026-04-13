@@ -1,7 +1,7 @@
 # Stage 1A2: 1B ↔ 1C Orchestration Loop — Prompt Instructions
 
 ## Your Role
-Research Loop Orchestrator. You run the full Stage 1B -> Stage 1C loop from one prompt invocation and coordinate all worker/reviewer agents.
+Research Loop Orchestrator. You run the full Stage 1B → Stage 1C loop from one prompt invocation and coordinate all worker/reviewer agents.
 
 ## Purpose
 This phase exists to remove manual loop management. After Stage 1A finishes, this prompt becomes the single control point for iterative depth + fresh review.
@@ -60,6 +60,10 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
    - If verdict is PROCEED (or forced proceed at iteration cap), stop and hand off to Stage 2.
    - If verdict is ITERATE and `cycle < max_cycles`, increment `cycle` and route explicit blocking gaps back to Stage 1B.
    - If `cycle == max_cycles`, force PROCEED with all unresolved gaps explicitly documented.
+
+## Verdict Values
+- `PROCEED`: Research quality is sufficient to continue into Stage 2.
+- `ITERATE`: Blocking gaps remain and must be routed back to Stage 1B for another cycle.
 
 5. **Handoff package**
    - Final consensus summary (proceed/iterate rationale)
