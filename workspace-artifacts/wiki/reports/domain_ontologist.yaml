@@ -1,0 +1,105 @@
+gap_report:
+  evaluator: domain_ontologist
+  timestamp: '2026-04-13T00:19:10+00:00'
+  gaps:
+  - description: Expected topic 'problem' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'statement' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'scaffolding' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'technical' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'projects' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'success' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'criteria' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'define' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'measurable' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Expected topic 'outcomes' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+  - description: Wiki contains orphan pages with no meaningful inbound or outbound
+      links
+    severity: major
+    type: connection
+    affected_concepts:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    attribution:
+    - wiki_query_lint
+    status: unresolved
+  - description: Relationship coverage is thin; additional cross-links should be added
+    severity: minor
+    type: connection
+    affected_concepts:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    attribution:
+    - wiki_query_lint
+    status: unresolved

@@ -1,0 +1,96 @@
+# META-COMPILER Orchestrator
+
+Research-first project scaffolding system. Compiles seed documents + human intent
+into structured workspaces for LLM-driven programming, writing, and technical tasks.
+
+**This tool runs in VSCode with Claude Code as the intelligence layer.** See
+`CLAUDE.md` for full workflow instructions. Stage-specific prompts are in `prompts/`.
+
+## Install
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
+
+## Commands
+
+```bash
+# Core pipeline
+meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type algorithm
+meta-compiler research-breadth
+meta-compiler research-depth
+meta-compiler review
+meta-compiler elicit-vision --use-case "baseline design"
+meta-compiler scaffold
+
+# Post-scaffold
+meta-compiler wiki-update
+meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
+meta-compiler finalize-reentry
+
+# Validation
+meta-compiler validate-stage --stage all
+```
+
+## End-to-End Flow
+
+```bash
+# Stage 0: Initialize
+meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type hybrid
+# Edit PROBLEM_STATEMENT.md, add seeds to workspace-artifacts/seeds/
+
+# Stage 1A: Breadth research
+meta-compiler research-breadth
+# Claude Code enriches wiki pages (see prompts/stage-1a-breadth.md)
+meta-compiler validate-stage --stage 1a
+
+# Stage 1B: Depth pass
+meta-compiler research-depth
+# Claude Code does epistemic evaluation (see prompts/stage-1b-evaluators.md)
+meta-compiler validate-stage --stage 1b
+
+# Stage 1C: Review
+meta-compiler review
+# Claude Code presents verdicts, human decides PROCEED or ITERATE
+meta-compiler validate-stage --stage 1c
+
+# Stage 2: Vision elicitation
+meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
+# Claude Code refines Decision Log via dialog (see prompts/stage-2-dialog.md)
+meta-compiler validate-stage --stage 2
+
+# Stage 3: Scaffold
+meta-compiler scaffold
+meta-compiler validate-stage --stage 3
+
+# Run scaffold self-tests
+pytest workspace-artifacts/scaffolds/v1/tests/ -v
+
+# Validate everything
+meta-compiler validate-stage --stage all
+```
+
+## Post-Scaffold Operations
+
+```bash
+# When new seed documents arrive
+meta-compiler wiki-update
+
+# When scope or requirements change
+meta-compiler stage2-reentry --reason "expanded to include X" --sections "architecture,requirements"
+# Claude Code conducts scoped revision dialog
+meta-compiler finalize-reentry
+meta-compiler scaffold  # Re-scaffold with new decisions
+```
+
+## VSCode Integration
+
+Tasks are configured in `.vscode/tasks.json`. Use the Command Palette
+(`Cmd+Shift+P` > `Tasks: Run Task`) to execute any stage.
+
+## Artifact Root
+
+Artifacts are persisted under `workspace-artifacts/` by default.

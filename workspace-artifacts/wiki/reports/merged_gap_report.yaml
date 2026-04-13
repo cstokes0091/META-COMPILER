@@ -1,0 +1,136 @@
+gap_report:
+  generated_at: '2026-04-13T00:19:10+00:00'
+  gaps:
+  - description: Wiki contains orphan pages with no meaningful inbound or outbound
+      links
+    severity: major
+    type: connection
+    affected_concepts:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    attribution:
+    - wiki_query_lint
+    status: unresolved
+    id: GAP-001
+  - description: Expected topic 'criteria' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-002
+  - description: Expected topic 'define' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-003
+  - description: Expected topic 'measurable' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-004
+  - description: Expected topic 'outcomes' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-005
+  - description: Expected topic 'problem' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-006
+  - description: Expected topic 'projects' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-007
+  - description: Expected topic 'scaffolding' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-008
+  - description: Expected topic 'statement' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-009
+  - description: Expected topic 'success' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-010
+  - description: Expected topic 'technical' from problem statement has weak or missing
+      coverage
+    severity: minor
+    type: coverage
+    affected_concepts: []
+    attribution:
+    - domain_ontologist
+    status: unresolved
+    id: GAP-011
+  - description: Relationship coverage is thin; additional cross-links should be added
+    severity: minor
+    type: connection
+    affected_concepts:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    attribution:
+    - wiki_query_lint
+    status: unresolved
+    id: GAP-012
+  unresolved_count: 12
+  health:
+    page_count: 3
+    orphan_pages:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    sparse_citation_pages: []
+    weak_relationship_pages:
+    - concept-sample
+    - decision-seed
+    - sample-seed
+    open_question_count: 3
+    open_questions:
+    - concept: concept-sample
+      question: Should this concept remain in scope after Stage 1B depth checks?
+    - concept: decision-seed
+      question: What additional extraction is required for this seed?
+    - concept: sample-seed
+      question: What additional extraction is required for this seed?

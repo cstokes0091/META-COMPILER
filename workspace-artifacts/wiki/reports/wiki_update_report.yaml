@@ -1,0 +1,18 @@
+wiki_update_report:
+  timestamp: '2026-04-13T02:51:27+00:00'
+  previous_version: 4c32a862fbd82a8fcac6a43b4d26f878ac0da3807c00f480804a05b3e15bac01
+  new_version: b0fb6c95731d2ec816284b91c86f0675eeec66040f2eb8484637612214b1a938
+  documents_added:
+  - path: seeds/thermal_noise_model.md
+    citation_id: src-thermal-noise-model
+    pages_created:
+    - thermal-noise-model
+    - concept-thermal
+  impact_analysis:
+    cross_links_added: 2
+    relationships_updated:
+    - concept-sample
+    - concept-thermal
+    - thermal-noise-model
+    gaps_surfaced: []
+  status: complete

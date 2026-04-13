@@ -1,0 +1,17 @@
+cascade_report:
+  generated_at: '2026-04-13T02:50:42+00:00'
+  parent_version: 1
+  new_version: 2
+  reason: testing cascade
+  revised_sections:
+  - architecture
+  - requirements
+  affected_downstream:
+  - agents_needed
+  - scope
+  cascade_flags:
+  - Changing 'architecture' may invalidate 'scope' decisions.
+  - Changing 'architecture' may invalidate 'requirements' decisions.
+  - Changing 'architecture' may invalidate 'agents_needed' decisions.
+  - Changing 'requirements' may invalidate 'agents_needed' decisions.
+  recommendation: Review affected downstream sections for consistency.

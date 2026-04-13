@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(py|yaml|md|txt|toml\\)$\")",
+      "WebFetch(domain:claude.ai)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip3 install:*)"
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+wiki_health:
+  page_count: 3
+  orphan_pages:
+  - concept-sample
+  - decision-seed
+  - sample-seed
+  sparse_citation_pages: []
+  weak_relationship_pages:
+  - concept-sample
+  - decision-seed
+  - sample-seed
+  open_question_count: 3
+  open_questions:
+  - concept: concept-sample
+    question: Should this concept remain in scope after Stage 1B depth checks?
+  - concept: decision-seed
+    question: What additional extraction is required for this seed?
+  - concept: sample-seed
+    question: What additional extraction is required for this seed?

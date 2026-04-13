@@ -1,0 +1,74 @@
+decision_log:
+  meta:
+    project_name: META-COMPILER
+    project_type: hybrid
+    created: '2026-04-13T00:19:27+00:00'
+    version: 1
+    parent_version: null
+    reason_for_revision: null
+    problem_statement_hash: 55bfe88029f1193e009becae5083184165b88ac26002a1f83b98593687c34b2d
+    wiki_version: 4c32a862fbd82a8fcac6a43b4d26f878ac0da3807c00f480804a05b3e15bac01
+    use_case: initial scaffold
+  conventions:
+  - name: Code style
+    domain: code
+    choice: Prefer clear modular Python with explicit validation
+    rationale: Maintain deterministic, auditable stage artifacts.
+    citations:
+    - src-decision-seed
+    - src-sample-seed
+  architecture:
+  - component: workflow-orchestrator
+    approach: Artifact-driven stage transitions with strict schema checks
+    alternatives_rejected:
+    - name: chat-history-coupled flow
+      reason: Violates fresh-context constraint.
+    constraints_applied:
+    - fresh context
+    - artifact-only handoff
+    - strict validation
+    citations:
+    - src-decision-seed
+    - src-sample-seed
+  scope:
+    in_scope:
+    - item: Stage 2 decision capture
+      rationale: Required for scaffold generation.
+    - item: Stage 3 scaffold generation
+      rationale: Build reusable project workshop output.
+    out_of_scope:
+    - item: Full implementation execution
+      rationale: Current tranche focuses on setup workshop, not final algorithm/report
+        execution.
+      revisit_if: When scaffolded project begins active implementation phase.
+  requirements:
+  - id: REQ-001
+    description: Decision log must be schema-valid and citation-traceable.
+    source: derived
+    citations:
+    - src-decision-seed
+    - src-sample-seed
+    verification: Run validate-stage --stage 2 with zero issues.
+  - id: REQ-002
+    description: Scaffold generator must consume Decision Log only.
+    source: derived
+    citations:
+    - src-decision-seed
+    - src-sample-seed
+    verification: Run scaffold command and verify generated files include decision
+      traces.
+  open_items:
+  - description: Decide whether to include post-scaffold wiki-update automation in
+      this cycle.
+    deferred_to: future_work
+    owner: human
+  agents_needed:
+  - role: scaffold-generator
+    responsibility: Generate project structure and agent specs from Decision Log.
+    reads:
+    - decision_log
+    writes:
+    - scaffold
+    key_constraints:
+    - no raw source access
+    - trace every instruction to decision log

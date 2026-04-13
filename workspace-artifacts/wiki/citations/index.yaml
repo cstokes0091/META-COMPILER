@@ -1,0 +1,55 @@
+citations:
+  src-decision-seed:
+    human: decision_seed (seed)
+    source:
+      type: seed
+      path: /seeds/decision_seed.md
+      page: null
+      section: null
+      url: null
+      accessed: null
+    metadata:
+      authors: []
+      title: decision_seed
+      year: null
+      venue: seed
+      doi: null
+      file_hash: 879b95409a998fd04b34f559ac068d5fdd126c8fe702d3dce4325fe5150392e8
+    status: raw
+    notes: Auto-ingested in Stage 1A.
+  src-sample-seed:
+    human: sample_seed (seed)
+    source:
+      type: seed
+      path: /seeds/sample_seed.md
+      page: null
+      section: null
+      url: null
+      accessed: null
+    metadata:
+      authors: []
+      title: sample_seed
+      year: null
+      venue: seed
+      doi: null
+      file_hash: a7dc88cdb16c5192721d73c5f95cabadedbd206083b53df687304a41f741d85f
+    status: raw
+    notes: Auto-ingested in Stage 1A.
+  src-thermal-noise-model:
+    human: thermal_noise_model (seed)
+    source:
+      type: seed
+      path: /seeds/thermal_noise_model.md
+      page: null
+      section: null
+      url: null
+      accessed: null
+    metadata:
+      authors: []
+      title: thermal_noise_model
+      year: null
+      venue: seed
+      doi: null
+      file_hash: 608e68d0657c0d96319c7eccea45e030516c6bcc9ed314ca526caf6b97486edd
+    status: raw
+    notes: Auto-ingested via wiki-update.

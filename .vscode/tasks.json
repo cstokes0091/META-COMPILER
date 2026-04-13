@@ -1,0 +1,122 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Stage 0: Initialize Workspace",
+      "type": "shell",
+      "command": "meta-compiler meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 1A: Breadth Research",
+      "type": "shell",
+      "command": "meta-compiler research-breadth && meta-compiler validate-stage --stage 1a",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 1B: Depth Pass",
+      "type": "shell",
+      "command": "meta-compiler research-depth && meta-compiler validate-stage --stage 1b",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 1C: Review Panel",
+      "type": "shell",
+      "command": "meta-compiler review && meta-compiler validate-stage --stage 1c",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 2: Vision Elicitation (non-interactive)",
+      "type": "shell",
+      "command": "meta-compiler elicit-vision --use-case \"${input:useCase}\" --non-interactive && meta-compiler validate-stage --stage 2",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 3: Scaffold",
+      "type": "shell",
+      "command": "meta-compiler scaffold && meta-compiler validate-stage --stage 3",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Wiki Update (incremental)",
+      "type": "shell",
+      "command": "meta-compiler wiki-update",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 2 Re-entry",
+      "type": "shell",
+      "command": "meta-compiler stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Finalize Re-entry",
+      "type": "shell",
+      "command": "meta-compiler finalize-reentry && meta-compiler validate-stage --stage 2",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Validate All Stages",
+      "type": "shell",
+      "command": "meta-compiler validate-stage --stage all",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Scaffold Self-Tests",
+      "type": "shell",
+      "command": "python -m pytest workspace-artifacts/scaffolds/v1/tests/ -v",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Unit Tests",
+      "type": "shell",
+      "command": "python -m pytest tests/ -v",
+      "group": "test",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "projectName",
+      "type": "promptString",
+      "description": "Project name"
+    },
+    {
+      "id": "problemDomain",
+      "type": "promptString",
+      "description": "Problem domain description"
+    },
+    {
+      "id": "projectType",
+      "type": "pickString",
+      "description": "Project type",
+      "options": ["algorithm", "report", "hybrid"]
+    },
+    {
+      "id": "useCase",
+      "type": "promptString",
+      "description": "Use case for this scaffold"
+    },
+    {
+      "id": "reentryReason",
+      "type": "promptString",
+      "description": "Reason for Decision Log revision"
+    },
+    {
+      "id": "reentrySections",
+      "type": "promptString",
+      "description": "Sections to revise (comma-separated: conventions,architecture,scope,requirements,open_items,agents_needed)"
+    }
+  ]
+}

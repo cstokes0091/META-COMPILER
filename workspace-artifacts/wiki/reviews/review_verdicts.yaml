@@ -1,0 +1,130 @@
+review_panel:
+  generated_at: '2026-04-13T00:19:10+00:00'
+  reviewers:
+    optimistic:
+      verdict: PROCEED
+      confidence: 0.48
+      blocking_gaps: []
+      non_blocking_gaps:
+      - description: Wiki contains orphan pages with no meaningful inbound or outbound
+          links
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'criteria' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'define' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'measurable' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'outcomes' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'problem' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'projects' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'scaffolding' from problem statement has weak
+          or missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'statement' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'success' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      proceed_if: Current coverage is sufficient to proceed to Stage 2.
+      health_snapshot:
+        orphan_page_count: 3
+        sparse_citation_count: 0
+    pessimistic:
+      verdict: PROCEED
+      confidence: 0.58
+      blocking_gaps: []
+      non_blocking_gaps:
+      - description: Wiki contains orphan pages with no meaningful inbound or outbound
+          links
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'criteria' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'define' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'measurable' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'outcomes' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'problem' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'projects' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'scaffolding' from problem statement has weak
+          or missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'statement' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'success' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      proceed_if: Current coverage is sufficient to proceed to Stage 2.
+      health_snapshot:
+        orphan_page_count: 3
+        sparse_citation_count: 0
+    pragmatic:
+      verdict: PROCEED
+      confidence: 0.53
+      blocking_gaps: []
+      non_blocking_gaps:
+      - description: Wiki contains orphan pages with no meaningful inbound or outbound
+          links
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'criteria' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'define' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'measurable' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'outcomes' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'problem' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'projects' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'scaffolding' from problem statement has weak
+          or missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'statement' from problem statement has weak or
+          missing coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      - description: Expected topic 'success' from problem statement has weak or missing
+          coverage
+        impact_if_ignored: Potential quality degradation if deferred.
+      proceed_if: Current coverage is sufficient to proceed to Stage 2.
+      health_snapshot:
+        orphan_page_count: 3
+        sparse_citation_count: 0
+  health:
+    orphan_pages: 3
+    sparse_citation_pages: 0
+    open_question_count: 3
+  consensus:
+    decision: PROCEED
+    reason: unanimous_proceed
+    forced: false
+    proceed_votes: 3
+    requires_human_judgment: false

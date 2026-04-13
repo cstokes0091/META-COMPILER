@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meta-compiler-orchestrator"
+version = "0.1.0"
+description = "Research-first orchestration for META-COMPILER stages 0/1A/1B/1C"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.2",
+]
+
+[project.scripts]
+meta-compiler = "meta_compiler.cli:main"
+
+[tool.setuptools]
+packages = ["meta_compiler", "meta_compiler.stages"]

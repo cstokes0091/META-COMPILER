@@ -1,0 +1,12 @@
+scaffold:
+  generated_at: '2026-04-13T02:51:37+00:00'
+  decision_log_version: 1
+  decision_log_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/decision-logs/decision_log_v1.yaml
+  project_type: hybrid
+  agent_count: 6
+  skill_file_count: 5
+  instruction_file_count: 3
+  requirements_file_count: 1
+  code_file_count: 4
+  report_file_count: 4
+  root: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1

@@ -1,0 +1,4 @@
+gap_report:
+  evaluator: adversarial_questioner
+  timestamp: '2026-04-13T00:19:10+00:00'
+  gaps: []

@@ -1,0 +1,22 @@
+debate_transcript:
+  generated_at: '2026-04-13T00:19:10+00:00'
+  round_1:
+    schema_auditor:
+      gap_count: 0
+      focus: structural completeness
+    adversarial_questioner:
+      gap_count: 0
+      focus: epistemic risk
+    domain_ontologist:
+      gap_count: 12
+      focus: coverage against expected topics
+  round_2:
+    schema_auditor: Agrees epistemic risks often stem from missing structure.
+    adversarial_questioner: Agrees weak structure increases citation ambiguity.
+    domain_ontologist: Agrees missing concepts correlate with sparse source linking.
+  round_3:
+    synthesizer_input: All role reports merged by severity and attribution.
+    merged_gap_count: 12
+  synthesis:
+    recommendation: Run Stage 1C review panel or iterate Stage 1B if blockers remain.
+    status: complete
