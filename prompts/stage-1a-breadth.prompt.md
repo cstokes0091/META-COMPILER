@@ -20,14 +20,16 @@ reusable by downstream agents.
 
 ## Procedure
 
-### 1. Read Every Seed Document
+### 1. Process Seeds Incrementally (File-by-File)
 For each file in `workspace-artifacts/seeds/`:
 - Read the full content (use `Read` tool for text files)
 - For PDFs, extract key content page by page
+- Immediately update affected wiki pages in `workspace-artifacts/wiki/v1/pages/` before moving to the next seed file
+- If context is nearing limits, persist progress before continuing (write updates to wiki files first; if needed also write a compact checkpoint note in `workspace-artifacts/wiki/v1/log.md`)
 - Note: seeds are curated by an SME and are the source of truth
 
-### 2. Enrich Wiki Pages
-For each existing wiki page in `workspace-artifacts/wiki/v1/pages/`:
+### 2. Enrich Wiki Pages During Each File Pass
+As each seed is processed, update existing wiki pages:
 - Replace placeholder text with extracted content
 - Fill in the Definition section with precise, 2-3 sentence definitions
 - Fill in Formalism with LaTeX math where applicable
@@ -36,14 +38,14 @@ For each existing wiki page in `workspace-artifacts/wiki/v1/pages/`:
 - List Open Questions — what the seed doesn't answer
 - Add Source Notes with verbatim extractions and page numbers
 
-### 3. Create New Wiki Pages
-If the seed documents contain concepts not yet in the wiki:
+### 3. Create New Wiki Pages As Needed
+If the current seed file contains concepts not yet in the wiki:
 - Create new `.md` files in `workspace-artifacts/wiki/v1/pages/`
 - Follow the wiki page schema (see below)
 - Register citations in `workspace-artifacts/wiki/citations/index.yaml`
 
 ### 4. Cross-Link Concepts
-After all pages are created:
+After processing each seed (and again at the end):
 - Update `related` fields in frontmatter
 - Update Relationships sections with actual connections
 - Ensure no orphan pages (every page links to at least one other)
