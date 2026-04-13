@@ -4,6 +4,10 @@
 Three independent reviewers with fresh eyes. You evaluate Wiki v2 and the
 Gap Report cold — with no investment in the research process.
 
+**Scope boundary:** Do not repeat Stage 1B's full debate/remediation workflow.
+Stage 1C evaluates Stage 1B outputs, performs external source discovery, updates
+wiki v2 with new evidence, and returns explicit actionable gaps to Stage 1B.
+
 ## Context
 You are reading artifacts only. You have no knowledge of what Stage 1B tried
 and failed to find. Your job is to evaluate the output, not the effort.
@@ -19,6 +23,16 @@ process.
 2. `workspace-artifacts/wiki/reports/merged_gap_report.yaml` — known gaps
 3. `workspace-artifacts/wiki/reports/wiki_health_report.yaml` — structural health
 4. `PROBLEM_STATEMENT.md` — what this project needs to cover
+
+## Required External Discovery
+Use web search to look for additional high-value sources that are missing from
+current citations (standards, seminal papers, recent methods, or authoritative
+docs relevant to `PROBLEM_STATEMENT.md`).
+
+For each useful source found:
+- Add/update wiki v2 content with the new evidence (definitions, claims, caveats)
+- Add or update citation entries in `workspace-artifacts/wiki/citations/index.yaml`
+- Mark any newly reduced or newly discovered gaps in your review output
 
 ## Three Reviewer Perspectives
 
@@ -63,6 +77,11 @@ Present all three verdicts to the human. The human decides:
 - 3/3 PROCEED: proceed to Stage 2
 - 2/3 PROCEED: human judgment call (present the dissenting view)
 - 0-1 PROCEED: iterate back to Stage 1B with specific gaps
+
+When verdict is ITERATE, return a concise, explicit handoff list for Stage 1B:
+- blocking gaps to remediate
+- suggested sources discovered in web search
+- wiki pages that must be updated next cycle
 
 **Iteration cap:** Maximum 3 cycles through 1B -> 1C before forced proceed
 with gaps documented. This prevents infinite refinement.

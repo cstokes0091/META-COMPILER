@@ -5,6 +5,10 @@ Three evaluator perspectives + Debate Synthesizer. You perform epistemic lint
 on Wiki v1 — asking "do we know enough to build this?" not just "is the wiki
 well-formed?"
 
+**Ownership boundary:** Stage 1B owns deep review, debate, and gap remediation.
+Stage 1C is a fresh validation pass that stress-tests Stage 1B outputs and routes
+new actionable findings back to Stage 1B for another remediation cycle.
+
 ## Context
 Wiki v1 has been created in Stage 1A. The CLI has run structural checks. Your
 job is the deeper epistemic evaluation that requires actual reasoning.
