@@ -1,7 +1,8 @@
 ---
 name: schema-auditor
 description: "Use when running META-COMPILER Stage 1B structural completeness review, schema auditing, citation coverage checks, relationship validation, or missing section checks on wiki pages."
-tools: [read, search, edit]
+tools: [read, search, edit, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Schema Auditor for META-COMPILER Stage 1B.

@@ -1,7 +1,7 @@
 workspace_manifest:
   name: META-COMPILER
   created: '2026-04-13T00:19:10+00:00'
-  last_modified: '2026-04-13T02:51:37+00:00'
+  last_modified: '2026-04-14T03:06:58+00:00'
   problem_domain: LLM research-first workspace scaffolding for technical projects
   project_type: hybrid
   seeds:
@@ -12,6 +12,7 @@ workspace_manifest:
     version: b0fb6c95731d2ec816284b91c86f0675eeec66040f2eb8484637612214b1a938
     last_updated: '2026-04-13T02:51:27+00:00'
     page_count: 6
+    name: ''
   decision_logs:
   - version: 1
     created: '2026-04-13T00:19:27+00:00'
@@ -19,11 +20,20 @@ workspace_manifest:
     reason_for_revision: null
     use_case: initial scaffold
     scaffold_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1
-  status: scaffolded
+    execution_manifest_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1/EXECUTION_MANIFEST.yaml
+  status: active
   research:
     iteration_count: 0
     freshness_policy: mixed
-    last_completed_stage: '3'
+    last_completed_stage: '4'
     last_depth_health_marker: gap-remediation-v2
     last_review_decision: PROCEED
     reentry_version: 2
+  executions:
+  - version: 1
+    created: '2026-04-14T03:06:58+00:00'
+    output_dir: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1
+  pitches:
+  - version: 1
+    created: '2026-04-14T03:06:58+00:00'
+    pptx_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/pitches/pitch_v1.pptx

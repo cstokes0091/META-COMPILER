@@ -5,8 +5,20 @@ Research Crawler agent. You ingest seed documents and build Wiki v1.
 
 ## Context
 The human has provided seed documents in `workspace-artifacts/seeds/` and written
-`PROBLEM_STATEMENT.md`. The CLI has created baseline wiki stubs. Your job is to
-enrich them into proper knowledge documents.
+`PROBLEM_STATEMENT.md`. This prompt is the operator entry point for Stage 1A, so
+if baseline wiki stubs do not exist yet, run the CLI first:
+
+```bash
+meta-compiler research-breadth
+meta-compiler validate-stage --stage 1a
+```
+
+Your job is to enrich the baseline artifacts into proper knowledge documents.
+
+## Delegation Rule
+- Use `explore` when you need a fast scan of the current workspace, wiki pages, or seed inventory.
+- Use `research` only when a seed reveals a meaningful missing concept that requires deeper external investigation.
+- Keep long discovery output in files and wiki artifacts rather than bloating the active orchestration context.
 
 ## Critical Rule: Documents, Not Summaries
 

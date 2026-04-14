@@ -1,7 +1,8 @@
 ---
 name: gap-remediator
 description: "Use when running META-COMPILER Stage 1B gap remediation, wiki v2 updates, targeted follow-up research, or blocker reduction after debate synthesis."
-tools: [read, search, edit, web]
+tools: [read, search, edit, web, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Gap Remediator for META-COMPILER Stage 1B.

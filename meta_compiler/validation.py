@@ -13,6 +13,13 @@ VALID_PROJECT_TYPES = {"algorithm", "report", "hybrid"}
 VALID_STATUS = {"initialized", "researched", "scaffolded", "active"}
 VALID_REVIEW_VERDICTS = {"PROCEED", "ITERATE"}
 VALID_CONVENTION_DOMAINS = {"math", "code", "citation", "terminology"}
+REQUIRED_PROBLEM_STATEMENT_SECTIONS = [
+    "## Domain and Problem Space",
+    "## Goals and Success Criteria",
+    "## Constraints",
+    "## Project Type",
+    "## Additional Context",
+]
 
 
 def _require_fields(
@@ -82,6 +89,64 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     decision_logs = wm.get("decision_logs", [])
     if not isinstance(decision_logs, list):
         issues.append("workspace_manifest.decision_logs: must be a list")
+
+    wiki = wm.get("wiki", {})
+    if isinstance(wiki, dict) and "name" in wiki and not isinstance(wiki.get("name"), str):
+        issues.append("workspace_manifest.wiki.name: must be a string when present")
+
+    executions = wm.get("executions")
+    if executions is not None and not isinstance(executions, list):
+        issues.append("workspace_manifest.executions: must be a list")
+    elif isinstance(executions, list):
+        for idx, row in enumerate(executions):
+            if not isinstance(row, dict):
+                issues.append(f"workspace_manifest.executions[{idx}]: must be an object")
+                continue
+            _require_fields(
+                row,
+                ["version", "created", "output_dir"],
+                f"workspace_manifest.executions[{idx}]",
+                issues,
+            )
+
+    pitches = wm.get("pitches")
+    if pitches is not None and not isinstance(pitches, list):
+        issues.append("workspace_manifest.pitches: must be a list")
+    elif isinstance(pitches, list):
+        for idx, row in enumerate(pitches):
+            if not isinstance(row, dict):
+                issues.append(f"workspace_manifest.pitches[{idx}]: must be an object")
+                continue
+            _require_fields(
+                row,
+                ["version", "created", "pptx_path"],
+                f"workspace_manifest.pitches[{idx}]",
+                issues,
+            )
+
+    return issues
+
+
+def validate_problem_statement(problem_statement_path: Path) -> list[str]:
+    issues: list[str] = []
+    if not problem_statement_path.exists():
+        return [f"problem statement missing: {problem_statement_path.name}"]
+
+    text = read_text_safe(problem_statement_path).strip()
+    if not text:
+        return ["problem statement is empty"]
+
+    for section in REQUIRED_PROBLEM_STATEMENT_SECTIONS:
+        if section not in text:
+            issues.append(f"problem statement missing section '{section}'")
+
+    template_markers = [
+        "Define the measurable outcomes that indicate project success.",
+        "List technical constraints, timeline constraints, and resource constraints.",
+        "Capture assumptions, prior work references, and any known risks.",
+    ]
+    if any(marker in text for marker in template_markers):
+        issues.append("problem statement still contains unedited template guidance")
 
     return issues
 
@@ -248,6 +313,19 @@ def validate_stage_1a2_handoff(report: dict[str, Any]) -> list[str]:
     for field in ["blocking_gaps", "non_blocking_gaps", "suggested_sources"]:
         if not isinstance(handoff.get(field), list):
             issues.append(f"stage_1a2_handoff.{field}: must be a list")
+
+    suggested_sources = handoff.get("suggested_sources", [])
+    if isinstance(suggested_sources, list):
+        for idx, source in enumerate(suggested_sources):
+            if not isinstance(source, dict):
+                issues.append(f"stage_1a2_handoff.suggested_sources[{idx}]: must be an object")
+                continue
+            _require_fields(
+                source,
+                ["title", "provider", "url"],
+                f"stage_1a2_handoff.suggested_sources[{idx}]",
+                issues,
+            )
 
     return issues
 
@@ -436,6 +514,26 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _validate_agent_delegation(frontmatter: dict[str, Any], agent_path: Path) -> list[str]:
+    issues: list[str] = []
+    tools = frontmatter.get("tools")
+    if not isinstance(tools, list):
+        issues.append(f"custom agent missing tools list: {agent_path.name}")
+    elif "agent" not in tools:
+        issues.append(f"custom agent missing agent tool: {agent_path.name}")
+
+    agents = frontmatter.get("agents")
+    if not isinstance(agents, list):
+        issues.append(f"custom agent missing agents allowlist: {agent_path.name}")
+    else:
+        for required_agent in ["research", "explore"]:
+            if required_agent not in agents:
+                issues.append(
+                    f"custom agent missing delegated subagent '{required_agent}': {agent_path.name}"
+                )
+    return issues
+
+
 def validate_custom_agent_file(agent_path: Path) -> list[str]:
     issues: list[str] = []
     frontmatter, body = parse_frontmatter(read_text_safe(agent_path))
@@ -443,6 +541,7 @@ def validate_custom_agent_file(agent_path: Path) -> list[str]:
         return [f"custom agent missing frontmatter: {agent_path.name}"]
 
     _require_fields(frontmatter, ["description"], f"custom agent {agent_path.name}", issues)
+    issues.extend(_validate_agent_delegation(frontmatter, agent_path))
     if "## Purpose" not in body:
         issues.append(f"custom agent missing purpose section: {agent_path.name}")
     if "## Decision Trace" not in body:
@@ -509,6 +608,7 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
         scaffold_root / "ARCHITECTURE.md",
         scaffold_root / "CONVENTIONS.md",
         scaffold_root / "REQUIREMENTS_TRACED.md",
+        scaffold_root / "EXECUTION_MANIFEST.yaml",
     ]
     for required in required_files:
         if not required.exists():
@@ -564,6 +664,12 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
     custom_root = scaffold_root / ".github"
     if not custom_root.exists():
         issues.append("scaffold missing .github customization directory")
+
+    orchestrator_dir = scaffold_root / "orchestrator"
+    if not orchestrator_dir.exists():
+        issues.append("scaffold missing orchestrator directory")
+    elif not (orchestrator_dir / "run_stage4.py").exists():
+        issues.append("scaffold missing orchestrator/run_stage4.py")
 
     custom_agents_dir = custom_root / "agents"
     if not custom_agents_dir.exists():
@@ -641,8 +747,34 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
     return issues
 
 
+def validate_stage_4(paths: ArtifactPaths) -> list[str]:
+    issues: list[str] = []
+
+    execution_dirs = sorted([path for path in paths.executions_dir.glob("v*") if path.is_dir()])
+    if not execution_dirs:
+        issues.append("4: no execution output directories found")
+    else:
+        latest_execution = execution_dirs[-1]
+        manifest_path = latest_execution / "FINAL_OUTPUT_MANIFEST.yaml"
+        if not manifest_path.exists():
+            issues.append(f"4: final output manifest missing: {manifest_path.relative_to(paths.root)}")
+
+    pitch_files = sorted(paths.pitches_dir.glob("pitch_v*.pptx"))
+    if not pitch_files:
+        issues.append("4: no pitch deck generated")
+
+    what_i_built_path = paths.wiki_provenance_dir / "what_i_built.md"
+    if not what_i_built_path.exists():
+        issues.append("4: what_i_built.md missing from wiki provenance")
+
+    return issues
+
+
 def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
     issues: list[str] = []
+
+    if stage in {"all", "0", "init"}:
+        issues.extend(validate_problem_statement(paths.root.parent / "PROBLEM_STATEMENT.md"))
 
     if stage in {"all", "manifest"}:
         manifest = load_manifest(paths)
@@ -732,5 +864,8 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
                 issues.append("3: no scaffold directories found")
         else:
             issues.extend(validate_scaffold(scaffold_dirs[-1]))
+
+    if stage in {"all", "4", "phase4", "pitch"}:
+        issues.extend(validate_stage_4(paths))
 
     return issues

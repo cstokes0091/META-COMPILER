@@ -2,7 +2,7 @@
 name: stage-1a2-orchestrator
 description: "Use when running META-COMPILER Stage 1A2, the 1B to 1C orchestration loop, research-depth and review cycles, or coordinating schema auditor, debate, remediation, and review agents."
 tools: [read, search, edit, execute, agent, todo]
-agents: [schema-auditor, adversarial-questioner, domain-ontologist, debate-synthesizer, gap-remediator, optimistic-reviewer, pessimistic-reviewer, pragmatic-reviewer]
+agents: [schema-auditor, adversarial-questioner, domain-ontologist, debate-synthesizer, gap-remediator, optimistic-reviewer, pessimistic-reviewer, pragmatic-reviewer, explore, research]
 user-invocable: false
 argument-hint: "Stage 1A2 orchestration task"
 ---

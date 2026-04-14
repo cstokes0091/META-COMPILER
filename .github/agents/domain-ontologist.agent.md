@@ -1,7 +1,8 @@
 ---
 name: domain-ontologist
 description: "Use when running META-COMPILER Stage 1B domain ontology review, expected topic coverage checks, missing concept discovery, or problem-statement-to-wiki coverage mapping."
-tools: [read, search, edit]
+tools: [read, search, edit, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Domain Ontologist for META-COMPILER Stage 1B.

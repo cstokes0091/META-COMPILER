@@ -12,6 +12,13 @@ wiki v2 with new evidence, and returns explicit actionable gaps to Stage 1B.
 You are reading artifacts only. You have no knowledge of what Stage 1B tried
 and failed to find. Your job is to evaluate the output, not the effort.
 
+This prompt is the operator entry point for Stage 1C, so begin by running:
+
+```bash
+meta-compiler review
+meta-compiler validate-stage --stage 1c
+```
+
 When Stage 1A2 is active, the fresh review panel is implemented by these provisioned custom agents:
 - `.github/agents/optimistic-reviewer.agent.md`
 - `.github/agents/pessimistic-reviewer.agent.md`
@@ -33,6 +40,27 @@ process.
 Use web search to look for additional high-value sources that are missing from
 current citations (standards, seminal papers, recent methods, or authoritative
 docs relevant to `PROBLEM_STATEMENT.md`).
+
+Each reviewer must search independently. Use:
+- `explore` for fast reconnaissance across the current wiki, citations, and gap report
+- `research` for the actual external search work
+
+Target at least these source classes when relevant:
+- `consensus.app`
+- `semanticscholar.org`
+- authoritative primary sources on the open web
+
+Persist one normalized search artifact per reviewer under `workspace-artifacts/wiki/reviews/search/` using this shape:
+
+```yaml
+review_search:
+  reviewer: optimistic | pessimistic | pragmatic
+  sources:
+    - title: string
+      provider: consensus | semantic-scholar | web
+      url: string
+      rationale: string
+```
 
 For each useful source found:
 - Add/update wiki v2 content with the new evidence (definitions, claims, caveats)
@@ -92,12 +120,6 @@ Persist the review packet and next-cycle handoff in `workspace-artifacts/wiki/re
 
 **Iteration cap:** Maximum 3 cycles through 1B -> 1C before forced proceed
 with gaps documented. This prevents infinite refinement.
-
-## Run the CLI
-```bash
-meta-compiler review
-meta-compiler validate-stage --stage 1c
-```
 
 The CLI produces automated verdicts based on gap counts. Compare your
 assessment with the automated one and present both to the human.

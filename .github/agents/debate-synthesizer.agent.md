@@ -1,7 +1,8 @@
 ---
 name: debate-synthesizer
 description: "Use when running META-COMPILER Stage 1B debate synthesis, merged gap report generation, evaluator disagreement reconciliation, or debate transcript creation."
-tools: [read, edit]
+tools: [read, edit, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Debate Synthesizer for META-COMPILER Stage 1B.

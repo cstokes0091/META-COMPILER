@@ -1,0 +1,19 @@
+final_output:
+  decision_log_version: 1
+  project_type: hybrid
+  deliverables:
+  - kind: algorithm-output
+    path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/algorithm_output.md
+  - kind: report-output
+    path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/report_output.md
+  - kind: final-product-summary
+    path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/final_product_summary.md
+  requirement_ids:
+  - REQ-001
+  - REQ-002
+  citation_ids:
+  - src-decision-seed
+  - src-sample-seed
+  execution_notes:
+  - run_workflow_executed
+  - report_artifacts_compiled

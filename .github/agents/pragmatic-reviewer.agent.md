@@ -1,7 +1,8 @@
 ---
 name: pragmatic-reviewer
 description: "Use when running META-COMPILER Stage 1C pragmatic review, blocking-vs-nice-to-have triage, iteration trade-off analysis, or balanced proceed decisions before Stage 2."
-tools: [read, search, edit, web]
+tools: [read, search, edit, web, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Pragmatic Reviewer for META-COMPILER Stage 1C.

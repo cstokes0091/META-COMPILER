@@ -1,0 +1,85 @@
+stage_1a2_handoff:
+  generated_at: '2026-04-14T03:06:26+00:00'
+  decision: PROCEED
+  reason: unanimous_proceed
+  forced: false
+  proceed_votes: 3
+  requires_human_judgment: false
+  iteration_count: 0
+  unresolved_gap_count: 12
+  ready_for_stage_2: true
+  blocking_gaps: []
+  non_blocking_gaps:
+  - description: Wiki contains orphan pages with no meaningful inbound or outbound
+      links
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'criteria' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'define' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'measurable' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'outcomes' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'problem' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'projects' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'scaffolding' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'statement' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  - description: Expected topic 'success' from problem statement has weak or missing
+      coverage
+    impact_if_ignored: Potential quality degradation if deferred.
+    reviewers:
+    - optimistic
+    - pessimistic
+    - pragmatic
+  suggested_sources: []
+  next_action: Proceed to Stage 2 using the ready signal.
+  ready_signal: meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive

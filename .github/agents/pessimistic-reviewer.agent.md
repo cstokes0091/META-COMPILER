@@ -1,7 +1,8 @@
 ---
 name: pessimistic-reviewer
 description: "Use when running META-COMPILER Stage 1C pessimistic review, failure-mode analysis, downstream-risk review, or worst-case blocker assessment before Stage 2."
-tools: [read, search, edit, web]
+tools: [read, search, edit, web, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Pessimistic Reviewer for META-COMPILER Stage 1C.

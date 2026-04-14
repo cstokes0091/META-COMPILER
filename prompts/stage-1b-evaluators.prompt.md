@@ -13,12 +13,25 @@ new actionable findings back to Stage 1B for another remediation cycle.
 Wiki v1 has been created in Stage 1A. The CLI has run structural checks. Your
 job is the deeper epistemic evaluation that requires actual reasoning.
 
+If the Stage 1B baseline artifacts have not been generated for the current pass,
+run:
+
+```bash
+meta-compiler research-depth
+meta-compiler validate-stage --stage 1b
+```
+
 When Stage 1A2 is active, these perspectives map to the provisioned custom agents:
 - `.github/agents/schema-auditor.agent.md`
 - `.github/agents/adversarial-questioner.agent.md`
 - `.github/agents/domain-ontologist.agent.md`
 - `.github/agents/debate-synthesizer.agent.md`
 - `.github/agents/gap-remediator.agent.md`
+
+## Delegation Rule
+- Use `explore` when you need a fast pass over wiki pages, reports, citations, or the current scaffold of artifacts.
+- Use `research` when a gap requires deeper multi-source investigation that cannot be resolved from the workspace alone.
+- Keep any deep-search findings in durable reports or wiki updates rather than long transient chat summaries.
 
 ## The Three Evaluators
 

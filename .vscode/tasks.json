@@ -4,7 +4,7 @@
     {
       "label": "Stage 0: Initialize Workspace",
       "type": "shell",
-      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}; else python3 -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}; fi",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && .venv/bin/python -m meta_compiler.cli validate-stage --stage 0; else python3 -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && python3 -m meta_compiler.cli validate-stage --stage 0; fi",
       "group": "build",
       "problemMatcher": []
     },
@@ -40,6 +40,13 @@
       "label": "Stage 3: Scaffold",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli scaffold && .venv/bin/python -m meta_compiler.cli validate-stage --stage 3; else python3 -m meta_compiler.cli scaffold && python3 -m meta_compiler.cli validate-stage --stage 3; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 4: Execute + Pitch",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli phase4-finalize && .venv/bin/python -m meta_compiler.cli validate-stage --stage 4; else python3 -m meta_compiler.cli phase4-finalize && python3 -m meta_compiler.cli validate-stage --stage 4; fi",
       "group": "build",
       "problemMatcher": []
     },
@@ -109,6 +116,11 @@
       "type": "pickString",
       "description": "Project type",
       "options": ["algorithm", "report", "hybrid"]
+    },
+    {
+      "id": "problemStatementFile",
+      "type": "promptString",
+      "description": "Path to a markdown file containing the Stage 0 problem statement"
     },
     {
       "id": "useCase",

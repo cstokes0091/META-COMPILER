@@ -20,6 +20,7 @@ from ..immutable_sources import (
 from ..io import dump_yaml, load_yaml, render_frontmatter
 from ..utils import extract_keywords, iso_now, read_text_safe, sha256_file, slugify
 from ..wiki_lifecycle import append_log_entry, write_index
+from ..wiki_rendering import citation_markdown_link, inject_wiki_nav
 
 
 TEXT_EXTENSIONS = {
@@ -60,6 +61,7 @@ def _build_source_page(
     seed_relpath: str,
     created: str,
     excerpt: str,
+    wiki_name: str = "",
 ) -> str:
     frontmatter = {
         "id": page_id,
@@ -69,7 +71,7 @@ def _build_source_page(
         "related": [],
         "status": "raw",
     }
-    return (
+    page = (
         "---\n"
         + render_frontmatter(frontmatter)
         + "\n---\n"
@@ -79,7 +81,7 @@ def _build_source_page(
         + "## Formalism\n"
         + "No formalism extracted in Stage 1A baseline pass.\n\n"
         + "## Key Claims\n"
-        + f"- Source imported into wiki baseline [{citation_id}]\n\n"
+        + f"- Source imported into wiki baseline {citation_markdown_link(citation_id)}\n\n"
         + "## Relationships\n"
         + "- prerequisite_for: []\n"
         + "- depends_on: []\n"
@@ -90,9 +92,10 @@ def _build_source_page(
         + "## Source Notes\n"
         + f"{excerpt}\n"
     )
+    return inject_wiki_nav(page, wiki_name)
 
 
-def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
+def _build_concept_page(page_id: str, citation_id: str, created: str, wiki_name: str = "") -> str:
     frontmatter = {
         "id": page_id,
         "type": "concept",
@@ -102,7 +105,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         "status": "raw",
     }
     title = page_id.replace("-", " ").title()
-    return (
+    page = (
         "---\n"
         + render_frontmatter(frontmatter)
         + "\n---\n"
@@ -112,7 +115,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         + "## Formalism\n"
         + "No formalism captured yet.\n\n"
         + "## Key Claims\n"
-        + f"- Concept surfaced in Stage 1A and linked to a seed source [{citation_id}]\n\n"
+        + f"- Concept surfaced in Stage 1A and linked to a seed source {citation_markdown_link(citation_id)}\n\n"
         + "## Relationships\n"
         + "- prerequisite_for: []\n"
         + "- depends_on: []\n"
@@ -123,6 +126,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         + "## Source Notes\n"
         + "Stage 1A placeholder page; refine in Stage 1B.\n"
     )
+    return inject_wiki_nav(page, wiki_name)
 
 
 def _update_manifest(paths: ArtifactPaths, stage: str, page_count: int) -> None:
@@ -138,11 +142,10 @@ def _update_manifest(paths: ArtifactPaths, stage: str, page_count: int) -> None:
         "document_count": len(list_seed_files(paths)),
         "inventory_snapshot": snapshot_seed_inventory(paths)["items"],
     }
-    wm["wiki"] = {
-        "version": compute_wiki_version(paths.wiki_v1_pages_dir),
-        "last_updated": now,
-        "page_count": page_count,
-    }
+    wiki = wm.setdefault("wiki", {})
+    wiki["version"] = compute_wiki_version(paths.wiki_v1_pages_dir)
+    wiki["last_updated"] = now
+    wiki["page_count"] = page_count
     wm["status"] = "researched"
     wm.setdefault("research", {})["last_completed_stage"] = stage
     save_manifest(paths, manifest)
@@ -180,6 +183,10 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
 
     created = iso_now()
     created_pages: list[str] = []
+    manifest = load_manifest(paths)
+    wiki_name = ""
+    if manifest:
+        wiki_name = str(manifest.get("workspace_manifest", {}).get("wiki", {}).get("name") or "")
 
     for seed in seeds:
         file_hash = sha256_file(seed)
@@ -223,6 +230,7 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
                 seed_relpath=str(relative_path),
                 created=created,
                 excerpt=_source_excerpt(seed),
+                wiki_name=wiki_name,
             ),
             encoding="utf-8",
         )
@@ -246,6 +254,7 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
                     page_id=concept_page_id,
                     citation_id=citation_id,
                     created=created,
+                    wiki_name=wiki_name,
                 ),
                 encoding="utf-8",
             )

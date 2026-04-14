@@ -1,7 +1,8 @@
 ---
 name: adversarial-questioner
 description: "Use when running META-COMPILER Stage 1B adversarial questioning, epistemic risk review, skeptical challenge review, assumption hunting, contradiction checks, or missing alternative analysis."
-tools: [read, search, edit]
+tools: [read, search, edit, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Adversarial Questioner for META-COMPILER Stage 1B.

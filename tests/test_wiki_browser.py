@@ -82,11 +82,16 @@ def test_wiki_browser_falls_back_to_v1_and_serves_page(tmp_path: Path):
         assert source_version == "v1"
         index_payload = _load_json(url + "api/index")
         assert index_payload["source_version"] == "v1"
+        assert index_payload["index_title"].endswith("Index")
         assert index_payload["pages"][0]["id"] == "concept-x"
+
+        index_page = _load_json(url + "api/page?id=__index__")
+        assert index_page["type"] == "index"
 
         page_payload = _load_json(url + "api/page?id=concept-x")
         assert page_payload["id"] == "concept-x"
-        assert "<h1>Concept X</h1>" in page_payload["body_html"]
+        assert '<h1 id="concept-x">Concept X</h1>' in page_payload["body_html"]
+        assert "?page=__index__#src-test-001" in page_payload["body_html"]
         assert page_payload["citations"][0]["citation_id"] == "src-test-001"
     finally:
         server.shutdown()

@@ -21,12 +21,13 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
 
 # Stage commands
-meta-compiler meta-init --project-name "X" --problem-domain "Y" --project-type hybrid
+meta-compiler meta-init --project-name "X" --problem-domain "Y" --project-type hybrid --problem-statement-file ./problem_statement.md
 meta-compiler research-breadth
 meta-compiler research-depth
 meta-compiler review
 meta-compiler elicit-vision --use-case "initial scaffold"
 meta-compiler scaffold
+meta-compiler phase4-finalize
 meta-compiler wiki-update
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
@@ -46,14 +47,21 @@ it saves hours of downstream iteration by injecting judgment at the right moment
 
 ### Stage 0: Initialize
 
-**Human action:** Create project, add seeds, write problem statement.
+**Human action:** Start from `prompts/stage-0-init.prompt.md`, collect the project metadata and a real problem statement, then call the CLI.
 
 ```bash
-meta-compiler meta-init --project-name "My Project" --problem-domain "domain description" --project-type hybrid
+meta-compiler meta-init --project-name "My Project" --problem-domain "domain description" --project-type hybrid --problem-statement-file ./problem_statement.md
+meta-compiler validate-stage --stage 0
 ```
 
-Then edit `PROBLEM_STATEMENT.md` with real project context. Add seed documents
-(papers, specs, prior work) to `workspace-artifacts/seeds/`.
+The problem statement must materially populate these sections:
+- `## Domain and Problem Space`
+- `## Goals and Success Criteria`
+- `## Constraints`
+- `## Project Type`
+- `## Additional Context`
+
+Add seed documents (papers, specs, prior work) to `workspace-artifacts/seeds/`.
 `meta-init` also provisions stage prompts in `prompts/*.prompt.md` and workspace
 customization assets in `.github/`.
 
@@ -97,9 +105,11 @@ Read `prompts/stage-1a2-orchestration.prompt.md` for detailed instructions.
 
 This phase should:
 - verify or repair the provisioned Stage 1A2 custom agents
+- verify delegating agents expose the `agent` tool and include `explore` and `research` in `agents:`
 - launch Stage 1B evaluator, debate, and remediation agents by name
 - launch Stage 1C fresh review agents by name
 - run `research-depth` and `review` cycles
+- launch three independent reviewer-scoped `research` passes that persist normalized search artifacts under `workspace-artifacts/wiki/reviews/search/`
 - route actionable ITERATE gaps back to Stage 1B
 - persist a `workspace-artifacts/wiki/reviews/1a2_handoff.yaml` packet
 - stop on PROCEED or iteration cap
@@ -117,6 +127,9 @@ meta-compiler validate-stage --stage 1b
 ```
 
 After the CLI runs structural checks, **you must do the epistemic evaluation**:
+
+Use `explore` for fast artifact reconnaissance and `research` when a gap requires
+deeper multi-source investigation that the current workspace cannot answer.
 
 1. **Schema Auditor perspective:** Is every concept fully specified? Definitions,
    formalisms, citations, relationships?
@@ -150,12 +163,23 @@ with your own assessment:
 - **Pessimistic:** What gaps would cause downstream failure?
 - **Pragmatic:** Given constraints, is this good enough?
 
+Each reviewer must search independently. Use `explore` to inspect the current
+wiki, citations, and gap report, then use `research` for the external search.
+Target `consensus.app`, `semanticscholar.org`, and other authoritative sources
+when relevant. Persist one normalized artifact per reviewer in
+`workspace-artifacts/wiki/reviews/search/` so the Python review stage can
+aggregate `suggested_sources` into the Stage 1A2 handoff.
+
 The human decides: PROCEED or ITERATE back to Stage 1B.
 
 ### Stage 2: Vision Elicitation
 
 **Your job:** Conduct an asymmetric dialog with the human. YOU ask questions
 based on wiki content, the human provides intent and decisions.
+
+Stage 2 also generates and stores the wiki name. Preserve that name when
+referring to the index or page headers, and keep Stage 3/4 execution needs in
+view while you narrow the decision space.
 
 Read `prompts/stage-2-dialog.prompt.md` for detailed instructions.
 
@@ -172,6 +196,11 @@ through dialog:
    property X, B has property Y. Which fits your requirements?"
 3. Capture each decision with: choice, alternatives rejected, rationale, citations
 4. The output is a rigid Decision Log schema — not prose
+
+When capturing `agents_needed`, record execution-time delegation expectations.
+If an agent is expected to delegate, note that it should expose the `agent`
+tool and include `explore` and `research` in its allowlist unless a narrower
+policy is explicitly justified.
 
 **Key principle:** Structure the conversation to narrow the solution space. This
 is systematic disambiguation using researched options, not open-ended brainstorming.
@@ -195,8 +224,32 @@ Stage 3 consumes the Decision Log ONLY — not the wiki, not raw sources. It pro
 - Human-readable summary docs alongside those customization artifacts
 - Code/report stubs with requirement anchors
 - Semantic self-tests that verify scaffold integrity
+- `EXECUTION_MANIFEST.yaml` and `orchestrator/run_stage4.py` for Stage 4 execution
+- An initial `workspace-artifacts/wiki/provenance/what_i_built.md`
+
+Generated delegating agents should share the same `explore`/`research` subagent
+palette unless the Decision Log explicitly narrows it.
 
 Run the self-tests: `pytest workspace-artifacts/scaffolds/v1/tests/`
+
+### Stage 4: Execute + Pitch
+
+**Your job:** Run the scaffold-generated execution contract, verify the final
+deliverables, and ensure the product is packaged into a real PowerPoint deck.
+
+Read `prompts/stage-4-finalize.prompt.md` for detailed instructions.
+
+```bash
+meta-compiler phase4-finalize
+meta-compiler validate-stage --stage 4
+```
+
+Stage 4 should:
+- execute the generated `orchestrator/run_stage4.py`
+- write final outputs to `workspace-artifacts/executions/v{N}/`
+- refresh `workspace-artifacts/wiki/provenance/what_i_built.md`
+- emit `workspace-artifacts/pitches/pitch_v{N}.md`
+- emit a real `workspace-artifacts/pitches/pitch_v{N}.pptx`
 
 ### Post-Scaffold: Wiki Update
 
@@ -235,8 +288,11 @@ meta-compiler scaffold  # Re-scaffold with new decisions
 | Citation Index | `workspace-artifacts/wiki/citations/index.yaml` | Source traceability |
 | Gap Report | `workspace-artifacts/wiki/reports/merged_gap_report.yaml` | Knowledge gaps |
 | Review Verdicts | `workspace-artifacts/wiki/reviews/review_verdicts.yaml` | Proceed/iterate |
+| Review Search Artifacts | `workspace-artifacts/wiki/reviews/search/*.yaml` | Reviewer-scoped external discovery |
 | Decision Log | `workspace-artifacts/decision-logs/decision_log_v*.yaml` | Human decisions |
 | Scaffold | `workspace-artifacts/scaffolds/v*/` | Generated project workspace |
+| Execution Outputs | `workspace-artifacts/executions/v*/` | Stage 4 final deliverables |
+| Pitch Decks | `workspace-artifacts/pitches/` | Markdown and PPTX sales artifacts |
 | Manifest | `workspace-artifacts/manifests/workspace_manifest.yaml` | Workspace state |
 
 ## Citation Format
@@ -249,8 +305,10 @@ Every claim must trace to a citation ID. Citations are dual-format:
 
 Stage-specific instructions are in `prompts/*.prompt.md`. Read the relevant prompt before
 executing each stage. Workspace custom agents, reusable prompts, and skills are
-provisioned in `.github/`. Together they provide the epistemic criteria, dialog
-patterns, and reusable agent contracts that make each stage effective.
+provisioned in `.github/`. The prompt set now includes a prompt-led Stage 0 entry
+point and a Stage 4 finalize prompt in addition to the earlier stages. Together
+they provide the epistemic criteria, dialog patterns, CLI kickoff rules, and
+reusable agent contracts that make each stage effective.
 
 ## Wiki Browser
 

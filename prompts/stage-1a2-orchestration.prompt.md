@@ -37,6 +37,7 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
 
 Before running the loop:
 - verify the expected `.github/agents/*.agent.md` files exist
+- verify each delegating agent exposes the `agent` tool and includes `explore` and `research` in its `agents:` allowlist
 - if any are missing or materially broken, recreate them using `.github/prompts/create-agent.prompt.md`
 - use `.github/skills/agent-customization/SKILL.md` when fixing frontmatter, tool restrictions, or descriptions
 
@@ -59,6 +60,7 @@ The CLI manages artifacts and validation. The prompt is responsible for invoking
 1. **Initialize loop context**
    - Read Stage 1B and 1C prompt contracts.
   - Confirm the provisioned `.github/agents/` files are present and usable.
+  - Use `explore` for quick reconnaissance across wiki pages, reports, and review artifacts before spawning deeper work.
    - Set `cycle = 1`, `max_cycles = 3`.
 
 2. **Run Stage 1B cycle**
@@ -87,6 +89,12 @@ The CLI manages artifacts and validation. The prompt is responsible for invoking
      meta-compiler review
      meta-compiler validate-stage --stage 1c
      ```
+   - Before reviewer verdict synthesis, launch three independent reviewer-scoped `research` runs:
+     - optimistic: minimum viable proceed evidence
+     - pessimistic: failure modes and missing blockers
+     - pragmatic: blocking-vs-nice-to-have trade-offs
+   - Each reviewer-scoped search must target `consensus.app`, `semanticscholar.org`, and general authoritative web sources when relevant.
+   - Persist normalized search artifacts under `workspace-artifacts/wiki/reviews/search/` using one file per reviewer.
    - Spawn and call these fresh-context Stage 1C reviewer agents:
      - `optimistic-reviewer`
      - `pessimistic-reviewer`
@@ -94,6 +102,9 @@ The CLI manages artifacts and validation. The prompt is responsible for invoking
    - Coordinate them to write:
      - `workspace-artifacts/wiki/reviews/review_verdicts.yaml`
      - `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`
+     - `workspace-artifacts/wiki/reviews/search/optimistic.yaml`
+     - `workspace-artifacts/wiki/reviews/search/pessimistic.yaml`
+     - `workspace-artifacts/wiki/reviews/search/pragmatic.yaml`
      - updates to v2 pages/citations for newly found evidence
 
 4. **Decide loop continuation**
@@ -119,3 +130,4 @@ The CLI manages artifacts and validation. The prompt is responsible for invoking
 - One orchestrated run controls the named 1B/1C custom agents and loop retries.
 - Human receives a concise decision packet, not fragmented per-agent chatter.
 - No hidden state: every decision is represented in workspace artifacts.
+- Reviewer search evidence is persisted as normalized artifacts so Python can aggregate `suggested_sources` without replaying the searches in main context.

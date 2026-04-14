@@ -15,12 +15,12 @@ The human provides vision and judgment at the narrowest bottleneck (Stage 2 dial
 ## Architecture Overview
 
 ```
-Stage 0: Project Initialization (human)
+Stage 0: Prompt-Led Initialization (human + agent)
      ↓ seed docs + problem statement
 Stage 1A: Breadth Research (agent)
      ↓ Wiki v1
 Stage 1A2: Orchestration Loop Controller (agent)
-     ↓ 1B ↔ 1C Loop Managed From One Prompt
+  ↓ 1B ↔ 1C Loop Managed From One Prompt + Reviewer Search Artifacts
 Stage 1B: Depth Pass (3 agents → debate → synthesis)
      ↓ Wiki v2 + Gap Report + Debate Transcript
 Stage 1C: Fresh Review Panel (3 independent agents, fresh context)
@@ -29,7 +29,9 @@ Stage 1C: Fresh Review Panel (3 independent agents, fresh context)
 Stage 2: Vision Elicitation (agent + human dialog, fresh context)
      ↓ Decision Log (rigid schema)
 Stage 3: Project Scaffolding (agent, fresh context)
-  ↓ Folder structure, summary docs, .github custom agents/skills/instructions, requirements
+  ↓ Folder structure, execution contract, What I Built, .github custom agents/skills/instructions
+Stage 4: Execute + Pitch (agent, fresh context)
+  ↓ Final deliverables + refreshed What I Built + PPTX pitch deck
 
 ─────────────────────────────────────────────────────────────
 Post-Scaffold Commands (human-triggered, fresh context each):
@@ -62,6 +64,7 @@ workspace_manifest:
     document_count: int
     
   wiki:
+    name: string
     version: sha256
     last_updated: ISO-8601
     page_count: int
@@ -76,6 +79,16 @@ workspace_manifest:
       parent_version: 1
       reason_for_revision: string
       scaffold_path: /scaffolds/v2/
+
+  executions:
+    - version: 1
+      created: ISO-8601
+      output_dir: /executions/v1/
+
+  pitches:
+    - version: 1
+      created: ISO-8601
+      pptx_path: /pitches/pitch_v1.pptx
       
   status: initialized | researched | scaffolded | active
 ```
@@ -150,12 +163,20 @@ citations:
 **Actor:** Human
 
 **Actions:**
+- Start from the Stage 0 prompt so the agent collects the metadata and calls `meta-init`
 - Create project directory with seed documents (papers, specs, prior work)
-- Write problem statement (2-3 paragraphs):
+- Write or normalize a problem statement with these required sections:
   - Domain and problem space
   - Goals and success criteria
   - Constraints (technical, timeline, resources)
   - Project type (algorithm development / technical report / hybrid)
+
+**CLI contract:**
+
+```bash
+meta-compiler meta-init --project-name "My Project" --problem-domain "domain description" --project-type hybrid --problem-statement-file ./problem_statement.md
+meta-compiler validate-stage --stage 0
+```
 
 **Output:** `/project/seeds/` directory + `PROBLEM_STATEMENT.md` + `workspace_manifest.yaml`
 
@@ -239,7 +260,9 @@ status: raw | reviewed | validated
 - Use the provisioned `.github/agents/stage-1a2-orchestrator.agent.md` as the control agent
 - Spawn and coordinate the provisioned Stage 1B evaluator, debate, and remediation agents
 - Spawn and coordinate the provisioned Stage 1C fresh-review agents
+- Ensure all delegating agents expose the shared `explore` and `research` subagent palette
 - Run the 1B→1C loop from one control prompt
+- Launch three reviewer-scoped search passes and persist normalized artifacts under `workspace-artifacts/wiki/reviews/search/`
 - Route actionable ITERATE findings from 1C back to 1B
 - Persist a handoff packet at `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`
 - Stop on PROCEED or iteration cap
@@ -298,6 +321,12 @@ status: raw | reviewed | validated
 
 **Input:** Wiki v2 + Gap Report (artifacts only)
 
+**Search protocol:** Each reviewer searches independently. Use `explore` for fast
+workspace reconnaissance and `research` for external discovery. Reviewer search
+artifacts should be normalized into `workspace-artifacts/wiki/reviews/search/`
+and should target `consensus.app`, `semanticscholar.org`, and other authoritative
+sources when relevant.
+
 #### Reviewer Roles
 
 1. **Optimistic:** "What's the minimum viable coverage to proceed?"
@@ -336,6 +365,7 @@ proceed_if: "Condition under which ITERATE becomes PROCEED"
 - Wiki v2 available via tool access (NOT loaded into context)
 - Gap Report
 - User-provided project goals and constraints (entered at stage kickoff)
+- Stable wiki name from the manifest, generated at Stage 2 start
 
 #### Wiki Tool Interface
 
@@ -378,6 +408,9 @@ get_debate_transcript(topic) -> why reviewers flagged/approved
 - Requirements document with traced citations
 - Conventions document (math notation, code style, etc.)
 - `ARCHITECTURE.md` describing the generated structure
+- `EXECUTION_MANIFEST.yaml` and `orchestrator/run_stage4.py`
+- Initial `workspace-artifacts/wiki/provenance/what_i_built.md`
+- Generated custom agents whose delegation policy defaults to `explore` and `research`
 
 #### Behavior
 
@@ -392,6 +425,29 @@ get_debate_transcript(topic) -> why reviewers flagged/approved
 | Algorithm | Code scaffold, test stubs, math conventions agent, scope reduction agent |
 | Technical Report | Document outline, citation manager, style conventions, narrative structure agent |
 | Hybrid | Both |
+
+---
+
+### Stage 4: Execute + Pitch
+
+**Actor:** Execution and packaging agent
+
+**Input:** Latest scaffold execution contract + Decision Log version
+
+**Behavior:**
+- Execute the scaffold-generated `orchestrator/run_stage4.py`
+- Persist final deliverables under `workspace-artifacts/executions/v{N}/`
+- Refresh `workspace-artifacts/wiki/provenance/what_i_built.md` with actual outputs
+- Generate both a markdown pitch and a real `.pptx` pitch deck under `workspace-artifacts/pitches/`
+
+**CLI contract:**
+
+```bash
+meta-compiler phase4-finalize
+meta-compiler validate-stage --stage 4
+```
+
+**Output:** Final execution outputs + refreshed product summary + PPTX sales deck
 
 ---
 

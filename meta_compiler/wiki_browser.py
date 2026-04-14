@@ -10,8 +10,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .artifacts import ArtifactPaths, build_paths, ensure_layout
+from .artifacts import ArtifactPaths, build_paths, ensure_layout, load_manifest
+from .utils import read_text_safe
 from .wiki_interface import WikiQueryInterface
+from .wiki_rendering import INDEX_PAGE_ID, browser_href_for_markdown, citation_anchor, heading_id
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,7 @@ class WikiBrowserState:
     paths: ArtifactPaths
     query_interface: WikiQueryInterface
     source_version: str
+    wiki_name: str
 
 
 def _render_inline_markdown(text: str) -> str:
@@ -26,10 +29,27 @@ def _render_inline_markdown(text: str) -> str:
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
     escaped = re.sub(
         r"\[([^\]]+)\]\(([^)]+)\)",
-        lambda match: f'<a href="{escape(match.group(2), quote=True)}" target="_blank" rel="noreferrer">{match.group(1)}</a>',
+        lambda match: (
+            f'<a href="{escape(browser_href_for_markdown(match.group(2)), quote=True)}"'
+            + (
+                ' target="_blank" rel="noreferrer"'
+                if browser_href_for_markdown(match.group(2)).startswith(("http://", "https://", "mailto:"))
+                else ""
+            )
+            + f">{match.group(1)}</a>"
+        ),
+        escaped,
+    )
+    escaped = re.sub(
+        r"\[(src-[^\]]+)\](?!\()",
+        lambda match: f'<a href="?page={INDEX_PAGE_ID}#{citation_anchor(match.group(1))}">{match.group(1)}</a>',
         escaped,
     )
     return escaped
+
+
+def _render_heading(level: int, text: str) -> str:
+    return f'<h{level} id="{heading_id(text)}">{_render_inline_markdown(text)}</h{level}>'
 
 
 def _render_markdown_html(markdown_text: str) -> str:
@@ -79,17 +99,17 @@ def _render_markdown_html(markdown_text: str) -> str:
         if stripped.startswith("### "):
             flush_paragraph()
             close_list()
-            html_parts.append(f"<h3>{_render_inline_markdown(stripped[4:])}</h3>")
+            html_parts.append(_render_heading(3, stripped[4:]))
             continue
         if stripped.startswith("## "):
             flush_paragraph()
             close_list()
-            html_parts.append(f"<h2>{_render_inline_markdown(stripped[3:])}</h2>")
+            html_parts.append(_render_heading(2, stripped[3:]))
             continue
         if stripped.startswith("# "):
             flush_paragraph()
             close_list()
-            html_parts.append(f"<h1>{_render_inline_markdown(stripped[2:])}</h1>")
+            html_parts.append(_render_heading(1, stripped[2:]))
             continue
         if stripped.startswith("- "):
             flush_paragraph()
@@ -105,7 +125,6 @@ def _render_markdown_html(markdown_text: str) -> str:
     close_list()
     if in_code_block:
         html_parts.append("<pre><code>" + escape("\n".join(code_lines)) + "</code></pre>")
-
     return "\n".join(html_parts)
 
 
@@ -124,7 +143,6 @@ def build_page_payload(query_interface: WikiQueryInterface, page_id: str) -> dic
 
     body = str(concept.get("body", ""))
     concept_id = str(concept.get("id", page_id))
-
     return {
         "id": concept_id,
         "title": _extract_title(body, concept_id),
@@ -139,15 +157,33 @@ def build_page_payload(query_interface: WikiQueryInterface, page_id: str) -> dic
     }
 
 
-def _render_shell_html(source_version: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang=\"en\">
+def build_index_payload(paths: ArtifactPaths, query_interface: WikiQueryInterface, wiki_name: str) -> dict[str, object]:
+    source_version = "v2" if query_interface.pages_dir == paths.wiki_v2_pages_dir else "v1"
+    index_path = paths.wiki_v2_dir / "index.md" if source_version == "v2" else paths.wiki_v1_dir / "index.md"
+    body = read_text_safe(index_path) if index_path.exists() else "# Wiki Index\n\nIndex not generated yet."
+    return {
+        "id": INDEX_PAGE_ID,
+        "title": f"{wiki_name} Index",
+        "type": "index",
+        "path": str(index_path),
+        "frontmatter": {},
+        "body_markdown": body,
+        "body_html": _render_markdown_html(body),
+        "relationships": {"concept": INDEX_PAGE_ID, "inbound": [], "outbound": []},
+        "citations": [],
+        "equations": [],
+    }
+
+
+def _render_shell_html(source_version: str, wiki_name: str) -> str:
+    template = """<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>META-COMPILER Wiki Browser</title>
   <style>
-    :root {{
+    :root {
       --bg: #f6f3ea;
       --panel: #fffdf8;
       --ink: #1f1a14;
@@ -155,9 +191,9 @@ def _render_shell_html(source_version: str) -> str:
       --accent: #146356;
       --border: #d7ccbb;
       --shadow: 0 20px 40px rgba(77, 60, 35, 0.08);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
+    }
+    * { box-sizing: border-box; }
+    body {
       margin: 0;
       font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
       color: var(--ink);
@@ -165,15 +201,15 @@ def _render_shell_html(source_version: str) -> str:
         radial-gradient(circle at top left, rgba(20, 99, 86, 0.08), transparent 28%),
         linear-gradient(180deg, #fbf8f1 0%, var(--bg) 100%);
       min-height: 100vh;
-    }}
-    .shell {{
+    }
+    .shell {
       display: grid;
       grid-template-columns: minmax(260px, 340px) 1fr;
       gap: 1rem;
       min-height: 100vh;
       padding: 1rem;
-    }}
-    aside {{
+    }
+    aside {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 18px;
@@ -183,28 +219,28 @@ def _render_shell_html(source_version: str) -> str:
       overflow: auto;
       min-width: 240px;
       max-width: 45vw;
-    }}
-    main {{
+    }
+    main {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 18px;
       padding: 1.5rem;
       box-shadow: var(--shadow);
       overflow: auto;
-    }}
-    h1, h2, h3 {{ line-height: 1.15; }}
-    .eyebrow {{ color: var(--accent); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }}
-    .status {{ color: var(--muted); font-size: 0.92rem; margin-top: 0.25rem; }}
-    .search {{ display: flex; gap: 0.5rem; margin: 1rem 0; }}
-    .search input {{
+    }
+    h1, h2, h3 { line-height: 1.15; }
+    .eyebrow { color: var(--accent); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
+    .status { color: var(--muted); font-size: 0.92rem; margin-top: 0.25rem; }
+    .search { display: flex; gap: 0.5rem; margin: 1rem 0; }
+    .search input {
       flex: 1;
       padding: 0.75rem 0.9rem;
       border-radius: 12px;
       border: 1px solid var(--border);
       background: #fff;
       font: inherit;
-    }}
-    .search button, .page-link {{
+    }
+    .search button, .page-link {
       border: 0;
       border-radius: 12px;
       padding: 0.75rem 0.95rem;
@@ -212,171 +248,195 @@ def _render_shell_html(source_version: str) -> str:
       color: white;
       font: inherit;
       cursor: pointer;
-    }}
-    .page-list {{ display: grid; gap: 0.55rem; }}
-    .page-link {{
+    }
+    .page-list { display: grid; gap: 0.55rem; }
+    .page-link {
       width: 100%;
       text-align: left;
       background: #f0eadf;
       color: var(--ink);
       border: 1px solid transparent;
-    }}
-    .page-link:hover, .page-link.active {{ border-color: var(--accent); background: #e3f0ed; }}
-    .page-type {{ display: block; color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }}
-    .content-meta {{ display: flex; flex-wrap: wrap; gap: 0.75rem; color: var(--muted); font-size: 0.92rem; margin-bottom: 1rem; }}
-    .content-grid {{ display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }}
-    .card {{ border: 1px solid var(--border); border-radius: 14px; padding: 1rem; background: #fff; }}
-    .markdown-view h1:first-child {{ margin-top: 0; }}
-    .markdown-view pre {{ background: #1f1a14; color: #f8f5ef; padding: 0.9rem; border-radius: 12px; overflow: auto; }}
-    .markdown-view code {{ background: #f0eadf; padding: 0.1rem 0.35rem; border-radius: 6px; }}
-    ul {{ padding-left: 1.2rem; }}
-    details {{ margin-top: 1rem; }}
-    @media (max-width: 900px) {{
-      .shell {{ grid-template-columns: 1fr; }}
-      aside {{ max-width: none; resize: none; }}
-      .content-grid {{ grid-template-columns: 1fr; }}
-    }}
+    }
+    .page-link:hover, .page-link.active { border-color: var(--accent); background: #e3f0ed; }
+    .page-type { display: block; color: var(--muted); font-size: 0.82rem; margin-top: 0.2rem; }
+    .content-meta { display: flex; flex-wrap: wrap; gap: 0.75rem; color: var(--muted); font-size: 0.92rem; margin-bottom: 1rem; }
+    .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+    .card { border: 1px solid var(--border); border-radius: 14px; padding: 1rem; background: #fff; }
+    .markdown-view h1:first-child { margin-top: 0; }
+    .markdown-view pre { background: #1f1a14; color: #f8f5ef; padding: 0.9rem; border-radius: 12px; overflow: auto; }
+    .markdown-view code { background: #f0eadf; padding: 0.1rem 0.35rem; border-radius: 6px; }
+    ul { padding-left: 1.2rem; }
+    details { margin-top: 1rem; }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { max-width: none; resize: none; }
+      .content-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-  <div class=\"shell\">
+  <div class="shell">
     <aside>
-      <div class=\"eyebrow\">META-COMPILER Wiki Browser</div>
-      <h1>Wiki {escape(source_version.upper())}</h1>
-      <div class=\"status\" id=\"status\">Loading pages...</div>
-      <form class=\"search\" id=\"search-form\">
-        <input id=\"search-input\" type=\"search\" placeholder=\"Search concepts, equations, citations\" />
-        <button type=\"submit\">Find</button>
+      <div class="eyebrow">META-COMPILER Wiki Browser</div>
+      <h1><a href="?page=__INDEX_PAGE_ID__" style="color: inherit; text-decoration: none;">__WIKI_NAME__</a></h1>
+      <div class="status" id="status">Loading pages...</div>
+      <form class="search" id="search-form">
+        <input id="search-input" type="search" placeholder="Search concepts, equations, citations" />
+        <button type="submit">Find</button>
       </form>
-      <div class=\"page-list\" id=\"page-list\"></div>
+      <div class="page-list" id="page-list"></div>
     </aside>
     <main>
-      <div class=\"eyebrow\">Selected Page</div>
-      <h1 id=\"page-title\">Choose a page</h1>
-      <div class=\"content-meta\" id=\"page-meta\"></div>
-      <div class=\"content-grid\">
-        <section class=\"card markdown-view\" id=\"page-body\">Use the list to open a wiki page.</section>
-        <section class=\"card\">
+      <div class="eyebrow">Selected Page</div>
+      <h1 id="page-title">Choose a page</h1>
+      <div class="content-meta" id="page-meta"></div>
+      <div class="content-grid">
+        <section class="card markdown-view" id="page-body">Use the list to open a wiki page.</section>
+        <section class="card">
           <h2>Relationships</h2>
-          <div id=\"page-relationships\">No page loaded.</div>
+          <div id="page-relationships">No page loaded.</div>
           <h2>Citations</h2>
-          <div id=\"page-citations\">No page loaded.</div>
+          <div id="page-citations">No page loaded.</div>
         </section>
       </div>
       <details>
         <summary>Raw Markdown</summary>
-        <pre id=\"page-raw\"></pre>
+        <pre id="page-raw"></pre>
       </details>
     </main>
   </div>
   <script>
-    const state = {{ pages: [], activePage: null }};
+    const state = { pages: [], activePage: null };
 
-    function pageParam() {{
+    function pageParam() {
       const params = new URLSearchParams(window.location.search);
       return params.get('page');
-    }}
+    }
 
-    function updateStatus(text) {{
+    function updateStatus(text) {
       document.getElementById('status').textContent = text;
-    }}
+    }
 
-    function renderList(items) {{
+    function pageHref(pageId, hash = '') {
+      return `?page=${encodeURIComponent(pageId)}${hash ? '#' + hash : ''}`;
+    }
+
+    function scrollToHash() {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (!hash) {
+        return;
+      }
+      const target = document.getElementById(hash);
+      if (target) {
+        target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    }
+
+    function renderList(items) {
       const list = document.getElementById('page-list');
       list.innerHTML = '';
-      for (const item of items) {{
+      for (const item of items) {
         const button = document.createElement('button');
         button.className = 'page-link' + (state.activePage === item.id ? ' active' : '');
-        button.innerHTML = `<strong>${{item.title}}</strong><span class=\"page-type\">${{item.type}}</span>`;
+        button.innerHTML = `<strong>${item.title}</strong><span class="page-type">${item.type}</span>`;
         button.addEventListener('click', () => loadPage(item.id, true));
         list.appendChild(button);
-      }}
-    }}
+      }
+    }
 
-    function renderRelationships(relationships) {{
+    function renderRelationships(relationships) {
       const lines = [];
-      if (relationships.outbound && relationships.outbound.length) {{
-        lines.push('<h3>Outbound</h3><ul>' + relationships.outbound.map(item => `<li>${{item.target || item.value}}</li>`).join('') + '</ul>');
-      }}
-      if (relationships.inbound && relationships.inbound.length) {{
-        lines.push('<h3>Inbound</h3><ul>' + relationships.inbound.map(item => `<li>${{item.source || item.value}}</li>`).join('') + '</ul>');
-      }}
+      if (relationships.outbound && relationships.outbound.length) {
+        lines.push('<h3>Outbound</h3><ul>' + relationships.outbound.map(item => {
+          if (item.target) {
+            return `<li><a href="${pageHref(item.target)}">${item.target}</a></li>`;
+          }
+          return `<li>${item.value || 'unknown'}</li>`;
+        }).join('') + '</ul>');
+      }
+      if (relationships.inbound && relationships.inbound.length) {
+        lines.push('<h3>Inbound</h3><ul>' + relationships.inbound.map(item => {
+          if (item.source) {
+            return `<li><a href="${pageHref(item.source)}">${item.source}</a></li>`;
+          }
+          return `<li>${item.value || 'unknown'}</li>`;
+        }).join('') + '</ul>');
+      }
       return lines.join('') || 'No relationships recorded.';
-    }}
+    }
 
-    function renderCitations(citations) {{
-      if (!citations.length) {{
+    function renderCitations(citations) {
+      if (!citations.length) {
         return 'No citations recorded.';
-      }}
-      return '<ul>' + citations.map(item => `<li><strong>${{item.citation_id}}</strong><br>${{item.human || 'No human-readable label'}} </li>`).join('') + '</ul>';
-    }}
+      }
+      return '<ul>' + citations.map(item => `<li><a href="${pageHref('__INDEX_PAGE_ID__', item.citation_id)}"><strong>${item.citation_id}</strong></a><br>${item.human || 'No human-readable label'} </li>`).join('') + '</ul>';
+    }
 
-    async function loadIndex() {{
+    async function loadIndex() {
       const response = await fetch('/api/index');
       const payload = await response.json();
-      state.pages = payload.pages;
-      updateStatus(`${{payload.pages.length}} pages loaded from ${payload.source_version}.`);
+      state.pages = [{ id: '__INDEX_PAGE_ID__', title: payload.index_title, type: 'index' }, ...payload.pages];
+      updateStatus(`${payload.pages.length} pages loaded from ${payload.source_version}.`);
       renderList(state.pages);
-      const firstPage = pageParam() || (state.pages[0] && state.pages[0].id);
-      if (firstPage) {{
-        await loadPage(firstPage, false);
-      }}
-    }}
+      await loadPage(pageParam() || '__INDEX_PAGE_ID__', false);
+    }
 
-    async function loadPage(pageId, pushState) {{
-      const response = await fetch(`/api/page?id=${{encodeURIComponent(pageId)}}`);
-      if (!response.ok) {{
-        updateStatus(`Failed to load page ${{pageId}}.`);
+    async function loadPage(pageId, pushState) {
+      const response = await fetch(`/api/page?id=${encodeURIComponent(pageId)}`);
+      if (!response.ok) {
+        updateStatus(`Failed to load page ${pageId}.`);
         return;
-      }}
+      }
       const page = await response.json();
       state.activePage = page.id;
       renderList(state.pages);
       document.getElementById('page-title').textContent = page.title;
       document.getElementById('page-meta').innerHTML = [
-        `<span>Type: ${{page.type}}</span>`,
-        `<span>Path: ${{page.path}}</span>`,
-        `<span>ID: ${{page.id}}</span>`
+        `<span>Type: ${page.type}</span>`,
+        `<span>Path: ${page.path}</span>`,
+        `<span>ID: ${page.id}</span>`
       ].join('');
       document.getElementById('page-body').innerHTML = page.body_html;
       document.getElementById('page-relationships').innerHTML = renderRelationships(page.relationships);
       document.getElementById('page-citations').innerHTML = renderCitations(page.citations);
       document.getElementById('page-raw').textContent = page.body_markdown;
-      updateStatus(`Viewing ${{page.id}}.`);
-      if (pushState) {{
+      updateStatus(`Viewing ${page.id}.`);
+      if (pushState) {
         const url = new URL(window.location.href);
         url.searchParams.set('page', page.id);
-        window.history.pushState({{ page: page.id }}, '', url);
-      }}
-    }}
+        window.history.pushState({ page: page.id }, '', url);
+      }
+      scrollToHash();
+    }
 
-    document.getElementById('search-form').addEventListener('submit', async (event) => {{
+    document.getElementById('search-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const query = document.getElementById('search-input').value.trim();
-      if (!query) {{
+      if (!query) {
         renderList(state.pages);
-        updateStatus(`${{state.pages.length}} pages loaded from {escape(source_version)}.`);
         return;
-      }}
+      }
 
-      const response = await fetch(`/api/search?q=${{encodeURIComponent(query)}}`);
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
       const payload = await response.json();
-      updateStatus(`${{payload.results.length}} search results for "${{query}}".`);
-      renderList(payload.results.map(item => ({{ id: item.concept_id, title: item.concept_id, type: item.type }})));
-    }});
+      updateStatus(`${payload.results.length} search results for "${query}".`);
+      renderList(payload.results.map(item => ({ id: item.concept_id, title: item.concept_id, type: item.type })));
+    });
 
-    window.addEventListener('popstate', async () => {{
-      const page = pageParam();
-      if (page) {{
-        await loadPage(page, false);
-      }}
-    }});
+    window.addEventListener('popstate', async () => {
+      await loadPage(pageParam() || '__INDEX_PAGE_ID__', false);
+    });
 
     loadIndex();
   </script>
 </body>
 </html>
 """
+    return (
+        template.replace("__WIKI_NAME__", escape(wiki_name))
+        .replace("__SOURCE_VERSION__", escape(source_version))
+        .replace("__INDEX_PAGE_ID__", INDEX_PAGE_ID)
+    )
 
 
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -403,7 +463,7 @@ def _make_handler(state: WikiBrowserState):
             parsed = urlparse(self.path)
 
             if parsed.path == "/":
-                _html_response(self, _render_shell_html(state.source_version))
+                _html_response(self, _render_shell_html(state.source_version, state.wiki_name))
                 return
 
             if parsed.path == "/api/index":
@@ -412,6 +472,8 @@ def _make_handler(state: WikiBrowserState):
                     {
                         "pages": state.query_interface.list_pages(),
                         "source_version": state.source_version,
+                        "wiki_name": state.wiki_name,
+                        "index_title": f"{state.wiki_name} Index",
                     },
                 )
                 return
@@ -429,7 +491,11 @@ def _make_handler(state: WikiBrowserState):
 
             if parsed.path == "/api/page":
                 page_id = parse_qs(parsed.query).get("id", [""])[0]
-                payload = build_page_payload(state.query_interface, page_id)
+                payload = (
+                    build_index_payload(state.paths, state.query_interface, state.wiki_name)
+                    if page_id == INDEX_PAGE_ID
+                    else build_page_payload(state.query_interface, page_id)
+                )
                 if payload is None:
                     _json_response(self, {"error": f"Unknown page: {page_id}"}, status=HTTPStatus.NOT_FOUND)
                     return
@@ -467,7 +533,14 @@ def create_wiki_browser_server(
 
     query_interface = WikiQueryInterface(paths, prefer_v2=not prefer_v1)
     source_version = "v2" if query_interface.pages_dir == paths.wiki_v2_pages_dir else "v1"
-    state = WikiBrowserState(paths=paths, query_interface=query_interface, source_version=source_version)
+    manifest = load_manifest(paths)
+    wiki_name = str(manifest.get("workspace_manifest", {}).get("wiki", {}).get("name") or f"Wiki {source_version.upper()}")
+    state = WikiBrowserState(
+        paths=paths,
+        query_interface=query_interface,
+        source_version=source_version,
+        wiki_name=wiki_name,
+    )
     server = _bind_server(_make_handler(state), port=port)
     actual_port = int(server.server_address[1])
     url = f"http://127.0.0.1:{actual_port}/"

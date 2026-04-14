@@ -25,6 +25,7 @@ from ..immutable_sources import (
 from ..io import dump_yaml, load_yaml, render_frontmatter
 from ..utils import extract_keywords, iso_now, read_text_safe, sha256_file, slugify
 from ..wiki_lifecycle import append_log_entry, write_index
+from ..wiki_rendering import citation_markdown_link, inject_wiki_nav
 
 
 TEXT_EXTENSIONS = {
@@ -51,7 +52,14 @@ def _next_citation_id(base_slug: str, existing: set[str]) -> str:
     return f"{candidate}-{suffix}"
 
 
-def _build_source_page(page_id: str, citation_id: str, seed_relpath: str, created: str, excerpt: str) -> str:
+def _build_source_page(
+    page_id: str,
+    citation_id: str,
+    seed_relpath: str,
+    created: str,
+    excerpt: str,
+    wiki_name: str = "",
+) -> str:
     frontmatter = {
         "id": page_id,
         "type": "source",
@@ -60,7 +68,7 @@ def _build_source_page(page_id: str, citation_id: str, seed_relpath: str, create
         "related": [],
         "status": "raw",
     }
-    return (
+    page = (
         "---\n"
         + render_frontmatter(frontmatter)
         + "\n---\n"
@@ -70,7 +78,7 @@ def _build_source_page(page_id: str, citation_id: str, seed_relpath: str, create
         + "## Formalism\n"
         + "No formalism extracted in wiki-update pass.\n\n"
         + "## Key Claims\n"
-        + f"- Source imported via wiki-update [{citation_id}]\n\n"
+        + f"- Source imported via wiki-update {citation_markdown_link(citation_id)}\n\n"
         + "## Relationships\n"
         + "- prerequisite_for: []\n"
         + "- depends_on: []\n"
@@ -81,9 +89,10 @@ def _build_source_page(page_id: str, citation_id: str, seed_relpath: str, create
         + "## Source Notes\n"
         + f"{excerpt}\n"
     )
+    return inject_wiki_nav(page, wiki_name)
 
 
-def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
+def _build_concept_page(page_id: str, citation_id: str, created: str, wiki_name: str = "") -> str:
     frontmatter = {
         "id": page_id,
         "type": "concept",
@@ -93,7 +102,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         "status": "raw",
     }
     title = page_id.replace("-", " ").title()
-    return (
+    page = (
         "---\n"
         + render_frontmatter(frontmatter)
         + "\n---\n"
@@ -103,7 +112,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         + "## Formalism\n"
         + "No formalism captured yet.\n\n"
         + "## Key Claims\n"
-        + f"- Concept surfaced via wiki-update [{citation_id}]\n\n"
+        + f"- Concept surfaced via wiki-update {citation_markdown_link(citation_id)}\n\n"
         + "## Relationships\n"
         + "- prerequisite_for: []\n"
         + "- depends_on: []\n"
@@ -114,6 +123,7 @@ def _build_concept_page(page_id: str, citation_id: str, created: str) -> str:
         + "## Source Notes\n"
         + "wiki-update placeholder; refine with depth pass or manual review.\n"
     )
+    return inject_wiki_nav(page, wiki_name)
 
 
 def _find_new_seeds(paths: ArtifactPaths) -> list[Path]:
@@ -202,6 +212,10 @@ def run_wiki_update(artifacts_root: Path, workspace_root: Path) -> dict:
     created = iso_now()
     created_pages: list[str] = []
     documents_added: list[dict] = []
+    manifest = load_manifest(paths)
+    wiki_name = ""
+    if manifest:
+        wiki_name = str(manifest.get("workspace_manifest", {}).get("wiki", {}).get("name") or "")
 
     for seed in new_seeds:
         file_hash = sha256_file(seed)
@@ -243,6 +257,7 @@ def run_wiki_update(artifacts_root: Path, workspace_root: Path) -> dict:
                 seed_relpath=str(relative_path),
                 created=created,
                 excerpt=_source_excerpt(seed),
+                wiki_name=wiki_name,
             ),
             encoding="utf-8",
         )
@@ -260,7 +275,7 @@ def run_wiki_update(artifacts_root: Path, workspace_root: Path) -> dict:
             if concept_path.exists():
                 continue
             concept_path.write_text(
-                _build_concept_page(concept_page_id, citation_id, created),
+                _build_concept_page(concept_page_id, citation_id, created, wiki_name=wiki_name),
                 encoding="utf-8",
             )
             created_pages.append(concept_page_id)
@@ -298,15 +313,13 @@ def run_wiki_update(artifacts_root: Path, workspace_root: Path) -> dict:
     )
 
     # Update manifest
-    manifest = load_manifest(paths)
     if manifest:
         wm = manifest["workspace_manifest"]
         new_version = compute_wiki_version(paths.wiki_v2_pages_dir)
-        wm["wiki"] = {
-            "version": new_version,
-            "last_updated": created,
-            "page_count": len(list(paths.wiki_v2_pages_dir.glob("*.md"))),
-        }
+        wiki = wm.setdefault("wiki", {})
+        wiki["version"] = new_version
+        wiki["last_updated"] = created
+        wiki["page_count"] = len(list(paths.wiki_v2_pages_dir.glob("*.md")))
         wm["seeds"] = {
             "version": compute_seed_version(paths),
             "last_updated": created,

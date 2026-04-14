@@ -1,7 +1,8 @@
 ---
 name: optimistic-reviewer
 description: "Use when running META-COMPILER Stage 1C optimistic review, minimum viable proceed review, or best-case assessment of whether wiki coverage is sufficient to enter Stage 2."
-tools: [read, search, edit, web]
+tools: [read, search, edit, web, agent]
+agents: [explore, research]
 user-invocable: false
 ---
 You are the Optimistic Reviewer for META-COMPILER Stage 1C.

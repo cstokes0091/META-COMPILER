@@ -110,6 +110,7 @@ def _build_stage_1a2_handoff(
     consensus: dict[str, object],
     iteration_count: int,
     unresolved_gap_count: int,
+    suggested_sources: list[dict],
 ) -> dict:
     decision = str(consensus.get("decision", "ITERATE"))
     ready_signal = (
@@ -139,7 +140,7 @@ def _build_stage_1a2_handoff(
                 list_name="non_blocking_gaps",
                 explanation_field="impact_if_ignored",
             ),
-            "suggested_sources": [],
+            "suggested_sources": suggested_sources,
             "next_action": (
                 "Proceed to Stage 2 using the ready signal."
                 if decision == "PROCEED"
@@ -148,6 +149,52 @@ def _build_stage_1a2_handoff(
             "ready_signal": ready_signal,
         }
     }
+
+
+def _collect_suggested_sources(paths) -> list[dict]:
+    suggestions: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for artifact_path in sorted(paths.reviews_search_dir.glob("*.yaml")):
+        payload = load_yaml(artifact_path)
+        if not isinstance(payload, dict):
+            continue
+
+        root = payload.get("search_results")
+        if not isinstance(root, dict):
+            root = payload.get("review_search")
+        if not isinstance(root, dict):
+            root = payload
+
+        reviewer = str(root.get("reviewer") or artifact_path.stem)
+        sources = root.get("sources", [])
+        if not isinstance(sources, list):
+            continue
+
+        for row in sources:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title") or "").strip()
+            url = str(row.get("url") or "").strip()
+            provider = str(row.get("provider") or "").strip()
+            if not title or not url or not provider:
+                continue
+
+            key = (title.lower(), url)
+            if key in seen:
+                continue
+            seen.add(key)
+            suggestions.append(
+                {
+                    "title": title,
+                    "provider": provider,
+                    "url": url,
+                    "reviewer": reviewer,
+                    "rationale": str(row.get("rationale") or "").strip(),
+                }
+            )
+
+    return suggestions
 
 
 def compute_consensus(verdicts: dict[str, dict], iteration_count: int) -> dict:
@@ -222,6 +269,7 @@ def run_review(artifacts_root: Path) -> dict:
         "pessimistic": _build_verdict("pessimistic", gaps, health_metrics),
         "pragmatic": _build_verdict("pragmatic", gaps, health_metrics),
     }
+    suggested_sources = _collect_suggested_sources(paths)
     consensus = compute_consensus(verdicts, iteration_count=iteration_count)
 
     if consensus["decision"] == "ITERATE":
@@ -252,6 +300,7 @@ def run_review(artifacts_root: Path) -> dict:
             consensus=consensus,
             iteration_count=research["iteration_count"],
             unresolved_gap_count=unresolved_gap_count,
+            suggested_sources=suggested_sources,
         ),
     )
 
@@ -265,6 +314,7 @@ def run_review(artifacts_root: Path) -> dict:
             f"proceed_votes: {consensus['proceed_votes']}",
             f"orphan_pages: {len(health_metrics.get('orphan_pages', []))}",
             f"sparse_citation_pages: {len(health_metrics.get('sparse_citation_pages', []))}",
+            f"suggested_sources: {len(suggested_sources)}",
         ],
     )
 
@@ -276,6 +326,7 @@ def run_review(artifacts_root: Path) -> dict:
         "iteration_count": research["iteration_count"],
         "requires_human_judgment": consensus["requires_human_judgment"],
         "handoff_path": str(paths.reviews_dir / "1a2_handoff.yaml"),
+        "suggested_source_count": len(suggested_sources),
         "orphan_pages": len(health_metrics.get("orphan_pages", [])),
         "sparse_citation_pages": len(health_metrics.get("sparse_citation_pages", [])),
     }

@@ -10,6 +10,7 @@ from .stages.breadth_stage import run_research_breadth
 from .stages.depth_stage import run_research_depth
 from .stages.elicit_stage import run_elicit_vision
 from .stages.init_stage import run_meta_init
+from .stages.phase4_stage import run_phase4_finalize
 from .stages.review_stage import run_review
 from .stages.scaffold_stage import run_scaffold
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
@@ -34,7 +35,7 @@ def _add_common_paths(parser: argparse.ArgumentParser) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="meta-compiler",
-        description="META-COMPILER orchestration CLI for stages 0/1A/1B/1C/2/3",
+        description="META-COMPILER orchestration CLI for stages 0/1A/1B/1C/2/3/4",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -46,6 +47,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--project-type",
         required=True,
         choices=["algorithm", "report", "hybrid"],
+    )
+    init_parser.add_argument(
+        "--problem-statement",
+        default=None,
+        help="Optional problem statement body to write into PROBLEM_STATEMENT.md during init",
+    )
+    init_parser.add_argument(
+        "--problem-statement-file",
+        default=None,
+        help="Optional file containing a problem statement body to write during init",
     )
     init_parser.add_argument("--force", action="store_true", help="Overwrite initial templates")
 
@@ -82,6 +93,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Decision log version to scaffold (default: latest)",
     )
 
+    phase4_parser = subparsers.add_parser(
+        "phase4-finalize",
+        help="Run Stage 4 execution and pitch generation",
+    )
+    _add_common_paths(phase4_parser)
+    phase4_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to finalize (default: latest scaffold/decision log)",
+    )
+
     wiki_update_parser = subparsers.add_parser("wiki-update", help="Incremental wiki expansion from new seeds")
     _add_common_paths(wiki_update_parser)
 
@@ -111,12 +134,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default="all",
         choices=[
             "all",
+            "0",
             "manifest",
+            "init",
             "1a",
             "1b",
             "1c",
             "2",
             "3",
+            "4",
+            "phase4",
+            "pitch",
             "citations",
             "depth",
             "review",
@@ -135,6 +163,15 @@ def _resolve_artifact_root(workspace_root: Path, artifacts_root: str) -> Path:
     return workspace_root / root_path
 
 
+def _resolve_problem_statement_text(args: argparse.Namespace) -> str | None:
+    if getattr(args, "problem_statement", None):
+        return str(args.problem_statement)
+    file_path = getattr(args, "problem_statement_file", None)
+    if not file_path:
+        return None
+    return Path(file_path).read_text(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -150,6 +187,7 @@ def main(argv: list[str] | None = None) -> int:
                 project_name=args.project_name,
                 problem_domain=args.problem_domain,
                 project_type=args.project_type,
+                problem_statement=_resolve_problem_statement_text(args),
                 force=args.force,
             )
         elif args.command == "research-breadth":
@@ -170,6 +208,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "scaffold":
             result = run_scaffold(
                 artifacts_root=artifacts_root,
+                decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "phase4-finalize":
+            result = run_phase4_finalize(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
                 decision_log_version=args.decision_log_version,
             )
         elif args.command == "wiki-update":

@@ -5,15 +5,18 @@ from typing import Any
 
 from ..artifacts import (
     build_paths,
+    derive_wiki_name,
     ensure_layout,
     latest_decision_log_path,
     load_manifest,
     save_manifest,
 )
-from ..io import dump_yaml, load_yaml
+from ..io import dump_yaml, load_yaml, parse_frontmatter, render_frontmatter
 from ..utils import iso_now, read_text_safe, sha256_bytes
 from ..validation import validate_decision_log
 from ..wiki_interface import WikiQueryInterface
+from ..wiki_lifecycle import write_index
+from ..wiki_rendering import inject_wiki_nav
 
 
 def _problem_statement_hash(workspace_root: Path) -> str:
@@ -66,6 +69,36 @@ def _collect_citations(wiki: WikiQueryInterface, topic_hint: str) -> list[str]:
 
 def _save_checkpoint(path: Path, payload: dict[str, Any]) -> None:
     dump_yaml(path, payload)
+
+
+def _apply_wiki_name_to_pages(paths, wiki_name: str) -> None:
+    page_sets = [
+        (paths.wiki_v1_pages_dir, paths.wiki_v1_dir / "index.md", "Wiki v1 Index"),
+        (paths.wiki_v2_pages_dir, paths.wiki_v2_dir / "index.md", "Wiki v2 Index"),
+    ]
+
+    for pages_dir, index_path, title in page_sets:
+        if not pages_dir.exists():
+            continue
+
+        page_paths = sorted(pages_dir.glob("*.md"))
+        for page_path in page_paths:
+            text = read_text_safe(page_path)
+            frontmatter, body = parse_frontmatter(text)
+            if not frontmatter:
+                continue
+
+            updated_body = inject_wiki_nav(body, wiki_name)
+            updated_text = "---\n" + render_frontmatter(frontmatter) + "\n---\n" + updated_body.rstrip() + "\n"
+            if updated_text != text:
+                page_path.write_text(updated_text, encoding="utf-8")
+
+        if page_paths:
+            write_index(
+                pages_dir=pages_dir,
+                index_path=index_path,
+                title=title,
+            )
 
 
 def _new_decision_log(
@@ -286,6 +319,16 @@ def run_elicit_vision(
     manifest = load_manifest(paths)
     if not manifest:
         raise RuntimeError("Manifest not found. Run meta-init first.")
+
+    wm = manifest["workspace_manifest"]
+    wiki = wm.setdefault("wiki", {})
+    if not wiki.get("name"):
+        wiki["name"] = derive_wiki_name(
+            str(wm.get("name", "META-COMPILER")),
+            str(wm.get("project_type", "hybrid")),
+        )
+        _apply_wiki_name_to_pages(paths, str(wiki["name"]))
+        save_manifest(paths, manifest)
 
     latest = latest_decision_log_path(paths)
     if latest is None:

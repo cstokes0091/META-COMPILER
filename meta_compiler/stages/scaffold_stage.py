@@ -51,6 +51,7 @@ def _ensure_scaffold_layout(scaffold_root: Path, project_type: str) -> dict[str,
         "custom_agents": scaffold_root / ".github" / "agents",
         "custom_skills": scaffold_root / ".github" / "skills",
         "custom_instructions": scaffold_root / ".github" / "instructions",
+        "orchestrator": scaffold_root / "orchestrator",
     }
 
     if project_type in {"algorithm", "hybrid"}:
@@ -433,6 +434,7 @@ def _write_agent_specs(
             "name": slug,
             "description": _agent_description(role, row, project_type=project_type),
             "tools": _infer_agent_tools(row),
+            "agents": _default_subagent_allowlist(),
             "user-invocable": False,
         }
         custom_body_lines = [
@@ -464,6 +466,8 @@ def _write_agent_specs(
             [
                 "- Input is the Decision Log and scaffold artifacts only.",
                 "- Preserve requirement IDs and citation IDs exactly as recorded.",
+                "- Use the 'explore' subagent for fast local discovery and narrow searches.",
+                "- Use the 'research' subagent for deeper multi-source investigation and synthesis.",
                 "- Escalate missing decisions to Stage 2 instead of improvising.",
                 "",
                 "## Decision Trace",
@@ -528,7 +532,7 @@ def _markdown_with_frontmatter(frontmatter: dict[str, Any], body_lines: list[str
 def _infer_agent_tools(row: dict[str, Any]) -> list[str]:
     writes = set(_as_string_list(row.get("writes", [])))
     responsibility = str(row.get("responsibility", "")).lower()
-    tools = ["read", "search"]
+    tools = ["read", "search", "agent"]
 
     if writes:
         tools.append("edit")
@@ -538,6 +542,10 @@ def _infer_agent_tools(row: dict[str, Any]) -> list[str]:
         tools.append("web")
 
     return _ordered_unique(tools)
+
+
+def _default_subagent_allowlist() -> list[str]:
+    return ["explore", "research"]
 
 
 def _agent_description(role: str, row: dict[str, Any], project_type: str) -> str:
@@ -561,6 +569,214 @@ def _clear_directory_tree(directory: Path) -> None:
             shutil.rmtree(existing)
         else:
             existing.unlink()
+
+
+def _write_execution_contract(
+    layout: dict[str, Path],
+    decision_log: dict[str, Any],
+    project_type: str,
+    version: int,
+) -> tuple[Path, Path]:
+    root = decision_log["decision_log"]
+    requirement_ids = [
+        row.get("id", "REQ-UNK")
+        for row in root.get("requirements", [])
+        if isinstance(row, dict)
+    ] or ["REQ-000"]
+    citation_ids = _collect_citation_ids(root)
+
+    execution_manifest_path = layout["root"] / "EXECUTION_MANIFEST.yaml"
+    dump_yaml(
+        execution_manifest_path,
+        {
+            "execution": {
+                "generated_at": iso_now(),
+                "decision_log_version": version,
+                "project_type": project_type,
+                "orchestrator_path": "orchestrator/run_stage4.py",
+                "default_output_dir": f"workspace-artifacts/executions/v{version}",
+                "requirement_ids": requirement_ids,
+                "citation_ids": citation_ids,
+            }
+        },
+    )
+
+    script_lines = [
+        "from __future__ import annotations",
+        "",
+        "import argparse",
+        "import importlib.util",
+        "from pathlib import Path",
+        "",
+        "import yaml",
+        "",
+        "",
+        "SCAFFOLD_ROOT = Path(__file__).resolve().parents[1]",
+        f"PROJECT_TYPE = {project_type!r}",
+        f"DECISION_LOG_VERSION = {version}",
+        f"REQUIREMENT_IDS = {requirement_ids!r}",
+        f"CITATION_IDS = {citation_ids!r}",
+        "",
+        "",
+        "def _load_generated_module():",
+        "    module_path = SCAFFOLD_ROOT / 'code' / 'main.py'",
+        "    if not module_path.exists():",
+        "        return None",
+        "    spec = importlib.util.spec_from_file_location('generated_stage4_main', module_path)",
+        "    if spec is None or spec.loader is None:",
+        "        return None",
+        "    module = importlib.util.module_from_spec(spec)",
+        "    spec.loader.exec_module(module)",
+        "    return module",
+        "",
+        "",
+        "def _write_text(path: Path, text: str) -> None:",
+        "    path.parent.mkdir(parents=True, exist_ok=True)",
+        "    path.write_text(text.rstrip() + '\\n', encoding='utf-8')",
+        "",
+        "",
+        "def main() -> int:",
+        "    parser = argparse.ArgumentParser(description='Run the scaffold Stage 4 orchestrator.')",
+        "    parser.add_argument('--output-dir', required=True)",
+        "    args = parser.parse_args()",
+        "",
+        "    output_dir = Path(args.output_dir).resolve()",
+        "    output_dir.mkdir(parents=True, exist_ok=True)",
+        "    deliverables: list[dict[str, str]] = []",
+        "    execution_notes: list[str] = []",
+        "",
+        "    if PROJECT_TYPE in {'algorithm', 'hybrid'}:",
+        "        generated_module = _load_generated_module()",
+        "        workflow_state = 'not-run'",
+        "        if generated_module is not None:",
+        "            runner = getattr(generated_module, 'run_workflow', None)",
+        "            if callable(runner):",
+        "                runner()",
+        "                workflow_state = 'run_workflow_executed'",
+        "        algorithm_output = output_dir / 'algorithm_output.md'",
+        "        _write_text(",
+        "            algorithm_output,",
+        "            '\\n'.join([",
+        "                '# Algorithm Output',",
+        "                '',",
+        "                f'- Decision Log Version: v{DECISION_LOG_VERSION}',",
+        "                f'- Workflow state: {workflow_state}',",
+        "                f'- Requirement IDs: {', '.join(REQUIREMENT_IDS)}',",
+        "                f'- Citation IDs: {', '.join(CITATION_IDS) if CITATION_IDS else 'None'}',",
+        "                '',",
+        "                'This artifact is the executable handoff produced by the scaffold orchestrator.',",
+        "            ])",
+        "        )",
+        "        deliverables.append({'kind': 'algorithm-output', 'path': str(algorithm_output)})",
+        "        execution_notes.append(workflow_state)",
+        "",
+        "    if PROJECT_TYPE in {'report', 'hybrid'}:",
+        "        outline_path = SCAFFOLD_ROOT / 'report' / 'OUTLINE.md'",
+        "        draft_path = SCAFFOLD_ROOT / 'report' / 'DRAFT.md'",
+        "        outline = outline_path.read_text(encoding='utf-8') if outline_path.exists() else '# Missing Outline\\n'",
+        "        draft = draft_path.read_text(encoding='utf-8') if draft_path.exists() else '# Missing Draft\\n'",
+        "        report_output = output_dir / 'report_output.md'",
+        "        _write_text(report_output, '\\n'.join(['# Report Output', '', outline.strip(), '', draft.strip()]))",
+        "        deliverables.append({'kind': 'report-output', 'path': str(report_output)})",
+        "        execution_notes.append('report_artifacts_compiled')",
+        "",
+        "    summary_path = output_dir / 'final_product_summary.md'",
+        "    _write_text(",
+        "        summary_path,",
+        "        '\\n'.join([",
+        "            '# Final Product Summary',",
+        "            '',",
+        "            f'- Project type: {PROJECT_TYPE}',",
+        "            f'- Decision Log Version: v{DECISION_LOG_VERSION}',",
+        "            f'- Requirement IDs: {', '.join(REQUIREMENT_IDS)}',",
+        "            f'- Execution notes: {', '.join(execution_notes) if execution_notes else 'none'}',",
+        "        ])",
+        "    )",
+        "    deliverables.append({'kind': 'final-product-summary', 'path': str(summary_path)})",
+        "",
+        "    manifest = {",
+        "        'final_output': {",
+        "            'decision_log_version': DECISION_LOG_VERSION,",
+        "            'project_type': PROJECT_TYPE,",
+        "            'deliverables': deliverables,",
+        "            'requirement_ids': REQUIREMENT_IDS,",
+        "            'citation_ids': CITATION_IDS,",
+        "            'execution_notes': execution_notes,",
+        "        }",
+        "    }",
+        "    with (output_dir / 'FINAL_OUTPUT_MANIFEST.yaml').open('w', encoding='utf-8') as handle:",
+        "        yaml.safe_dump(manifest, handle, sort_keys=False, allow_unicode=False)",
+        "    return 0",
+        "",
+        "",
+        "if __name__ == '__main__':",
+        "    raise SystemExit(main())",
+    ]
+    orchestrator_path = layout["orchestrator"] / "run_stage4.py"
+    orchestrator_path.write_text("\n".join(script_lines) + "\n", encoding="utf-8")
+    return execution_manifest_path, orchestrator_path
+
+
+def _write_what_i_built_artifact(
+    paths,
+    decision_log: dict[str, Any],
+    version: int,
+    project_type: str,
+    scaffold_root: Path,
+    agent_count: int,
+    skill_file_count: int,
+    instruction_file_count: int,
+    requirements_file_count: int,
+    code_file_count: int,
+    report_file_count: int,
+) -> Path:
+    root = decision_log["decision_log"]
+    architecture = [row for row in root.get("architecture", []) if isinstance(row, dict)]
+    requirements = [row for row in root.get("requirements", []) if isinstance(row, dict)]
+    agents_needed = [row for row in root.get("agents_needed", []) if isinstance(row, dict)]
+
+    lines = [
+        "## What I Built",
+        "",
+        f"- Scaffold version: v{version}",
+        f"- Project type: {project_type}",
+        f"- Scaffold root: {scaffold_root}",
+        f"- Agent specs: {agent_count}",
+        f"- Skill files: {skill_file_count}",
+        f"- Instruction files: {instruction_file_count}",
+        f"- Requirement artifacts: {requirements_file_count}",
+        f"- Code artifacts: {code_file_count}",
+        f"- Report artifacts: {report_file_count}",
+        "",
+        "### Decisions Carried Forward",
+    ]
+
+    if architecture:
+        for row in architecture[:8]:
+            lines.append(f"- {row.get('component')}: {row.get('approach')}")
+    else:
+        lines.append("- No architecture decisions captured.")
+
+    lines.extend(["", "### Requirement Spine"])
+    if requirements:
+        for row in requirements[:12]:
+            lines.append(f"- {row.get('id')}: {row.get('description')}")
+    else:
+        lines.append("- No requirements captured.")
+
+    lines.extend(["", "### Execution Path"])
+    lines.append("- Stage 3 emits orchestrator/run_stage4.py as the deterministic Stage 4 runner.")
+    lines.append("- Stage 4 executes that orchestrator to create final product artifacts and a pitch deck.")
+    lines.append("- Generated agents default to the explore/research subagent palette for downstream work.")
+
+    if agents_needed:
+        lines.extend(["", "### Agent Roles"])
+        for row in agents_needed[:10]:
+            lines.append(f"- {row.get('role')}: {row.get('responsibility')}")
+
+    output_path = paths.wiki_provenance_dir / "what_i_built.md"
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return output_path
 
 
 def _write_skill_files(
@@ -910,6 +1126,9 @@ def _write_code_starter_files(layout: dict[str, Path], decision_log: dict[str, A
         "        text = spec.read_text(encoding='utf-8')",
         "        assert text.startswith('---\\n'), f'{{spec.name}} missing frontmatter'",
         "        assert 'description:' in text, f'{{spec.name}} missing description frontmatter'",
+        "        assert 'agent' in text, f'{{spec.name}} missing agent tool support'",
+        "        assert 'explore' in text, f'{{spec.name}} missing explore allowlist entry'",
+        "        assert 'research' in text, f'{{spec.name}} missing research allowlist entry'",
         "        assert '## Decision Trace' in text, f'{{spec.name}} missing decision trace'",
         "",
         "",
@@ -950,6 +1169,11 @@ def _write_code_starter_files(layout: dict[str, Path], decision_log: dict[str, A
         "    assert '| Requirement |' in text, 'Missing table header'",
         f"    for req_id in {requirement_list!r}:",
         "        assert req_id in text, f'Trace matrix missing {{req_id}}'",
+        "",
+        "",
+        "def test_execution_contract_exists() -> None:",
+        "    assert (SCAFFOLD_ROOT / 'EXECUTION_MANIFEST.yaml').exists()",
+        "    assert (SCAFFOLD_ROOT / 'orchestrator' / 'run_stage4.py').exists()",
         "",
     ]
 
@@ -1116,6 +1340,25 @@ def run_scaffold(
     requirements_file_count = _write_requirements_matrix(layout["requirements"], decision_log)
     code_file_count = _write_code_starter_files(layout, decision_log, project_type=project_type)
     report_file_count = _write_report_starter_files(layout, decision_log, project_type=project_type)
+    execution_manifest_path, orchestrator_path = _write_execution_contract(
+        layout,
+        decision_log,
+        project_type=project_type,
+        version=version,
+    )
+    what_i_built_path = _write_what_i_built_artifact(
+        paths,
+        decision_log,
+        version=version,
+        project_type=project_type,
+        scaffold_root=scaffold_root,
+        agent_count=agent_count,
+        skill_file_count=skill_file_count,
+        instruction_file_count=instruction_file_count,
+        requirements_file_count=requirements_file_count,
+        code_file_count=code_file_count,
+        report_file_count=report_file_count,
+    )
 
     scaffold_manifest = {
         "scaffold": {
@@ -1130,6 +1373,9 @@ def run_scaffold(
             "requirements_file_count": requirements_file_count,
             "code_file_count": code_file_count,
             "report_file_count": report_file_count,
+            "execution_manifest_path": str(execution_manifest_path),
+            "orchestrator_path": str(orchestrator_path),
+            "what_i_built_path": str(what_i_built_path),
             "root": str(scaffold_root),
         }
     }
@@ -1148,6 +1394,7 @@ def run_scaffold(
     for row in decision_logs:
         if isinstance(row, dict) and row.get("version") == version:
             row["scaffold_path"] = str(scaffold_root)
+            row["execution_manifest_path"] = str(execution_manifest_path)
             updated = True
             break
     if not updated:
@@ -1157,6 +1404,7 @@ def run_scaffold(
                 "created": decision_log["decision_log"]["meta"].get("created"),
                 "use_case": decision_log["decision_log"]["meta"].get("use_case"),
                 "scaffold_path": str(scaffold_root),
+                "execution_manifest_path": str(execution_manifest_path),
             }
         )
 
@@ -1173,4 +1421,7 @@ def run_scaffold(
         "requirements_file_count": requirements_file_count,
         "code_file_count": code_file_count,
         "report_file_count": report_file_count,
+        "execution_manifest_path": str(execution_manifest_path),
+        "orchestrator_path": str(orchestrator_path),
+        "what_i_built_path": str(what_i_built_path),
     }

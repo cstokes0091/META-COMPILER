@@ -14,6 +14,17 @@ capture those decisions with citations.
 - Gap Report is in `workspace-artifacts/wiki/reports/`
 - The human will provide project goals and constraints
 - You query the wiki on-demand as the dialog requires
+- Stage 2 also generates and stores a stable wiki name in the manifest; preserve that name when referring to the wiki or its index
+
+## CLI Kickoff
+Start Stage 2 from the prompt by running:
+
+```bash
+meta-compiler elicit-vision --use-case "<use-case>" --non-interactive
+meta-compiler validate-stage --stage 2
+```
+
+Use the generated Decision Log draft as the starting point for the human dialog rather than inventing a parallel schema in chat.
 
 ## Wiki Query Tools
 Use these to inform your questions:
@@ -64,6 +75,7 @@ Based on all decisions above:
 - What agent roles are needed for execution?
 - What does each agent read and write?
 - What constraints from the decisions above apply to each?
+- If an execution agent is expected to delegate work, capture that it should expose the `agent` tool and include `explore` and `research` in its allowlist unless a narrower policy is explicitly justified
 
 ## Decision Log Schema
 
@@ -127,6 +139,8 @@ Save the Decision Log and validate:
 ```bash
 meta-compiler validate-stage --stage 2
 ```
+
+Keep Stage 3 and Stage 4 in view while deciding: the Decision Log should make the later scaffold, execution contract, and final pitch legible without relying on hidden chat context.
 
 ## Key Insight
 The agent structures the conversation to narrow the solution space. Each question

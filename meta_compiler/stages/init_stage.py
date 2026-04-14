@@ -71,7 +71,15 @@ def _provision_workspace_customizations(workspace_root: Path, force: bool) -> li
     return copied
 
 
-def _problem_statement_template(project_name: str, problem_domain: str, project_type: str) -> str:
+def _problem_statement_template(
+    project_name: str,
+    problem_domain: str,
+    project_type: str,
+    problem_statement: str | None = None,
+) -> str:
+    if problem_statement and problem_statement.strip():
+        return problem_statement.rstrip() + "\n"
+
     return f"""# PROBLEM_STATEMENT
 
 ## Domain and Problem Space
@@ -97,6 +105,7 @@ def run_meta_init(
     project_name: str,
     problem_domain: str,
     project_type: str,
+    problem_statement: str | None = None,
     force: bool = False,
 ) -> dict:
     if project_type not in {"algorithm", "report", "hybrid"}:
@@ -110,7 +119,12 @@ def run_meta_init(
     problem_statement_path = workspace_root / "PROBLEM_STATEMENT.md"
     if force or not problem_statement_path.exists():
         problem_statement_path.write_text(
-            _problem_statement_template(project_name, problem_domain, project_type),
+            _problem_statement_template(
+                project_name,
+                problem_domain,
+                project_type,
+                problem_statement=problem_statement,
+            ),
             encoding="utf-8",
         )
     copied_prompts = _provision_workspace_prompts(workspace_root=workspace_root, force=force)
@@ -134,8 +148,11 @@ def run_meta_init(
                 "version": "",
                 "last_updated": now,
                 "page_count": 0,
+                "name": "",
             },
             "decision_logs": [],
+            "executions": [],
+            "pitches": [],
             "status": "initialized",
             "research": {
                 "iteration_count": 0,

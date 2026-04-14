@@ -16,6 +16,7 @@ from ..io import dump_yaml, parse_frontmatter, render_frontmatter
 from ..utils import extract_keywords, iso_now, read_text_safe
 from ..wiki_interface import WikiQueryInterface
 from ..wiki_lifecycle import append_log_entry, write_index
+from ..wiki_rendering import inject_wiki_nav
 
 
 REQUIRED_SECTIONS = [
@@ -373,7 +374,15 @@ def _append_gap_remediation_page(paths, merged_report: dict, timestamp: str) -> 
     )
 
     remediation_path = paths.wiki_v2_pages_dir / "gap-remediation-v2.md"
-    remediation_path.write_text("\n".join(lines), encoding="utf-8")
+    page_text = "\n".join(lines)
+    manifest = load_manifest(paths)
+    wiki_name = ""
+    if manifest:
+        wiki_name = str(manifest.get("workspace_manifest", {}).get("wiki", {}).get("name") or "")
+    frontmatter, body = parse_frontmatter(page_text)
+    if frontmatter:
+        page_text = "---\n" + render_frontmatter(frontmatter) + "\n---\n" + inject_wiki_nav(body, wiki_name).rstrip() + "\n"
+    remediation_path.write_text(page_text, encoding="utf-8")
 
 
 def _update_manifest(paths, stage: str, page_count: int) -> None:
@@ -388,11 +397,10 @@ def _update_manifest(paths, stage: str, page_count: int) -> None:
         "last_updated": now,
         "document_count": len(list_seed_files(paths)),
     }
-    wm["wiki"] = {
-        "version": compute_wiki_version(paths.wiki_v2_pages_dir),
-        "last_updated": now,
-        "page_count": page_count,
-    }
+    wiki = wm.setdefault("wiki", {})
+    wiki["version"] = compute_wiki_version(paths.wiki_v2_pages_dir)
+    wiki["last_updated"] = now
+    wiki["page_count"] = page_count
     wm["status"] = "researched"
     research = wm.setdefault("research", {})
     research["last_completed_stage"] = stage

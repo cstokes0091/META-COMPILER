@@ -32,6 +32,10 @@ def _write_custom_agent(path: Path) -> None:
                 "  - read",
                 "  - search",
                 "  - edit",
+                "  - agent",
+                "agents:",
+                "  - explore",
+                "  - research",
                 "user-invocable: false",
                 "---",
                 "You are a scaffold execution agent.",
@@ -92,6 +96,7 @@ def test_validate_scaffold_hybrid_happy_path(tmp_path: Path):
     (root / "agents").mkdir(parents=True)
     (root / "docs" / "skills").mkdir(parents=True)
     (root / "docs" / "instructions").mkdir(parents=True)
+    (root / "orchestrator").mkdir(parents=True)
     (root / ".github" / "agents").mkdir(parents=True)
     (root / ".github" / "skills" / "core-scaffold").mkdir(parents=True)
     (root / ".github" / "instructions").mkdir(parents=True)
@@ -104,6 +109,8 @@ def test_validate_scaffold_hybrid_happy_path(tmp_path: Path):
     (root / "ARCHITECTURE.md").write_text("# ARCHITECTURE\n", encoding="utf-8")
     (root / "CONVENTIONS.md").write_text("# CONVENTIONS\n", encoding="utf-8")
     (root / "REQUIREMENTS_TRACED.md").write_text("# REQUIREMENTS_TRACED\n", encoding="utf-8")
+    (root / "EXECUTION_MANIFEST.yaml").write_text("execution:\n  project_type: hybrid\n", encoding="utf-8")
+    (root / "orchestrator" / "run_stage4.py").write_text("print('ok')\n", encoding="utf-8")
     (root / "SCAFFOLD_MANIFEST.yaml").write_text(
         "\n".join(
             [
@@ -163,6 +170,7 @@ def test_validate_scaffold_flags_missing_skills(tmp_path: Path):
     root = tmp_path / "v1"
     (root / "agents").mkdir(parents=True)
     (root / "docs" / "instructions").mkdir(parents=True)
+    (root / "orchestrator").mkdir(parents=True)
     (root / ".github" / "agents").mkdir(parents=True)
     (root / ".github" / "instructions").mkdir(parents=True)
     (root / "requirements").mkdir(parents=True)
@@ -172,6 +180,8 @@ def test_validate_scaffold_flags_missing_skills(tmp_path: Path):
     (root / "ARCHITECTURE.md").write_text("# ARCHITECTURE\n", encoding="utf-8")
     (root / "CONVENTIONS.md").write_text("# CONVENTIONS\n", encoding="utf-8")
     (root / "REQUIREMENTS_TRACED.md").write_text("# REQUIREMENTS_TRACED\n", encoding="utf-8")
+    (root / "EXECUTION_MANIFEST.yaml").write_text("execution:\n  project_type: algorithm\n", encoding="utf-8")
+    (root / "orchestrator" / "run_stage4.py").write_text("print('ok')\n", encoding="utf-8")
     (root / "SCAFFOLD_MANIFEST.yaml").write_text(
         "\n".join(
             [
