@@ -30,6 +30,7 @@ meta-compiler scaffold
 
 # Post-scaffold
 meta-compiler wiki-update
+meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
 
@@ -44,6 +45,7 @@ meta-compiler validate-stage --stage all
 meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type hybrid
 # Edit PROBLEM_STATEMENT.md, add seeds to workspace-artifacts/seeds/
 # `meta-init` also provisions stage prompts into prompts/*.prompt.md
+# and workspace custom agents, prompts, and skills into .github/
 
 # Stage 1A: Breadth research
 meta-compiler research-breadth
@@ -52,8 +54,9 @@ meta-compiler validate-stage --stage 1a
 
 # Stage 1A2: Orchestrate the 1B <-> 1C loop from one prompt
 # Use prompts/stage-1a2-orchestration.prompt.md
-# This prompt spawns/coordinates 1B and 1C worker/reviewer agents and runs
-# research-depth/review iterations until PROCEED or iteration cap
+# This prompt uses the provisioned .github/agents/stage-1a2-orchestrator.agent.md
+# and named Stage 1B/1C agents while the CLI runs research-depth/review
+# iterations until PROCEED or iteration cap
 
 # Stage 2: Vision elicitation
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
@@ -63,7 +66,12 @@ meta-compiler validate-stage --stage 2
 # Stage 3: Scaffold
 meta-compiler scaffold
 # LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md)
+# Generated scaffolds now include human-readable summaries plus real .github/
+# custom agents, skills, and instructions for downstream Copilot execution
 meta-compiler validate-stage --stage 3
+
+# Browse the wiki in a local browser window
+meta-compiler wiki-browse
 
 # Run scaffold self-tests
 pytest workspace-artifacts/scaffolds/v1/tests/ -v
@@ -88,8 +96,15 @@ meta-compiler scaffold  # Re-scaffold with new decisions
 ## VSCode Integration
 
 Tasks are configured in `.vscode/tasks.json`. Use the Command Palette
-(`Cmd+Shift+P` > `Tasks: Run Task`) to execute any stage.
+(`Cmd+Shift+P` > `Tasks: Run Task`) to execute any stage or open the wiki browser.
 
 ## Artifact Root
 
 Artifacts are persisted under `workspace-artifacts/` by default.
+
+## Wiki Browser
+
+`meta-compiler wiki-browse` starts a lightweight local browser for the wiki and
+opens it automatically in your default browser. It prefers wiki v2 when present,
+falls back to wiki v1 automatically, and the browser window remains fully
+resizable because it uses the system browser instead of a fixed native UI.

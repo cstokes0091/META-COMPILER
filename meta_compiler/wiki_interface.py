@@ -78,6 +78,27 @@ class WikiQueryInterface:
             "body": page.body,
         }
 
+    def list_pages(self) -> list[dict[str, Any]]:
+        pages: list[dict[str, Any]] = []
+        for page in self._load_pages():
+            title = page.page_id
+            for line in page.body.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    title = stripped[2:].strip() or page.page_id
+                    break
+
+            pages.append(
+                {
+                    "id": page.page_id,
+                    "title": title,
+                    "type": page.page_type,
+                    "path": str(page.path),
+                }
+            )
+
+        return pages
+
     def search_wiki(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
         tokens = [token for token in re.findall(r"[a-zA-Z0-9]+", query.lower()) if token]
         scored: list[tuple[float, WikiPage]] = []

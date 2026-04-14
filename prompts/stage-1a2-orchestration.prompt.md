@@ -1,3 +1,10 @@
+---
+name: stage-1a2-orchestration
+description: "Run META-COMPILER Stage 1A2, the orchestrated 1B to 1C loop, using the provisioned Stage 1A2 custom agents."
+argument-hint: "What should this Stage 1A2 pass focus on?"
+agent: stage-1a2-orchestrator
+---
+
 # Stage 1A2: 1B ↔ 1C Orchestration Loop — Prompt Instructions
 
 ## Your Role
@@ -9,10 +16,31 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
 ## Required Inputs
 - `prompts/stage-1b-evaluators.prompt.md`
 - `prompts/stage-1c-review.prompt.md`
+- `.github/skills/agent-customization/SKILL.md`
+- `.github/prompts/create-agent.prompt.md`
+- `.github/agents/stage-1a2-orchestrator.agent.md`
+- `.github/agents/schema-auditor.agent.md`
+- `.github/agents/adversarial-questioner.agent.md`
+- `.github/agents/domain-ontologist.agent.md`
+- `.github/agents/debate-synthesizer.agent.md`
+- `.github/agents/gap-remediator.agent.md`
+- `.github/agents/optimistic-reviewer.agent.md`
+- `.github/agents/pessimistic-reviewer.agent.md`
+- `.github/agents/pragmatic-reviewer.agent.md`
 - `workspace-artifacts/wiki/v1/` and `workspace-artifacts/wiki/v2/`
 - `workspace-artifacts/wiki/reports/`
 - `workspace-artifacts/wiki/reviews/`
 - `PROBLEM_STATEMENT.md`
+
+## Required Customization Assets
+`meta-compiler meta-init` now provisions the Stage 1A2 custom agents into `.github/agents/`.
+
+Before running the loop:
+- verify the expected `.github/agents/*.agent.md` files exist
+- if any are missing or materially broken, recreate them using `.github/prompts/create-agent.prompt.md`
+- use `.github/skills/agent-customization/SKILL.md` when fixing frontmatter, tool restrictions, or descriptions
+
+The CLI manages artifacts and validation. The prompt is responsible for invoking the custom agents.
 
 ## Agent Topology You Must Spawn
 ### Stage 1B work agents
@@ -30,6 +58,7 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
 ## Orchestration Protocol
 1. **Initialize loop context**
    - Read Stage 1B and 1C prompt contracts.
+  - Confirm the provisioned `.github/agents/` files are present and usable.
    - Set `cycle = 1`, `max_cycles = 3`.
 
 2. **Run Stage 1B cycle**
@@ -38,7 +67,13 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
      meta-compiler research-depth
      meta-compiler validate-stage --stage 1b
      ```
-   - Spawn/coordinate Stage 1B agents to produce or refresh:
+   - Spawn and call these Stage 1B agents:
+     - `schema-auditor`
+     - `adversarial-questioner`
+     - `domain-ontologist`
+     - `debate-synthesizer`
+     - `gap-remediator`
+   - Coordinate them to produce or refresh:
      - `workspace-artifacts/wiki/reports/schema_auditor.yaml`
      - `workspace-artifacts/wiki/reports/adversarial_questioner.yaml`
      - `workspace-artifacts/wiki/reports/domain_ontologist.yaml`
@@ -52,8 +87,13 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
      meta-compiler review
      meta-compiler validate-stage --stage 1c
      ```
-   - Spawn/coordinate Stage 1C reviewers in fresh context and write:
+   - Spawn and call these fresh-context Stage 1C reviewer agents:
+     - `optimistic-reviewer`
+     - `pessimistic-reviewer`
+     - `pragmatic-reviewer`
+   - Coordinate them to write:
      - `workspace-artifacts/wiki/reviews/review_verdicts.yaml`
+     - `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`
      - updates to v2 pages/citations for newly found evidence
 
 4. **Decide loop continuation**
@@ -65,6 +105,7 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
    - Final consensus summary (proceed/iterate rationale)
    - Blocking gaps list (resolved + unresolved)
    - Suggested external sources discovered during review
+  - Persist the packet in `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`
    - Ready signal for:
      ```bash
      meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
@@ -75,6 +116,6 @@ This phase exists to remove manual loop management. After Stage 1A finishes, thi
 - `ITERATE`: Blocking gaps remain and must be routed back to Stage 1B for another cycle.
 
 ## Output Contract
-- One orchestrated run controls all 1B/1C sub-agents and loop retries.
+- One orchestrated run controls the named 1B/1C custom agents and loop retries.
 - Human receives a concise decision packet, not fragmented per-agent chatter.
 - No hidden state: every decision is represented in workspace artifacts.

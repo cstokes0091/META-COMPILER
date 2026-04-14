@@ -9,6 +9,15 @@ and execution-ready for downstream agents.
 - Stage 2 Decision Log exists in `workspace-artifacts/decision-logs/`
 - Stage 3 scaffold output exists in `workspace-artifacts/scaffolds/v{N}/`
 - The scaffold should reflect Decision Log choices, requirement IDs, and constraints
+- Reusable customization references live in `.github/skills/agent-customization/` and `.github/prompts/`
+
+## Customization References
+When the scaffold emits reusable customization artifacts, validate them against the repo-local references:
+- `.github/skills/agent-customization/SKILL.md`
+- `.github/prompts/create-agent.prompt.md`
+- `.github/prompts/create-skill.prompt.md`
+- `.github/prompts/create-instructions.prompt.md`
+- `.github/prompts/create-prompt.prompt.md` if any reusable `.prompt.md` files are emitted
 
 ## Procedure
 
@@ -32,6 +41,7 @@ Check required scaffold structure:
 - `docs/skills/` and `docs/instructions/` are present and usable
 - `code/`, `tests/`, and/or `report/` align with project type
 - `SCAFFOLD_MANIFEST.yaml` is present and internally consistent
+- any generated `.agent.md`, `SKILL.md`, `.instructions.md`, or `.prompt.md` files follow the vendored customization references
 
 ### 4. Run Scaffold Self-Tests
 ```bash

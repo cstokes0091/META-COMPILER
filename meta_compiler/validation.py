@@ -217,6 +217,41 @@ def validate_review_verdicts(report: dict[str, Any]) -> list[str]:
     return issues
 
 
+def validate_stage_1a2_handoff(report: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    handoff = report.get("stage_1a2_handoff")
+    if not isinstance(handoff, dict):
+        return ["1A2 handoff: missing stage_1a2_handoff root"]
+
+    _require_fields(
+        handoff,
+        [
+            "generated_at",
+            "decision",
+            "reason",
+            "iteration_count",
+            "unresolved_gap_count",
+            "ready_for_stage_2",
+            "blocking_gaps",
+            "non_blocking_gaps",
+            "suggested_sources",
+            "next_action",
+            "ready_signal",
+        ],
+        "stage_1a2_handoff",
+        issues,
+    )
+    decision = handoff.get("decision")
+    if decision not in VALID_REVIEW_VERDICTS:
+        issues.append("stage_1a2_handoff.decision: must be PROCEED|ITERATE")
+
+    for field in ["blocking_gaps", "non_blocking_gaps", "suggested_sources"]:
+        if not isinstance(handoff.get(field), list):
+            issues.append(f"stage_1a2_handoff.{field}: must be a list")
+
+    return issues
+
+
 def validate_source_bindings(bindings_payload: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     bindings = bindings_payload.get("bindings")
@@ -401,6 +436,48 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
     return issues
 
 
+def validate_custom_agent_file(agent_path: Path) -> list[str]:
+    issues: list[str] = []
+    frontmatter, body = parse_frontmatter(read_text_safe(agent_path))
+    if not frontmatter:
+        return [f"custom agent missing frontmatter: {agent_path.name}"]
+
+    _require_fields(frontmatter, ["description"], f"custom agent {agent_path.name}", issues)
+    if "## Purpose" not in body:
+        issues.append(f"custom agent missing purpose section: {agent_path.name}")
+    if "## Decision Trace" not in body:
+        issues.append(f"custom agent missing decision trace section: {agent_path.name}")
+    return issues
+
+
+def validate_custom_skill_file(skill_path: Path) -> list[str]:
+    issues: list[str] = []
+    frontmatter, body = parse_frontmatter(read_text_safe(skill_path))
+    if not frontmatter:
+        return [f"custom skill missing frontmatter: {skill_path.parent.name}/SKILL.md"]
+
+    _require_fields(frontmatter, ["name", "description"], f"custom skill {skill_path.parent.name}", issues)
+    if frontmatter.get("name") != skill_path.parent.name:
+        issues.append(
+            f"custom skill name mismatch: expected {skill_path.parent.name}, found {frontmatter.get('name')}"
+        )
+    if not body.strip():
+        issues.append(f"custom skill body empty: {skill_path.parent.name}/SKILL.md")
+    return issues
+
+
+def validate_custom_instruction_file(instruction_path: Path) -> list[str]:
+    issues: list[str] = []
+    frontmatter, body = parse_frontmatter(read_text_safe(instruction_path))
+    if not frontmatter:
+        return [f"custom instruction missing frontmatter: {instruction_path.name}"]
+
+    _require_fields(frontmatter, ["description"], f"custom instruction {instruction_path.name}", issues)
+    if not body.strip():
+        issues.append(f"custom instruction body empty: {instruction_path.name}")
+    return issues
+
+
 def validate_scaffold(scaffold_root: Path) -> list[str]:
     issues: list[str] = []
     if not scaffold_root.exists():
@@ -425,6 +502,8 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
                 project_type = payload.get("project_type")
                 if project_type not in VALID_PROJECT_TYPES:
                     issues.append("scaffold manifest project_type must be algorithm|report|hybrid")
+
+    expected_agent_count = scaffold_meta.get("agent_count")
 
     required_files = [
         scaffold_root / "ARCHITECTURE.md",
@@ -482,6 +561,48 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
         if len(instruction_files) < 2:
             issues.append("scaffold docs/instructions requires at least 2 instruction files")
 
+    custom_root = scaffold_root / ".github"
+    if not custom_root.exists():
+        issues.append("scaffold missing .github customization directory")
+
+    custom_agents_dir = custom_root / "agents"
+    if not custom_agents_dir.exists():
+        issues.append("scaffold missing .github/agents directory")
+    else:
+        custom_agents = sorted(custom_agents_dir.glob("*.agent.md"))
+        if not custom_agents:
+            issues.append("scaffold .github/agents directory has no .agent.md files")
+        else:
+            for agent_path in custom_agents:
+                issues.extend(validate_custom_agent_file(agent_path))
+            if isinstance(expected_agent_count, int) and expected_agent_count > 0 and len(custom_agents) != expected_agent_count:
+                issues.append(
+                    "scaffold custom agent count mismatch: "
+                    f"expected {expected_agent_count}, found {len(custom_agents)}"
+                )
+
+    custom_skills_dir = custom_root / "skills"
+    if not custom_skills_dir.exists():
+        issues.append("scaffold missing .github/skills directory")
+    else:
+        custom_skills = sorted(custom_skills_dir.glob("*/SKILL.md"))
+        if not custom_skills:
+            issues.append("scaffold .github/skills directory has no SKILL.md files")
+        else:
+            for skill_path in custom_skills:
+                issues.extend(validate_custom_skill_file(skill_path))
+
+    custom_instructions_dir = custom_root / "instructions"
+    if not custom_instructions_dir.exists():
+        issues.append("scaffold missing .github/instructions directory")
+    else:
+        custom_instructions = sorted(custom_instructions_dir.glob("*.instructions.md"))
+        if len(custom_instructions) < 2:
+            issues.append("scaffold .github/instructions requires at least 2 instruction files")
+        else:
+            for instruction_path in custom_instructions:
+                issues.extend(validate_custom_instruction_file(instruction_path))
+
     requirements_dir = scaffold_root / "requirements"
     if not requirements_dir.exists():
         issues.append("scaffold missing requirements directory")
@@ -510,7 +631,6 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
             if not required.exists():
                 issues.append(f"scaffold missing report artifact: {required.relative_to(scaffold_root)}")
 
-    expected_agent_count = scaffold_meta.get("agent_count")
     if isinstance(expected_agent_count, int) and expected_agent_count > 0 and agents_dir.exists():
         actual = len(list(agents_dir.glob("*.md")))
         if actual != expected_agent_count:
@@ -584,6 +704,13 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
             issues.extend(validate_review_verdicts(review_report))
         else:
             issues.append("1C: review verdicts missing")
+
+        handoff_path = paths.reviews_dir / "1a2_handoff.yaml"
+        handoff_report = load_yaml(handoff_path)
+        if handoff_report:
+            issues.extend(validate_stage_1a2_handoff(handoff_report))
+        else:
+            issues.append("1C: Stage 1A2 handoff missing")
 
     if stage in {"all", "2", "decision-log"}:
         latest = latest_decision_log_path(paths)

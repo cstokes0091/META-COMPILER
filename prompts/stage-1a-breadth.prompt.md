@@ -96,4 +96,4 @@ citations:
 - Enriched Wiki v1 pages with real extracted content
 - Updated citation index
 - Updated wiki index and log (rebuild with CLI if needed)
-- Immediately hand off to `prompts/stage-1a2-orchestration.prompt.md` so Stage 1B/1C loop execution is managed from a single orchestration prompt
+- Immediately hand off to `prompts/stage-1a2-orchestration.prompt.md` and the provisioned `.github/agents/stage-1a2-orchestrator.agent.md` so Stage 1B/1C loop execution is managed from a single orchestration prompt and real custom agents

@@ -13,6 +13,13 @@ new actionable findings back to Stage 1B for another remediation cycle.
 Wiki v1 has been created in Stage 1A. The CLI has run structural checks. Your
 job is the deeper epistemic evaluation that requires actual reasoning.
 
+When Stage 1A2 is active, these perspectives map to the provisioned custom agents:
+- `.github/agents/schema-auditor.agent.md`
+- `.github/agents/adversarial-questioner.agent.md`
+- `.github/agents/domain-ontologist.agent.md`
+- `.github/agents/debate-synthesizer.agent.md`
+- `.github/agents/gap-remediator.agent.md`
+
 ## The Three Evaluators
 
 ### 1. Schema Auditor Perspective
@@ -93,7 +100,7 @@ Merge all gaps (Round 1 + Round 2 discoveries):
 - Deduplicate identical gaps
 - Raise severity if multiple evaluators flagged the same thing
 - Attribute each gap to its source evaluator(s)
-- Produce the merged gap report
+- Produce the merged gap report via the debate synthesizer agent
 
 ## After Debate: Fill Gaps
 For each gap in the merged report:

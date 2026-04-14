@@ -69,6 +69,87 @@ def _build_verdict(perspective: str, gaps: list[dict], health_metrics: dict) -> 
     return result
 
 
+def _merge_reviewer_gap_lists(
+    verdicts: dict[str, dict],
+    list_name: str,
+    explanation_field: str,
+) -> list[dict]:
+    merged: dict[str, dict] = {}
+
+    for reviewer_name, verdict in verdicts.items():
+        raw_items = verdict.get(list_name, [])
+        if not isinstance(raw_items, list):
+            continue
+
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            description = str(item.get("description", "")).strip()
+            if not description:
+                continue
+
+            existing = merged.get(description)
+            if existing is None:
+                merged[description] = {
+                    "description": description,
+                    explanation_field: str(item.get(explanation_field, "")).strip(),
+                    "reviewers": [reviewer_name],
+                }
+                continue
+
+            if reviewer_name not in existing["reviewers"]:
+                existing["reviewers"].append(reviewer_name)
+            if not existing.get(explanation_field) and item.get(explanation_field):
+                existing[explanation_field] = str(item.get(explanation_field, "")).strip()
+
+    return list(merged.values())
+
+
+def _build_stage_1a2_handoff(
+    verdicts: dict[str, dict],
+    consensus: dict[str, object],
+    iteration_count: int,
+    unresolved_gap_count: int,
+) -> dict:
+    decision = str(consensus.get("decision", "ITERATE"))
+    ready_signal = (
+        'meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive'
+        if decision == "PROCEED"
+        else ""
+    )
+
+    return {
+        "stage_1a2_handoff": {
+            "generated_at": iso_now(),
+            "decision": decision,
+            "reason": str(consensus.get("reason", "")),
+            "forced": bool(consensus.get("forced", False)),
+            "proceed_votes": int(consensus.get("proceed_votes", 0)),
+            "requires_human_judgment": bool(consensus.get("requires_human_judgment", False)),
+            "iteration_count": iteration_count,
+            "unresolved_gap_count": unresolved_gap_count,
+            "ready_for_stage_2": decision == "PROCEED",
+            "blocking_gaps": _merge_reviewer_gap_lists(
+                verdicts,
+                list_name="blocking_gaps",
+                explanation_field="why_blocking",
+            ),
+            "non_blocking_gaps": _merge_reviewer_gap_lists(
+                verdicts,
+                list_name="non_blocking_gaps",
+                explanation_field="impact_if_ignored",
+            ),
+            "suggested_sources": [],
+            "next_action": (
+                "Proceed to Stage 2 using the ready signal."
+                if decision == "PROCEED"
+                else "Route blocking gaps back to Stage 1B for another remediation cycle."
+            ),
+            "ready_signal": ready_signal,
+        }
+    }
+
+
 def compute_consensus(verdicts: dict[str, dict], iteration_count: int) -> dict:
     proceed_votes = sum(1 for item in verdicts.values() if item.get("verdict") == "PROCEED")
 
@@ -123,6 +204,7 @@ def run_review(artifacts_root: Path) -> dict:
     gaps = gap_root.get("gaps", [])
     if not isinstance(gaps, list):
         raise RuntimeError("Merged gap report gaps field is invalid.")
+    unresolved_gap_count = int(gap_root.get("unresolved_count", 0))
     health_metrics = gap_root.get("health", {}) if isinstance(gap_root, dict) else {}
     if not isinstance(health_metrics, dict):
         health_metrics = {}
@@ -163,6 +245,15 @@ def run_review(artifacts_root: Path) -> dict:
         }
     }
     dump_yaml(paths.reviews_dir / "review_verdicts.yaml", payload)
+    dump_yaml(
+        paths.reviews_dir / "1a2_handoff.yaml",
+        _build_stage_1a2_handoff(
+            verdicts=verdicts,
+            consensus=consensus,
+            iteration_count=research["iteration_count"],
+            unresolved_gap_count=unresolved_gap_count,
+        ),
+    )
 
     append_log_entry(
         log_path=paths.wiki_v2_dir / "log.md",
@@ -184,6 +275,7 @@ def run_review(artifacts_root: Path) -> dict:
         "proceed_votes": consensus["proceed_votes"],
         "iteration_count": research["iteration_count"],
         "requires_human_judgment": consensus["requires_human_judgment"],
+        "handoff_path": str(paths.reviews_dir / "1a2_handoff.yaml"),
         "orphan_pages": len(health_metrics.get("orphan_pages", [])),
         "sparse_citation_pages": len(health_metrics.get("sparse_citation_pages", [])),
     }

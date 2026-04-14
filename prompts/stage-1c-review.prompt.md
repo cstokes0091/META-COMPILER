@@ -12,6 +12,11 @@ wiki v2 with new evidence, and returns explicit actionable gaps to Stage 1B.
 You are reading artifacts only. You have no knowledge of what Stage 1B tried
 and failed to find. Your job is to evaluate the output, not the effort.
 
+When Stage 1A2 is active, the fresh review panel is implemented by these provisioned custom agents:
+- `.github/agents/optimistic-reviewer.agent.md`
+- `.github/agents/pessimistic-reviewer.agent.md`
+- `.github/agents/pragmatic-reviewer.agent.md`
+
 ## Why Fresh Context Matters
 The work agents (Stage 1B) have "investment bias" — they want their research
 to be sufficient. The review panel has no such bias. This mirrors real research
@@ -82,6 +87,8 @@ When verdict is ITERATE, return a concise, explicit handoff list for Stage 1B:
 - blocking gaps to remediate
 - suggested sources discovered in web search
 - wiki pages that must be updated next cycle
+
+Persist the review packet and next-cycle handoff in `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`.
 
 **Iteration cap:** Maximum 3 cycles through 1B -> 1C before forced proceed
 with gaps documented. This prevents infinite refinement.

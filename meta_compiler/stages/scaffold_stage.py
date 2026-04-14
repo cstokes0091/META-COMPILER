@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ from ..artifacts import (
     load_manifest,
     save_manifest,
 )
-from ..io import dump_yaml, load_yaml
+from ..io import dump_yaml, load_yaml, render_frontmatter
 from ..utils import iso_now, slugify
 from ..validation import validate_decision_log
 
@@ -46,6 +47,10 @@ def _ensure_scaffold_layout(scaffold_root: Path, project_type: str) -> dict[str,
         "skills": scaffold_root / "docs" / "skills",
         "instructions": scaffold_root / "docs" / "instructions",
         "requirements": scaffold_root / "requirements",
+        "customizations": scaffold_root / ".github",
+        "custom_agents": scaffold_root / ".github" / "agents",
+        "custom_skills": scaffold_root / ".github" / "skills",
+        "custom_instructions": scaffold_root / ".github" / "instructions",
     }
 
     if project_type in {"algorithm", "hybrid"}:
@@ -316,7 +321,13 @@ def _merged_agents(project_type: str, root: dict[str, Any]) -> list[dict[str, An
     return [merged[key] for key in order]
 
 
-def _write_agent_specs(agents_dir: Path, decision_log: dict[str, Any], version: int, project_type: str) -> int:
+def _write_agent_specs(
+    agents_dir: Path,
+    custom_agents_dir: Path,
+    decision_log: dict[str, Any],
+    version: int,
+    project_type: str,
+) -> int:
     root = decision_log["decision_log"]
     agents = _merged_agents(project_type=project_type, root=root)
 
@@ -325,13 +336,14 @@ def _write_agent_specs(agents_dir: Path, decision_log: dict[str, Any], version: 
     requirements = [row for row in root.get("requirements", []) if isinstance(row, dict)]
     citations = _collect_citation_ids(root)
 
-    for existing in agents_dir.glob("*.md"):
-        existing.unlink()
+    _clear_directory_files(agents_dir, "*.md")
+    _clear_directory_files(custom_agents_dir, "*.agent.md")
 
     for idx, row in enumerate(agents, start=1):
         role = str(row.get("role", f"agent-{idx}"))
-        filename = f"{slugify(role) or f'agent-{idx}'}.md"
-        path = agents_dir / filename
+        slug = slugify(role) or f"agent-{idx}"
+        path = agents_dir / f"{slug}.md"
+        custom_path = custom_agents_dir / f"{slug}.agent.md"
 
         content_lines = [
             f"# Agent Spec: {role}",
@@ -417,6 +429,70 @@ def _write_agent_specs(agents_dir: Path, decision_log: dict[str, Any], version: 
 
         path.write_text("\n".join(content_lines) + "\n", encoding="utf-8")
 
+        custom_frontmatter = {
+            "name": slug,
+            "description": _agent_description(role, row, project_type=project_type),
+            "tools": _infer_agent_tools(row),
+            "user-invocable": False,
+        }
+        custom_body_lines = [
+            f"You are the {role} execution agent for scaffold version v{version}.",
+            "",
+            "## Purpose",
+            str(row.get("responsibility") or "No responsibility specified."),
+            "",
+            "## Inputs",
+        ]
+
+        if isinstance(reads, list) and reads:
+            custom_body_lines.extend([f"- {item}" for item in reads])
+        else:
+            custom_body_lines.append("- None")
+
+        custom_body_lines.extend(["", "## Outputs"])
+        if isinstance(writes, list) and writes:
+            custom_body_lines.extend([f"- {item}" for item in writes])
+        else:
+            custom_body_lines.append("- None")
+
+        custom_body_lines.extend(["", "## Constraints"])
+        if isinstance(constraints, list) and constraints:
+            custom_body_lines.extend([f"- {item}" for item in constraints])
+        else:
+            custom_body_lines.append("- None")
+        custom_body_lines.extend(
+            [
+                "- Input is the Decision Log and scaffold artifacts only.",
+                "- Preserve requirement IDs and citation IDs exactly as recorded.",
+                "- Escalate missing decisions to Stage 2 instead of improvising.",
+                "",
+                "## Decision Trace",
+            ]
+        )
+
+        if architecture:
+            for component in architecture[:5]:
+                component_name = component.get("component", "component")
+                approach = component.get("approach", "unspecified")
+                custom_body_lines.append(f"- Architecture: {component_name} -> {approach}")
+        if conventions:
+            for convention in conventions[:5]:
+                custom_body_lines.append(
+                    f"- Convention ({convention.get('domain')}): {convention.get('choice')}"
+                )
+        if requirements:
+            for requirement in requirements[:8]:
+                custom_body_lines.append(
+                    f"- {requirement.get('id', 'REQ-UNK')}: {requirement.get('description', '')}"
+                )
+        if not architecture and not conventions and not requirements:
+            custom_body_lines.append("- No decision trace entries captured.")
+
+        custom_path.write_text(
+            _markdown_with_frontmatter(custom_frontmatter, custom_body_lines),
+            encoding="utf-8",
+        )
+
     return len(agents)
 
 
@@ -445,18 +521,68 @@ def _write_requirements_matrix(requirements_dir: Path, decision_log: dict[str, A
     return 1
 
 
-def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_type: str, version: int) -> int:
+def _markdown_with_frontmatter(frontmatter: dict[str, Any], body_lines: list[str]) -> str:
+    return "---\n" + render_frontmatter(frontmatter) + "\n---\n" + "\n".join(body_lines).rstrip() + "\n"
+
+
+def _infer_agent_tools(row: dict[str, Any]) -> list[str]:
+    writes = set(_as_string_list(row.get("writes", [])))
+    responsibility = str(row.get("responsibility", "")).lower()
+    tools = ["read", "search"]
+
+    if writes:
+        tools.append("edit")
+    if writes & {"code", "tests", "report", "references", "scaffold"} or "generate" in responsibility:
+        tools.append("execute")
+    if writes & {"references"} or "citation" in responsibility or "source" in responsibility:
+        tools.append("web")
+
+    return _ordered_unique(tools)
+
+
+def _agent_description(role: str, row: dict[str, Any], project_type: str) -> str:
+    reads = ", ".join(_as_string_list(row.get("reads", []))) or "Decision Log artifacts"
+    writes = ", ".join(_as_string_list(row.get("writes", []))) or "scaffold outputs"
+    return (
+        f"Use when executing the {role} role in a META-COMPILER {project_type} scaffold. "
+        f"Reads {reads}. Writes {writes}. Preserves Decision Log constraints, requirement traceability, and citation fidelity."
+    )
+
+
+def _clear_directory_files(directory: Path, pattern: str) -> None:
+    for existing in directory.glob(pattern):
+        if existing.is_file():
+            existing.unlink()
+
+
+def _clear_directory_tree(directory: Path) -> None:
+    for existing in directory.iterdir():
+        if existing.is_dir():
+            shutil.rmtree(existing)
+        else:
+            existing.unlink()
+
+
+def _write_skill_files(
+    skills_dir: Path,
+    custom_skills_dir: Path,
+    decision_log: dict[str, Any],
+    project_type: str,
+    version: int,
+) -> int:
     root = decision_log["decision_log"]
     architecture = [row for row in root.get("architecture", []) if isinstance(row, dict)]
     conventions = [row for row in root.get("conventions", []) if isinstance(row, dict)]
 
-    for existing in skills_dir.glob("*.md"):
-        existing.unlink()
+    _clear_directory_files(skills_dir, "*.md")
+    _clear_directory_tree(custom_skills_dir)
 
-    files: list[tuple[str, list[str]]] = []
+    files: list[tuple[str, str, str, list[str]]] = []
     files.append(
         (
             "core-scaffold-skill.md",
+            "core-scaffold",
+            "Use when generating deterministic scaffold outputs from a META-COMPILER Decision Log while preserving requirement IDs, citations, and scope boundaries.",
             [
                 "# Skill: Core Scaffold Generation",
                 "",
@@ -481,6 +607,8 @@ def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_t
         files.append(
             (
                 "math-conventions-skill.md",
+                "math-conventions",
+                "Use when applying approved mathematical notation and formal assumptions across algorithm or hybrid scaffold outputs.",
                 [
                     "# Skill: Math Conventions",
                     "",
@@ -496,6 +624,8 @@ def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_t
         files.append(
             (
                 "scope-reduction-skill.md",
+                "scope-reduction",
+                "Use when pruning out-of-scope implementation work before expanding a META-COMPILER scaffold.",
                 [
                     "# Skill: Scope Reduction",
                     "",
@@ -513,6 +643,8 @@ def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_t
         files.append(
             (
                 "citation-manager-skill.md",
+                "citation-manager",
+                "Use when preserving citation IDs and source traceability across report or hybrid scaffold outputs.",
                 [
                     "# Skill: Citation Management",
                     "",
@@ -528,6 +660,8 @@ def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_t
         files.append(
             (
                 "narrative-structure-skill.md",
+                "narrative-structure",
+                "Use when translating architecture decisions and requirements into a coherent report narrative plan.",
                 [
                     "# Skill: Narrative Structure",
                     "",
@@ -542,19 +676,37 @@ def _write_skill_files(skills_dir: Path, decision_log: dict[str, Any], project_t
         )
 
     count = 0
-    for filename, lines in files:
+    for filename, folder_name, description, lines in files:
         (skills_dir / filename).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        skill_dir = custom_skills_dir / folder_name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            _markdown_with_frontmatter(
+                {
+                    "name": folder_name,
+                    "description": description,
+                },
+                lines,
+            ),
+            encoding="utf-8",
+        )
         count += 1
 
     return count
 
 
-def _write_instruction_docs(instructions_dir: Path, decision_log: dict[str, Any], project_type: str, version: int) -> int:
+def _write_instruction_docs(
+    instructions_dir: Path,
+    custom_instructions_dir: Path,
+    decision_log: dict[str, Any],
+    project_type: str,
+    version: int,
+) -> int:
     root = decision_log["decision_log"]
     requirements = [row for row in root.get("requirements", []) if isinstance(row, dict)]
 
-    for existing in instructions_dir.glob("*.md"):
-        existing.unlink()
+    _clear_directory_files(instructions_dir, "*.md")
+    _clear_directory_files(custom_instructions_dir, "*.instructions.md")
 
     common = [
         "# EXECUTION_INSTRUCTIONS",
@@ -580,6 +732,17 @@ def _write_instruction_docs(instructions_dir: Path, decision_log: dict[str, Any]
         "\n".join(common).rstrip() + "\n",
         encoding="utf-8",
     )
+    (custom_instructions_dir / "execution.instructions.md").write_text(
+        _markdown_with_frontmatter(
+            {
+                "description": "Use when implementing or editing scaffold deliverables generated from a META-COMPILER Decision Log. Enforces Stage 3 contract, scope boundaries, and traceability.",
+                "name": "execution-instructions",
+                "applyTo": ["code/**", "report/**", "tests/**", "references/**", "requirements/**"],
+            },
+            common,
+        ),
+        encoding="utf-8",
+    )
 
     trace_lines = [
         "# DECISION_TRACE_INSTRUCTIONS",
@@ -595,6 +758,17 @@ def _write_instruction_docs(instructions_dir: Path, decision_log: dict[str, Any]
     ]
     (instructions_dir / "decision-trace-instructions.md").write_text(
         "\n".join(trace_lines) + "\n",
+        encoding="utf-8",
+    )
+    (custom_instructions_dir / "decision-trace.instructions.md").write_text(
+        _markdown_with_frontmatter(
+            {
+                "description": "Use when mapping scaffold outputs to requirement IDs, citation IDs, and Decision Log constraints.",
+                "name": "decision-trace-instructions",
+                "applyTo": ["code/**", "report/**", "tests/**", "references/**", "requirements/**"],
+            },
+            trace_lines,
+        ),
         encoding="utf-8",
     )
 
@@ -633,6 +807,20 @@ def _write_instruction_docs(instructions_dir: Path, decision_log: dict[str, Any]
 
     (instructions_dir / "type-track-instructions.md").write_text(
         "\n".join(type_lines) + "\n",
+        encoding="utf-8",
+    )
+    apply_to = ["code/**", "tests/**"] if project_type == "algorithm" else ["report/**", "references/**"]
+    if project_type == "hybrid":
+        apply_to = ["code/**", "tests/**", "report/**", "references/**"]
+    (custom_instructions_dir / "type-track.instructions.md").write_text(
+        _markdown_with_frontmatter(
+            {
+                "description": "Use when editing deliverables specific to the active META-COMPILER project track and project type.",
+                "name": "type-track-instructions",
+                "applyTo": apply_to,
+            },
+            type_lines,
+        ),
         encoding="utf-8",
     )
 
@@ -712,6 +900,35 @@ def _write_code_starter_files(layout: dict[str, Path], decision_log: dict[str, A
         "        text = spec.read_text(encoding='utf-8')",
         "        assert '## Decisions Embedded' in text, f'{{spec.name}} missing decisions'",
         "        assert '## Requirement Trace' in text, f'{{spec.name}} missing req trace'",
+        "",
+        "",
+        "def test_custom_agent_files_have_frontmatter() -> None:",
+        "    agents_dir = SCAFFOLD_ROOT / '.github' / 'agents'",
+        "    agent_specs = list(agents_dir.glob('*.agent.md'))",
+        "    assert len(agent_specs) >= 1, 'No custom agent files found'",
+        "    for spec in agent_specs:",
+        "        text = spec.read_text(encoding='utf-8')",
+        "        assert text.startswith('---\\n'), f'{{spec.name}} missing frontmatter'",
+        "        assert 'description:' in text, f'{{spec.name}} missing description frontmatter'",
+        "        assert '## Decision Trace' in text, f'{{spec.name}} missing decision trace'",
+        "",
+        "",
+        "def test_custom_skills_exist() -> None:",
+        "    skill_files = list((SCAFFOLD_ROOT / '.github' / 'skills').glob('*/SKILL.md'))",
+        "    assert len(skill_files) >= 1, 'No custom skill files found'",
+        "    for skill in skill_files:",
+        "        text = skill.read_text(encoding='utf-8')",
+        "        assert text.startswith('---\\n'), f'{{skill.parent.name}} missing frontmatter'",
+        "        assert 'description:' in text, f'{{skill.parent.name}} missing description frontmatter'",
+        "",
+        "",
+        "def test_custom_instructions_exist() -> None:",
+        "    instruction_files = list((SCAFFOLD_ROOT / '.github' / 'instructions').glob('*.instructions.md'))",
+        "    assert len(instruction_files) >= 2, 'Too few custom instruction files found'",
+        "    for instruction in instruction_files:",
+        "        text = instruction.read_text(encoding='utf-8')",
+        "        assert text.startswith('---\\n'), f'{{instruction.name}} missing frontmatter'",
+        "        assert 'description:' in text, f'{{instruction.name}} missing description frontmatter'",
         "",
         "",
         "def test_requirements_traced_covers_all_ids() -> None:",
@@ -877,18 +1094,21 @@ def run_scaffold(
 
     agent_count = _write_agent_specs(
         layout["agents"],
+        layout["custom_agents"],
         decision_log,
         version=version,
         project_type=project_type,
     )
     skill_file_count = _write_skill_files(
         layout["skills"],
+        layout["custom_skills"],
         decision_log,
         project_type=project_type,
         version=version,
     )
     instruction_file_count = _write_instruction_docs(
         layout["instructions"],
+        layout["custom_instructions"],
         decision_log,
         project_type=project_type,
         version=version,
@@ -906,6 +1126,7 @@ def run_scaffold(
             "agent_count": agent_count,
             "skill_file_count": skill_file_count,
             "instruction_file_count": instruction_file_count,
+            "customization_root": str(layout["customizations"]),
             "requirements_file_count": requirements_file_count,
             "code_file_count": code_file_count,
             "report_file_count": report_file_count,
@@ -948,6 +1169,7 @@ def run_scaffold(
         "agent_count": agent_count,
         "skill_file_count": skill_file_count,
         "instruction_file_count": instruction_file_count,
+        "customization_root": str(layout["customizations"]),
         "requirements_file_count": requirements_file_count,
         "code_file_count": code_file_count,
         "report_file_count": report_file_count,

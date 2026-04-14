@@ -17,6 +17,10 @@ def _source_prompts_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "prompts"
 
 
+def _source_customizations_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / ".github"
+
+
 def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]:
     source_dir = _source_prompts_dir()
     if not source_dir.exists():
@@ -34,6 +38,34 @@ def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]
         target = target_dir / source.name
         if not force and target.exists():
             continue
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        copied.append(str(target))
+    return copied
+
+
+def _provision_workspace_customizations(workspace_root: Path, force: bool) -> list[str]:
+    source_dir = _source_customizations_dir()
+    if not source_dir.exists():
+        raise RuntimeError(f"Workspace customization templates directory not found: {source_dir}")
+
+    source_files = sorted(path for path in source_dir.rglob("*") if path.is_file())
+    if not source_files:
+        raise RuntimeError(f"No workspace customization templates found in: {source_dir}")
+
+    target_dir = workspace_root / ".github"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    copied: list[str] = []
+    for source in source_files:
+        relative_path = source.relative_to(source_dir)
+        target = target_dir / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        if source.resolve() == target.resolve():
+            continue
+        if not force and target.exists():
+            continue
+
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         copied.append(str(target))
     return copied
@@ -82,6 +114,7 @@ def run_meta_init(
             encoding="utf-8",
         )
     copied_prompts = _provision_workspace_prompts(workspace_root=workspace_root, force=force)
+    copied_customizations = _provision_workspace_customizations(workspace_root=workspace_root, force=force)
 
     seed_count = len(list_seed_files(paths))
     now = iso_now()
@@ -119,5 +152,8 @@ def run_meta_init(
         "prompt_dir": str(workspace_root / "prompts"),
         "prompt_count": len(list((workspace_root / "prompts").glob("*.prompt.md"))),
         "prompts_copied": copied_prompts,
+        "customization_dir": str(workspace_root / ".github"),
+        "customization_asset_count": len(list((workspace_root / ".github").rglob("*"))),
+        "customizations_copied": copied_customizations,
         "seed_count": seed_count,
     }

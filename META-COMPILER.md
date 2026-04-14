@@ -29,7 +29,7 @@ Stage 1C: Fresh Review Panel (3 independent agents, fresh context)
 Stage 2: Vision Elicitation (agent + human dialog, fresh context)
      ↓ Decision Log (rigid schema)
 Stage 3: Project Scaffolding (agent, fresh context)
-     ↓ Folder structure, agent specs, skills, requirements
+  ↓ Folder structure, summary docs, .github custom agents/skills/instructions, requirements
 
 ─────────────────────────────────────────────────────────────
 Post-Scaffold Commands (human-triggered, fresh context each):
@@ -236,10 +236,12 @@ status: raw | reviewed | validated
 **Input:** Stage 1B and Stage 1C prompt contracts + wiki/review artifacts
 
 **Behavior:**
-- Spawn and coordinate Stage 1B evaluator/debate/remediation agents
-- Spawn and coordinate Stage 1C fresh-review agents
+- Use the provisioned `.github/agents/stage-1a2-orchestrator.agent.md` as the control agent
+- Spawn and coordinate the provisioned Stage 1B evaluator, debate, and remediation agents
+- Spawn and coordinate the provisioned Stage 1C fresh-review agents
 - Run the 1B→1C loop from one control prompt
 - Route actionable ITERATE findings from 1C back to 1B
+- Persist a handoff packet at `workspace-artifacts/wiki/reviews/1a2_handoff.yaml`
 - Stop on PROCEED or iteration cap
 
 **Output:** Final proceed/iterate packet with blocking-gap status and Stage 2 readiness

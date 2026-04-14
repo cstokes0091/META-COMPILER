@@ -4,84 +4,91 @@
     {
       "label": "Stage 0: Initialize Workspace",
       "type": "shell",
-      "command": "meta-compiler meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}; else python3 -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType}; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 1A: Breadth Research",
       "type": "shell",
-      "command": "meta-compiler research-breadth && meta-compiler validate-stage --stage 1a",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli research-breadth && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1a; else python3 -m meta_compiler.cli research-breadth && python3 -m meta_compiler.cli validate-stage --stage 1a; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 1B: Depth Pass",
       "type": "shell",
-      "command": "meta-compiler research-depth && meta-compiler validate-stage --stage 1b",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli research-depth && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1b; else python3 -m meta_compiler.cli research-depth && python3 -m meta_compiler.cli validate-stage --stage 1b; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 1C: Review Panel",
       "type": "shell",
-      "command": "meta-compiler review && meta-compiler validate-stage --stage 1c",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli review && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1c; else python3 -m meta_compiler.cli review && python3 -m meta_compiler.cli validate-stage --stage 1c; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 2: Vision Elicitation (non-interactive)",
       "type": "shell",
-      "command": "meta-compiler elicit-vision --use-case \"${input:useCase}\" --non-interactive && meta-compiler validate-stage --stage 2",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 3: Scaffold",
       "type": "shell",
-      "command": "meta-compiler scaffold && meta-compiler validate-stage --stage 3",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli scaffold && .venv/bin/python -m meta_compiler.cli validate-stage --stage 3; else python3 -m meta_compiler.cli scaffold && python3 -m meta_compiler.cli validate-stage --stage 3; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Wiki Update (incremental)",
       "type": "shell",
-      "command": "meta-compiler wiki-update",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-update; else python3 -m meta_compiler.cli wiki-update; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Open Wiki Browser",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-browse; else python3 -m meta_compiler.cli wiki-browse; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Stage 2 Re-entry",
       "type": "shell",
-      "command": "meta-compiler stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"; else python3 -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Finalize Re-entry",
       "type": "shell",
-      "command": "meta-compiler finalize-reentry && meta-compiler validate-stage --stage 2",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli finalize-reentry && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli finalize-reentry && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
       "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Validate All Stages",
       "type": "shell",
-      "command": "meta-compiler validate-stage --stage all",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli validate-stage --stage all; else python3 -m meta_compiler.cli validate-stage --stage all; fi",
       "group": "test",
       "problemMatcher": []
     },
     {
       "label": "Run Scaffold Self-Tests",
       "type": "shell",
-      "command": "python -m pytest workspace-artifacts/scaffolds/v1/tests/ -v",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m pytest workspace-artifacts/scaffolds/v1/tests/ -v; else python3 -m pytest workspace-artifacts/scaffolds/v1/tests/ -v; fi",
       "group": "test",
       "problemMatcher": []
     },
     {
       "label": "Run Unit Tests",
       "type": "shell",
-      "command": "python -m pytest tests/ -v",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m pytest tests/ -v; else python3 -m pytest tests/ -v; fi",
       "group": "test",
       "problemMatcher": []
     }

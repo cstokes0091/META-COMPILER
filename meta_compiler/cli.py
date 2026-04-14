@@ -15,6 +15,7 @@ from .stages.scaffold_stage import run_scaffold
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
 from .stages.wiki_update_stage import run_wiki_update
 from .validation import validate_stage
+from .wiki_browser import run_wiki_browser
 
 
 def _add_common_paths(parser: argparse.ArgumentParser) -> None:
@@ -83,6 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     wiki_update_parser = subparsers.add_parser("wiki-update", help="Incremental wiki expansion from new seeds")
     _add_common_paths(wiki_update_parser)
+
+    wiki_browser_parser = subparsers.add_parser("wiki-browse", help="Open the local wiki browser")
+    _add_common_paths(wiki_browser_parser)
+    wiki_browser_parser.add_argument("--port", type=int, default=7777, help="Preferred local port")
+    wiki_browser_parser.add_argument("--no-open", action="store_true", help="Start the server without opening a browser")
+    wiki_browser_parser.add_argument("--prefer-v1", action="store_true", help="Prefer wiki v1 even when wiki v2 exists")
 
     reentry_parser = subparsers.add_parser("stage2-reentry", help="Revise Decision Log for changed scope")
     _add_common_paths(reentry_parser)
@@ -167,6 +174,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "wiki-update":
             result = run_wiki_update(artifacts_root=artifacts_root, workspace_root=workspace_root)
+        elif args.command == "wiki-browse":
+            result = run_wiki_browser(
+                artifacts_root=artifacts_root,
+                port=args.port,
+                no_open=args.no_open,
+                prefer_v1=args.prefer_v1,
+            )
         elif args.command == "stage2-reentry":
             sections = [s.strip() for s in args.sections.split(",") if s.strip()]
             result = run_stage2_reentry(

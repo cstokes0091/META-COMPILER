@@ -28,6 +28,7 @@ meta-compiler review
 meta-compiler elicit-vision --use-case "initial scaffold"
 meta-compiler scaffold
 meta-compiler wiki-update
+meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
 meta-compiler validate-stage --stage all
@@ -53,7 +54,8 @@ meta-compiler meta-init --project-name "My Project" --problem-domain "domain des
 
 Then edit `PROBLEM_STATEMENT.md` with real project context. Add seed documents
 (papers, specs, prior work) to `workspace-artifacts/seeds/`.
-`meta-init` also provisions stage prompts in `prompts/*.prompt.md`.
+`meta-init` also provisions stage prompts in `prompts/*.prompt.md` and workspace
+customization assets in `.github/`.
 
 The problem statement provides "tension" that scopes all downstream research.
 Without it, breadth search is unbounded.
@@ -87,15 +89,19 @@ and offset sigma_read" is a document. Create documents, not summaries.
 ### Stage 1A2: 1B ↔ 1C Orchestration Loop
 
 **Your job:** After Stage 1A completes, run the iterative Stage 1B/1C loop from a
-single orchestration prompt that creates/spawns the worker and review agents.
+single orchestration prompt backed by the provisioned `.github/agents/*.agent.md`
+files. The prompt invokes the named worker and review agents; the CLI still owns
+artifact generation and validation.
 
 Read `prompts/stage-1a2-orchestration.prompt.md` for detailed instructions.
 
 This phase should:
-- launch Stage 1B evaluator/debate/remediation agents
-- launch Stage 1C fresh review agents
+- verify or repair the provisioned Stage 1A2 custom agents
+- launch Stage 1B evaluator, debate, and remediation agents by name
+- launch Stage 1C fresh review agents by name
 - run `research-depth` and `review` cycles
 - route actionable ITERATE gaps back to Stage 1B
+- persist a `workspace-artifacts/wiki/reviews/1a2_handoff.yaml` packet
 - stop on PROCEED or iteration cap
 
 ### Stage 1B: Depth Pass
@@ -183,8 +189,10 @@ meta-compiler validate-stage --stage 3
 
 Stage 3 consumes the Decision Log ONLY — not the wiki, not raw sources. It produces:
 - Agent specifications with embedded decisions
-- Skill files for domain-specific tasks
-- Instruction documents
+- Real `.github/agents/*.agent.md` files for downstream execution
+- Real `.github/skills/<name>/SKILL.md` files for domain-specific tasks
+- Real `.github/instructions/*.instructions.md` files
+- Human-readable summary docs alongside those customization artifacts
 - Code/report stubs with requirement anchors
 - Semantic self-tests that verify scaffold integrity
 
@@ -240,8 +248,15 @@ Every claim must trace to a citation ID. Citations are dual-format:
 ## Prompt Files
 
 Stage-specific instructions are in `prompts/*.prompt.md`. Read the relevant prompt before
-executing each stage. They contain the epistemic criteria, dialog patterns, and
-output schemas that make each stage effective.
+executing each stage. Workspace custom agents, reusable prompts, and skills are
+provisioned in `.github/`. Together they provide the epistemic criteria, dialog
+patterns, and reusable agent contracts that make each stage effective.
+
+## Wiki Browser
+
+Use `meta-compiler wiki-browse` when you want a quick, resizable browser view of
+wiki v1 or v2. It opens automatically, prefers wiki v2 when available, and falls
+back to wiki v1 when Stage 1B has not populated v2 yet.
 
 ## Validation
 
