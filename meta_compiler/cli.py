@@ -7,12 +7,15 @@ from pathlib import Path
 
 from .artifacts import build_paths
 from .stages.breadth_stage import run_research_breadth
+from .stages.clean_stage import run_clean_workspace
 from .stages.depth_stage import run_research_depth
 from .stages.elicit_stage import run_elicit_vision
 from .stages.init_stage import run_meta_init
 from .stages.phase4_stage import run_phase4_finalize
 from .stages.review_stage import run_review
+from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
+from .stages.seed_tracker import check_and_update_seeds
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
 from .stages.wiki_update_stage import run_wiki_update
 from .validation import validate_stage
@@ -104,6 +107,58 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Decision log version to finalize (default: latest scaffold/decision log)",
     )
+
+    run_all_parser = subparsers.add_parser(
+        "run-all",
+        help="Run the full pipeline (Stage 0 through Stage 4) with a single command",
+    )
+    _add_common_paths(run_all_parser)
+    run_all_parser.add_argument("--project-name", required=True)
+    run_all_parser.add_argument("--problem-domain", required=True)
+    run_all_parser.add_argument(
+        "--project-type",
+        required=True,
+        choices=["algorithm", "report", "hybrid"],
+    )
+    run_all_parser.add_argument(
+        "--problem-statement",
+        default=None,
+        help="Inline problem statement body",
+    )
+    run_all_parser.add_argument(
+        "--problem-statement-file",
+        default=None,
+        help="File containing a problem statement body",
+    )
+    run_all_parser.add_argument(
+        "--use-case",
+        default="initial scaffold",
+        help="Use-case label for the decision log (default: 'initial scaffold')",
+    )
+    run_all_parser.add_argument(
+        "--clean-first",
+        action="store_true",
+        help="Reset workspace to Stage 0 before running",
+    )
+    run_all_parser.add_argument("--force", action="store_true", help="Overwrite existing artifacts")
+
+    clean_parser = subparsers.add_parser(
+        "clean-workspace",
+        help="Reset workspace to a specific stage",
+    )
+    _add_common_paths(clean_parser)
+    clean_parser.add_argument(
+        "--target-stage",
+        required=True,
+        choices=["0", "1a", "1b", "1c", "2", "3", "4"],
+        help="Reset to just after this stage completed",
+    )
+
+    seed_track_parser = subparsers.add_parser(
+        "track-seeds",
+        help="Check for new seed files and auto-update wiki if found",
+    )
+    _add_common_paths(seed_track_parser)
 
     wiki_update_parser = subparsers.add_parser("wiki-update", help="Incremental wiki expansion from new seeds")
     _add_common_paths(wiki_update_parser)
@@ -218,6 +273,29 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "wiki-update":
             result = run_wiki_update(artifacts_root=artifacts_root, workspace_root=workspace_root)
+        elif args.command == "run-all":
+            result = run_all(
+                workspace_root=workspace_root,
+                artifacts_root=artifacts_root,
+                project_name=args.project_name,
+                problem_domain=args.problem_domain,
+                project_type=args.project_type,
+                problem_statement=_resolve_problem_statement_text(args),
+                use_case=args.use_case,
+                clean_first=args.clean_first,
+                force=args.force,
+            )
+        elif args.command == "clean-workspace":
+            result = run_clean_workspace(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                target_stage=args.target_stage,
+            )
+        elif args.command == "track-seeds":
+            result = check_and_update_seeds(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+            )
         elif args.command == "wiki-browse":
             result = run_wiki_browser(
                 artifacts_root=artifacts_root,

@@ -1,5 +1,15 @@
 # Stage 1C: Fresh Review Panel — Prompt Instructions
 
+## Intent
+
+**Build an LLM-accessible knowledge base** that is robust enough to make an LLM
+a domain expert. Stage 1C is the quality gate: fresh eyes decide whether the
+knowledge base is ready to support downstream decisions.
+
+**Data over folklore.** Reviewers must verify that claims have specific source
+references (page numbers, section numbers, quoted text) — not just citation IDs
+pointing to entire documents.
+
 ## Your Role
 Three independent reviewers with fresh eyes. You evaluate Wiki v2 and the
 Gap Report cold — with no investment in the research process.
@@ -123,3 +133,10 @@ with gaps documented. This prevents infinite refinement.
 
 The CLI produces automated verdicts based on gap counts. Compare your
 assessment with the automated one and present both to the human.
+
+## Guiding Principles
+- **Document everything** — every verdict, every gap, every search result is persisted as a file.
+- **Data over folklore** — verify that wiki claims include specific locators (page, section, quote), not just citation IDs.
+- **Accessible to everyone** — write verdicts and gap descriptions in plain language.
+- **Domain agnostic** — evaluate coverage without assuming expertise in the user's field.
+- **Knowledge should be shared** — persist search discoveries so they benefit future iterations.

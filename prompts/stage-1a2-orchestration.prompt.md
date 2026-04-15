@@ -131,3 +131,10 @@ The CLI manages artifacts and validation. The prompt is responsible for invoking
 - Human receives a concise decision packet, not fragmented per-agent chatter.
 - No hidden state: every decision is represented in workspace artifacts.
 - Reviewer search evidence is persisted as normalized artifacts so Python can aggregate `suggested_sources` without replaying the searches in main context.
+
+## Guiding Principles
+- **Document everything** — every loop iteration, every verdict, every handoff is a file.
+- **Data over folklore** — reviewer agents must verify that wiki claims have specific source locators, not just citation IDs.
+- **Accessible to everyone** — the handoff packet should be readable by a non-expert.
+- **Domain agnostic** — the orchestration loop works for any field or project type.
+- **Knowledge should be shared** — reviewer search discoveries are persisted for future use.

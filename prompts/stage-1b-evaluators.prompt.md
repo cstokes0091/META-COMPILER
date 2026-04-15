@@ -1,5 +1,16 @@
 # Stage 1B: Depth Pass — Prompt Instructions
 
+## Intent
+
+**Data over folklore.** Stage 1B exists to stress-test whether the wiki contains
+actual evidence or just restated common knowledge. A reference citation is not
+enough — there must be quoted text, page numbers, or section numbers. If a claim
+cannot be traced to its source, it is folklore and must be flagged.
+
+**Document everything such that it's auditable by humans and LLMs alike.** Every
+gap, every disagreement, every debate outcome is persisted as a file — not
+trapped in chat history.
+
 ## Your Role
 Three evaluator perspectives + Debate Synthesizer. You perform epistemic lint
 on Wiki v1 — asking "do we know enough to build this?" not just "is the wiki
@@ -135,3 +146,10 @@ meta-compiler validate-stage --stage 1b
 A single evaluator has systematic blind spots. Three perspectives surface
 different gaps. The debate forces explicit justification. This is the difference
 between code linting and code review.
+
+## Guiding Principles
+- **Data over folklore** — flag any claim that lacks a specific page, section, equation, or direct quote reference.
+- **Document everything** — every gap, every debate round, every resolution is a file, not a conversation.
+- **Accessible to everyone** — write gap descriptions in plain language.
+- **Domain agnostic** — evaluate coverage without assuming the user's field.
+- **Knowledge should be shared** — surface missing knowledge so it can be found and added.

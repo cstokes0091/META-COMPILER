@@ -1,5 +1,8 @@
 # META-COMPILER: Workspace Compiler for LLM-Driven Projects
 
+**Intent:** Build an LLM-accessible knowledge base to make an LLM a domain and
+problem-space expert before any task is posited.
+
 This is a research-first project scaffolding system. It compiles raw information
 (seed documents + human intent) into structured workspaces that LLMs can execute
 against for programming, writing, and technical tasks.
@@ -9,9 +12,31 @@ handles bookkeeping (validation, manifests, file management). You handle reasoni
 (research, evaluation, dialog, extraction). The human provides vision and judgment
 between stages.
 
-This system is LLM-agnostic. It works with any reasoning model capable of reading
-files, following structured instructions, and producing schema-compliant artifacts
-inside a VSCode-style environment (Copilot, Claude Code, Cursor, Windsurf, etc.).
+This system is designed for GitHub Copilot Chat with ChatGPT as the intelligence
+layer. Agents, prompts, and skills are structured for the `.github/agents/`,
+`.github/prompts/`, and `.github/skills/` pipeline that Copilot Chat reads.
+
+## Guiding Principles
+
+1. **Document everything such that it's auditable by humans and LLMs alike.**
+   Every decision, every claim, every gap has a file and a trail. Nothing hides
+   in chat history.
+
+2. **Data over folklore.** A reference citation is not enough — there must be
+   quoted text, page numbers, section numbers, or line numbers. "Paper X discusses
+   topic Y" is folklore. "Paper X establishes [specific claim] (Eq. 12, p.15)" is
+   data.
+
+3. **Accessible to everyone.** The user may be an artist, an accountant, a
+   secretary, or an engineer. Do not assume technical expertise. Explain
+   trade-offs in plain language. This tool should be useful for anyone.
+
+4. **Domain agnostic and project agnostic.** This system works for any field,
+   any problem, any project type. Do not assume the user's domain.
+
+5. **Knowledge should be shared and democratized.** Technology should be
+   accessible to enable good ideas. Structure content so it can be reused,
+   extended, and challenged.
 
 ## Quick Reference
 
@@ -20,7 +45,10 @@ inside a VSCode-style environment (Copilot, Claude Code, Cursor, Windsurf, etc.)
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
 
-# Stage commands
+# Full pipeline (single command)
+meta-compiler run-all --project-name "X" --problem-domain "Y" --project-type hybrid --problem-statement-file ./problem_statement.md
+
+# Individual stage commands
 meta-compiler meta-init --project-name "X" --problem-domain "Y" --project-type hybrid --problem-statement-file ./problem_statement.md
 meta-compiler research-breadth
 meta-compiler research-depth
@@ -33,6 +61,14 @@ meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
 meta-compiler validate-stage --stage all
+
+# Utility commands
+meta-compiler track-seeds                        # Auto-detect and ingest new seeds
+meta-compiler clean-workspace --target-stage 0   # Reset to any stage
+
+# Document processing
+python scripts/read_document.py <file.pdf>       # Extract text from documents
+python scripts/write_document.py <output.docx>   # Write text to documents
 ```
 
 ## Core Principle
@@ -93,6 +129,15 @@ The CLI only creates stubs. Read each seed document and fill in:
 **Critical:** "Paper X discusses sensor noise" is a summary. "Paper X establishes
 that read noise follows Poisson-Gaussian mixture (Eq. 12), parameterized by gain k
 and offset sigma_read" is a document. Create documents, not summaries.
+
+**Full paper text enforcement:** Every wiki page must include direct quotes or
+specific references (page number, section number, equation number) from source
+material. Pages with only paraphrased summaries are insufficient.
+
+**Non-plaintext seeds:** Extract text from PDFs, DOCX, XLSX, PPTX before processing:
+```bash
+python scripts/read_document.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+```
 
 ### Stage 1A2: 1B ↔ 1C Orchestration Loop
 
@@ -262,6 +307,26 @@ meta-compiler wiki-update
 Detects new seeds, ingests them, produces impact report. If new seeds substantially
 change the problem space, recommend Stage 2 re-entry.
 
+### Post-Scaffold: Automatic Seed Tracking
+
+New seeds are automatically detected and ingested:
+
+```bash
+meta-compiler track-seeds
+```
+
+This checks for seed files not yet in the citation index, runs wiki-update if any
+are found, and saves a tracking report and inventory snapshot.
+
+### Post-Scaffold: Reset Workspace
+
+To reset the workspace to a specific stage:
+
+```bash
+meta-compiler clean-workspace --target-stage 2   # Reset to after Stage 2
+meta-compiler clean-workspace --target-stage 0   # Full reset (keep seeds)
+```
+
 ### Post-Scaffold: Stage 2 Re-entry
 
 When scope, use case, or requirements change:
@@ -283,6 +348,8 @@ meta-compiler scaffold  # Re-scaffold with new decisions
 |----------|----------|---------|
 | Problem Statement | `PROBLEM_STATEMENT.md` | Scopes all research |
 | Seeds | `workspace-artifacts/seeds/` | Immutable source documents |
+| Seed Tracking Report | `workspace-artifacts/wiki/reports/seed_tracking_report.yaml` | Tracks new seed detection and ingestion |
+| Seed Inventory | `workspace-artifacts/manifests/seed_inventory.yaml` | Snapshot of all seeds and their bindings |
 | Wiki v1 | `workspace-artifacts/wiki/v1/` | Stage 1A breadth output |
 | Wiki v2 | `workspace-artifacts/wiki/v2/` | Stage 1B depth output |
 | Citation Index | `workspace-artifacts/wiki/citations/index.yaml` | Source traceability |
@@ -304,11 +371,30 @@ Every claim must trace to a citation ID. Citations are dual-format:
 ## Prompt Files
 
 Stage-specific instructions are in `prompts/*.prompt.md`. Read the relevant prompt before
-executing each stage. Workspace custom agents, reusable prompts, and skills are
-provisioned in `.github/`. The prompt set now includes a prompt-led Stage 0 entry
-point and a Stage 4 finalize prompt in addition to the earlier stages. Together
-they provide the epistemic criteria, dialog patterns, CLI kickoff rules, and
-reusable agent contracts that make each stage effective.
+executing each stage. The prompt set includes:
+- `run-all.prompt.md` — full pipeline execution with a single prompt
+- `stage-0-init.prompt.md` — prompt-led Stage 0 initialization
+- `stage-1a-breadth.prompt.md` — breadth research
+- `stage-1a2-orchestration.prompt.md` — 1B ↔ 1C orchestration loop
+- `stage-1b-evaluators.prompt.md` — depth pass evaluators
+- `stage-1c-review.prompt.md` — fresh review panel
+- `stage-2-dialog.prompt.md` — vision elicitation dialog
+- `stage-3-scaffold.prompt.md` — scaffold review
+- `stage-4-finalize.prompt.md` — execute + pitch
+
+Workspace custom agents (including `academic-researcher.agent.md`), reusable
+prompts, and skills are provisioned in `.github/`.
+
+## Academic Researcher Agent
+
+The `@academic-researcher` agent retrieves full-text papers from Semantic Scholar,
+CORE, arXiv, PubMed Central, and gray literature. Any agent can call it:
+
+```
+@academic-researcher Find 5 papers on "topic" published after 2020
+```
+
+Papers are deposited in `workspace-artifacts/seeds/` and tracked automatically.
 
 ## Wiki Browser
 

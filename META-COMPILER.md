@@ -1,5 +1,10 @@
 # META-COMPILER: Research-First Project Scaffolding System
 
+## Intent
+
+**Build an LLM-accessible knowledge base to make an LLM a domain and problem-space
+expert before any task is posited.**
+
 ## Core Insight
 
 An LLM is faster and smarter than a human at research and synthesis, but is stateless. A human has context, vision, and judgment, but limited bandwidth. This system bridges the gap by front-loading research and crystallizing knowledge into reusable artifacts before a single line of code is written.
@@ -9,6 +14,18 @@ The LLM's job is not to be smart at execution time — it's to make itself smart
 The human provides vision and judgment at the narrowest bottleneck (Stage 2 dialog). Everything else is LLM labor with human checkpoints.
 
 **Key Framing:** This system builds a *workshop*, not a piece of furniture. The output is a reusable workspace for algorithm development or technical report generation — not the algorithm or report itself.
+
+## Guiding Principles
+
+1. **Document everything such that it's auditable by humans and LLMs alike.**
+   Every decision, every claim, every gap has a file and a trail.
+2. **Data over folklore.** A reference citation is not enough — there must be
+   quoted text, page numbers, section numbers, or line numbers.
+3. **Accessible to everyone.** The user may be an artist, an accountant, a
+   secretary, or an engineer. This tool should be useful for anyone.
+4. **Domain agnostic and project agnostic.** This system works for any field.
+5. **Knowledge should be shared and democratized.** Technology should be
+   accessible to enable good ideas.
 
 ---
 

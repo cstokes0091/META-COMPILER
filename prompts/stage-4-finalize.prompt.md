@@ -1,5 +1,16 @@
 # Stage 4: Execute + Pitch — Prompt Instructions
 
+## Intent
+
+**Build an LLM-accessible knowledge base to make an LLM a domain and problem-space
+expert before any task is posited.** Stage 4 proves the knowledge base worked: the
+scaffold runs, the deliverables are real, and the pitch tells the story of how
+research became a product.
+
+**Document everything such that it's auditable by humans and LLMs alike.** Every
+execution output, every pitch claim, every deliverable traces back through the
+scaffold to the Decision Log to the wiki to the original seeds.
+
 ## Your Role
 Execution and packaging reviewer. You run the scaffold-generated Stage 4 contract,
 verify the produced deliverables, refresh the product summary, and ensure a real
@@ -51,3 +62,10 @@ Inspect:
 - A refreshed `What I Built` summary anchored to the actual outputs
 - A markdown pitch plus a real PowerPoint deck
 - Passing `validate-stage --stage 4`
+
+## Guiding Principles
+- **Document everything** — execution outputs, pitch claims, and deliverables are all traceable.
+- **Data over folklore** — pitch deck claims reference specific evidence from the wiki and Decision Log.
+- **Accessible to everyone** — the pitch deck should be understandable by a non-technical audience.
+- **Domain agnostic** — the execution and packaging process works for any project type.
+- **Knowledge should be shared** — the final deliverables and pitch tell a complete, auditable story.

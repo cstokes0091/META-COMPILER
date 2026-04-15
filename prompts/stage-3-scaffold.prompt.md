@@ -1,5 +1,16 @@
 # Stage 3: Scaffold Review — Prompt Instructions
 
+## Intent
+
+**Build an LLM-accessible knowledge base to make an LLM a domain and problem-space
+expert before any task is posited.** Stage 3 converts decisions into an executable
+workspace — the scaffold. It must be traceable: every file, every agent, every
+requirement traces back to the Decision Log.
+
+**Document everything such that it's auditable by humans and LLMs alike.** The
+scaffold is the most tangible artifact users interact with. It should be
+self-documenting and navigable by anyone.
+
 ## Your Role
 Scaffold Reviewer agent. The CLI generates scaffold artifacts mechanically from the
 Decision Log; your job is to verify the generated workspace is coherent, traceable,
@@ -55,7 +66,23 @@ pytest workspace-artifacts/scaffolds/v1/tests/ -v
 
 If the latest scaffold is not `v1`, run tests in that scaffold version directory.
 
-### 5. Resolve Gaps
+### 5. Invoke Document Processing Scripts
+
+The scaffold should integrate the document processing capabilities for reading
+and writing common formats. Verify that the scaffold can call these scripts:
+
+```bash
+# Read non-plaintext seeds for wiki enrichment
+python scripts/read_document.py <seed_path> --output /tmp/extracted.md
+
+# Generate document outputs (reports, presentations)
+python scripts/write_document.py <output_path> --input <source.md> --title "<title>"
+```
+
+These scripts must be callable both when running Stage 3 standalone and inside
+the `run-all` pipeline.
+
+### 6. Resolve Gaps
 If you find misalignments or missing elements:
 - Identify exactly which Decision Log section is not reflected
 - Patch scaffold artifacts to restore traceability
@@ -72,3 +99,10 @@ If you find misalignments or missing elements:
 - Clear requirement and decision traceability
 - A valid Stage 4 execution contract and initial `What I Built` summary
 - Passing Stage 3 validation and scaffold self-tests
+
+## Guiding Principles
+- **Document everything** — every scaffold file traces to a Decision Log entry.
+- **Data over folklore** — requirements reference specific wiki citations with page/section locators.
+- **Accessible to everyone** — scaffold documentation should be readable by non-experts.
+- **Domain agnostic** — the scaffold structure works for any field or project type.
+- **Knowledge should be shared** — generated agents, skills, and instructions are reusable assets.
