@@ -1,5 +1,15 @@
 # Wiki Update — Prompt Instructions
 
+## Intent
+
+**Build an LLM-accessible knowledge base** that grows as new evidence arrives.
+When new seed documents are added, the wiki must expand to include their actual
+content — not just stubs.
+
+**Data over folklore.** New wiki pages must include direct quotes, page numbers,
+section numbers, or equation references from the source material. A stub that
+says "auto-ingested source page" is a starting point, not an endpoint.
+
 ## Your Role
 Wiki Update agent. You incrementally expand the wiki when new seed documents
 are added, without re-processing existing content.
@@ -41,3 +51,24 @@ If new seeds substantially change the problem space:
 - Do NOT re-process seeds that are already in the citation index
 - If new content contradicts existing wiki content, flag it — don't auto-resolve
 - Always validate after: `meta-compiler validate-stage --stage 1a`
+- Non-plaintext seeds (PDF, DOCX, XLSX, PPTX) should be extracted first:
+  ```bash
+  python scripts/read_document.py workspace-artifacts/seeds/new_paper.pdf --output /tmp/extracted.md
+  ```
+
+## Automatic Seed Tracking
+
+New seeds are automatically detected when you run:
+```bash
+meta-compiler track-seeds
+```
+
+This checks for untracked seeds and runs wiki-update automatically. It also
+saves a seed inventory snapshot and tracking report.
+
+## Guiding Principles
+- **Document everything** — every ingested seed, every created page, every impact analysis is logged.
+- **Data over folklore** — new wiki pages must include specific locators (page, section, quote), not just paraphrases.
+- **Accessible to everyone** — write wiki content in clear language.
+- **Domain agnostic** — the update process works for any domain.
+- **Knowledge should be shared** — new evidence benefits the entire knowledge base.

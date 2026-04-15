@@ -1,5 +1,16 @@
 # Stage 1A: Breadth Research — Prompt Instructions
 
+## Intent
+
+**Build an LLM-accessible knowledge base to make an LLM a domain and problem-space
+expert before any task is posited.** Stage 1A is where raw materials become
+structured knowledge. You transform seed documents into wiki pages that contain
+the *actual content* — equations, claims, data, methods — not summaries.
+
+**Data over folklore.** A reference citation is not enough. There must be quoted
+text, page numbers, section numbers, or line numbers. If you cannot point to where
+a claim comes from, it does not belong in the wiki.
+
 ## Your Role
 Research Crawler agent. You ingest seed documents and build Wiki v1.
 
@@ -20,7 +31,7 @@ Your job is to enrich the baseline artifacts into proper knowledge documents.
 - Use `research` only when a seed reveals a meaningful missing concept that requires deeper external investigation.
 - Keep long discovery output in files and wiki artifacts rather than bloating the active orchestration context.
 
-## Critical Rule: Documents, Not Summaries
+## Critical Rule: Full Paper Text, Not Summaries
 
 **Wrong:** "Paper X discusses sensor noise modeling."
 **Right:** "Paper X establishes that read noise follows Poisson-Gaussian mixture
@@ -29,6 +40,18 @@ EMVA1288 standard (Table 3, p.15)."
 
 The difference matters. A summary requires re-reading the paper. A document is
 reusable by downstream agents.
+
+**Enforcement:** Every wiki page must include direct quotes or specific references
+(page number, section number, equation number, table number, line number) from the
+source material. Pages that contain only paraphrased summaries without specific
+locators will be flagged during validation.
+
+**Non-plaintext seeds:** If a seed is a PDF, DOCX, XLSX, or PPTX, extract its
+text first:
+```bash
+python scripts/read_document.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+```
+Then process the extracted text as you would any markdown seed.
 
 ## Procedure
 
@@ -105,7 +128,14 @@ citations:
 ```
 
 ## Output
-- Enriched Wiki v1 pages with real extracted content
-- Updated citation index
+- Enriched Wiki v1 pages with real extracted content (full text, not summaries)
+- Updated citation index with page/section/line references for every claim
 - Updated wiki index and log (rebuild with CLI if needed)
 - Immediately hand off to `prompts/stage-1a2-orchestration.prompt.md` and the provisioned `.github/agents/stage-1a2-orchestrator.agent.md` so Stage 1B/1C loop execution is managed from a single orchestration prompt and real custom agents
+
+## Guiding Principles
+- **Document everything** so it is auditable by humans and LLMs alike.
+- **Data over folklore** — a reference citation is not enough. Include quoted text or locators.
+- **Accessible to everyone** — write wiki pages in clear language that a non-expert can follow.
+- **Domain agnostic** — do not assume the user's field. This process works for any domain.
+- **Knowledge should be shared** — structure content so it can be reused, extended, and challenged.
