@@ -98,18 +98,33 @@ def write_pdf(path: Path, text: str, title: str) -> None:
     title_rect = fitz.Rect(72, 72, page.rect.width - 72, 120)
     page.insert_textbox(title_rect, title, fontsize=18, fontname="helv")
 
-    # Insert body text with wrapping
-    body_rect = fitz.Rect(72, 130, page.rect.width - 72, page.rect.height - 72)
-    overflow = page.insert_textbox(body_rect, text, fontsize=10, fontname="helv")
+    # Split text into lines and paginate manually for reliability
+    lines = text.split("\n")
+    line_height = 14  # approximate for fontsize=10
+    margin_top = 130
+    margin_bottom = 72
+    usable_height = page.rect.height - margin_top - margin_bottom
+    lines_per_page = max(1, int(usable_height / line_height))
 
-    # Handle overflow with additional pages
-    while overflow > 0:
+    # First page starts after title
+    current_lines = lines[:lines_per_page]
+    remaining_lines = lines[lines_per_page:]
+
+    body_rect = fitz.Rect(72, margin_top, page.rect.width - 72, page.rect.height - margin_bottom)
+    page.insert_textbox(body_rect, "\n".join(current_lines), fontsize=10, fontname="helv")
+
+    # Additional pages
+    max_pages = 200
+    pages_created = 1
+    full_page_lines = max(1, int((page.rect.height - 72 - 72) / line_height))
+
+    while remaining_lines and pages_created < max_pages:
         page = doc.new_page()
+        pages_created += 1
+        current_lines = remaining_lines[:full_page_lines]
+        remaining_lines = remaining_lines[full_page_lines:]
         body_rect = fitz.Rect(72, 72, page.rect.width - 72, page.rect.height - 72)
-        overflow = page.insert_textbox(body_rect, text[-int(overflow):], fontsize=10, fontname="helv")
-        if overflow > 0:
-            # Prevent infinite loop by breaking if text still overflows
-            break
+        page.insert_textbox(body_rect, "\n".join(current_lines), fontsize=10, fontname="helv")
 
     doc.save(str(path))
     doc.close()

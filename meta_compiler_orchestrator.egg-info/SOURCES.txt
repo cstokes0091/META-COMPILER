@@ -14,12 +14,15 @@ meta_compiler/wiki_lifecycle.py
 meta_compiler/wiki_rendering.py
 meta_compiler/stages/__init__.py
 meta_compiler/stages/breadth_stage.py
+meta_compiler/stages/clean_stage.py
 meta_compiler/stages/depth_stage.py
 meta_compiler/stages/elicit_stage.py
 meta_compiler/stages/init_stage.py
 meta_compiler/stages/phase4_stage.py
 meta_compiler/stages/review_stage.py
+meta_compiler/stages/run_all_stage.py
 meta_compiler/stages/scaffold_stage.py
+meta_compiler/stages/seed_tracker.py
 meta_compiler/stages/stage2_reentry.py
 meta_compiler/stages/wiki_update_stage.py
 meta_compiler_orchestrator.egg-info/PKG-INFO

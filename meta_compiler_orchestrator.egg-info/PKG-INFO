@@ -6,16 +6,27 @@ Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: PyYAML>=6.0.2
 Requires-Dist: python-pptx>=1.0.2
+Requires-Dist: python-docx>=1.1.2
+Requires-Dist: openpyxl>=3.1.5
+Requires-Dist: PyMuPDF>=1.25.3
+Requires-Dist: XlsxWriter>=3.2.9
 
 # META-COMPILER Orchestrator
 
 Research-first project scaffolding system. Compiles seed documents + human intent
 into structured workspaces for LLM-driven programming, writing, and technical tasks.
 
-**This tool runs in VSCode with an LLM assistant as the intelligence layer.** It is
-model-agnostic — works with any reasoning model in any VSCode-integrated coding
-assistant (Copilot, Claude Code, Cursor, Windsurf, etc.). See `LLM_INSTRUCTIONS.md` for full
-workflow instructions. Stage-specific prompts are in `prompts/*.prompt.md`.
+**Intent:** Build an LLM-accessible knowledge base to make an LLM a domain and
+problem-space expert before any task is posited.
+
+**This tool runs in VSCode with GitHub Copilot Chat (ChatGPT) as the intelligence
+layer.** Agents, prompts, and skills are structured for the `.github/agents/`,
+`.github/prompts/`, and `.github/skills/` pipeline. See `LLM_INSTRUCTIONS.md` for
+full workflow instructions. Stage-specific prompts are in `prompts/*.prompt.md`.
+
+**Who is this for?** Anyone. Artists, engineers, accountants, secretaries,
+researchers, students. You do not need to be a programmer. You need a problem to
+explore and documents to feed the system. The system handles the rest.
 
 The prompts are the primary operator entry points. Each stage prompt tells the
 assistant which `meta-compiler` command to run, what artifacts to inspect, and
@@ -33,7 +44,10 @@ python -m pip install -e .
 ## Commands
 
 ```bash
-# Core pipeline
+# Full pipeline (single command — recommended for first-time users)
+meta-compiler run-all --project-name "My Project" --problem-domain "Example domain" --project-type hybrid --problem-statement-file ./problem_statement.md
+
+# Core pipeline (individual stages)
 meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type algorithm --problem-statement-file ./problem_statement.md
 meta-compiler research-breadth
 meta-compiler research-depth
@@ -48,11 +62,41 @@ meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
 
+# Utility commands
+meta-compiler track-seeds                        # Auto-detect and ingest new seeds
+meta-compiler clean-workspace --target-stage 0   # Reset to any stage
+
 # Validation
 meta-compiler validate-stage --stage all
+
+# Document processing
+python scripts/read_document.py <file.pdf>       # Extract text from PDF/DOCX/XLSX/PPTX
+python scripts/write_document.py <output.docx>   # Write text to documents
 ```
 
 ## End-to-End Flow
+
+### Quick Start (Single Command)
+
+```bash
+# Place seed documents in workspace-artifacts/seeds/
+# Then run the full pipeline:
+meta-compiler run-all \
+  --project-name "My Project" \
+  --problem-domain "Example domain" \
+  --project-type hybrid \
+  --problem-statement-file ./problem_statement.md
+
+# With a clean start:
+meta-compiler run-all \
+  --project-name "My Project" \
+  --problem-domain "Example domain" \
+  --project-type hybrid \
+  --problem-statement-file ./problem_statement.md \
+  --clean-first
+```
+
+### Step-by-Step (More Control)
 
 ```bash
 # Stage 0: Prompt-led init
@@ -113,12 +157,46 @@ meta-compiler validate-stage --stage all
 # When new seed documents arrive
 meta-compiler wiki-update
 
+# Auto-detect and ingest new seeds (checks + updates in one step)
+meta-compiler track-seeds
+
 # When scope or requirements change
 meta-compiler stage2-reentry --reason "expanded to include X" --sections "architecture,requirements"
 # LLM conducts scoped revision dialog
 meta-compiler finalize-reentry
 meta-compiler scaffold  # Re-scaffold with new decisions
+
+# Reset workspace to a specific stage
+meta-compiler clean-workspace --target-stage 2   # Redo from Stage 3 onward
+meta-compiler clean-workspace --target-stage 0   # Full reset (keeps seeds)
 ```
+
+## Academic Research
+
+The Academic Researcher agent (`@academic-researcher`) retrieves full-text papers
+from open-access sources and deposits them in `workspace-artifacts/seeds/`:
+
+```
+@academic-researcher Find 5 papers on "reinforcement learning" published after 2020
+```
+
+Sources: Semantic Scholar, CORE, arXiv, PubMed Central, and gray literature.
+
+## Document Processing
+
+Read and write common document formats:
+
+```bash
+# Extract text from any supported format
+python scripts/read_document.py paper.pdf
+python scripts/read_document.py spec.docx --output extracted.txt
+
+# Create documents from text
+python scripts/write_document.py report.docx --input content.md --title "My Report"
+python scripts/write_document.py slides.pptx --input notes.txt --title "Presentation"
+```
+
+Supported formats: `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.txt`, `.md`, `.rst`, `.tex`, `.csv`
 
 ## VSCode Integration
 
