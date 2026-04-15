@@ -8,13 +8,16 @@ meta_compiler/immutable_sources.py
 meta_compiler/io.py
 meta_compiler/utils.py
 meta_compiler/validation.py
+meta_compiler/wiki_browser.py
 meta_compiler/wiki_interface.py
 meta_compiler/wiki_lifecycle.py
+meta_compiler/wiki_rendering.py
 meta_compiler/stages/__init__.py
 meta_compiler/stages/breadth_stage.py
 meta_compiler/stages/depth_stage.py
 meta_compiler/stages/elicit_stage.py
 meta_compiler/stages/init_stage.py
+meta_compiler/stages/phase4_stage.py
 meta_compiler/stages/review_stage.py
 meta_compiler/stages/scaffold_stage.py
 meta_compiler/stages/stage2_reentry.py
@@ -26,6 +29,9 @@ meta_compiler_orchestrator.egg-info/entry_points.txt
 meta_compiler_orchestrator.egg-info/requires.txt
 meta_compiler_orchestrator.egg-info/top_level.txt
 tests/test_decision_log_validation.py
+tests/test_init_prompt_provisioning.py
 tests/test_manifest_validation.py
 tests/test_review_consensus.py
+tests/test_review_stage.py
 tests/test_scaffold_validation.py
+tests/test_wiki_browser.py
