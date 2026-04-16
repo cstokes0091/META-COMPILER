@@ -40,6 +40,9 @@ def test_meta_init_provisions_prompt_templates(tmp_path: Path):
         for path in customization_dir.rglob("*")
         if path.is_file()
     ) == expected_customization_paths
+    copilot_instructions = customization_dir / "copilot-instructions.md"
+    assert copilot_instructions.exists()
+    assert "run-all" in copilot_instructions.read_text(encoding="utf-8")
     assert result["customization_dir"] == str(customization_dir)
 
 

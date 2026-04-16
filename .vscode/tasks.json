@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Run Full Pipeline",
+      "label": "Run Through Stage 2 Handoff",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\"; else python3 -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\"; fi",
       "group": "build",
@@ -23,6 +23,20 @@
       "problemMatcher": []
     },
     {
+      "label": "Stage 1A: Ingest Prep (all seeds)",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli ingest --scope all; else python3 -m meta_compiler.cli ingest --scope all; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 1A: Validate Findings",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli ingest-validate; else python3 -m meta_compiler.cli ingest-validate; fi",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "Stage 1B: Depth Pass",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli research-depth && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1b; else python3 -m meta_compiler.cli research-depth && python3 -m meta_compiler.cli validate-stage --stage 1b; fi",
@@ -40,6 +54,13 @@
       "label": "Stage 2: Vision Elicitation (non-interactive)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stage 2: Audit Requirements",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli audit-requirements; else python3 -m meta_compiler.cli audit-requirements; fi",
       "group": "build",
       "problemMatcher": []
     },

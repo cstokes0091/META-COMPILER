@@ -1,15 +1,14 @@
-"""run-all command: Execute the entire META-COMPILER pipeline with a single prompt.
+"""run-all command: Execute META-COMPILER through the Stage 2 review handoff.
 
-Runs Stages 0 → 1A → 1B → 1C → 2 → 3 → 4 sequentially, validating after each
-stage. Stops on the first validation failure so the user can fix issues before
-continuing.
+Runs Stages 0 → 1A → 1B → 1C → 2 sequentially, validating after the major
+handoff stages. Stops on the first validation failure so the user can fix
+issues before continuing.
 
-This is the "single-prompt" wrapper. It is designed for users who want to execute
-the complete pipeline without manually invoking each stage.
+This command intentionally stops at the Stage 2 human review boundary. Stage 3
+and Stage 4 are run manually after the Decision Log and audit are reviewed.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +19,10 @@ from .breadth_stage import run_research_breadth
 from .clean_stage import run_clean_workspace
 from .depth_stage import run_research_depth
 from .elicit_stage import run_elicit_vision
-from .ingest_stage import run_ingest, validate_all_findings
+from .ingest_stage import run_ingest
 from .init_stage import run_meta_init
-from .phase4_stage import run_phase4_finalize
 from .review_stage import run_review
-from .scaffold_stage import run_scaffold
 from .seed_tracker import check_and_update_seeds
-from .sync_agents_stage import run_sync_agents
-from .wiki_update_stage import run_wiki_update
 from ..validation import validate_stage
 
 
@@ -74,7 +69,7 @@ def run_all(
     clean_first: bool = False,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Run the complete META-COMPILER pipeline from Stage 0 through Stage 4.
+    """Run META-COMPILER from Stage 0 through the Stage 2 handoff.
 
     Parameters
     ----------
@@ -102,7 +97,7 @@ def run_all(
     Returns
     -------
     dict
-        Summary of the full pipeline run with per-stage results.
+        Summary of the pipeline run through the human-review handoff.
     """
     log: list[dict] = []
     started = iso_now()
@@ -207,8 +202,8 @@ def run_all(
     # --- Stage 2 audit: baseline for requirements-auditor agent ---
     # The CLI computes deterministic coverage; the stage2-orchestrator agent
     # (invoked outside run-all) fans out requirement-deriver subagents and
-    # re-runs the auditor in fresh context. run-all continues past REVISE —
-    # humans or the orchestrator are responsible for closing gaps.
+    # re-runs the auditor in fresh context. Humans are responsible for closing
+    # any gaps before running scaffold.
     audit_result = run_audit_requirements(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
@@ -216,49 +211,21 @@ def run_all(
     )
     _log_step("2-audit", audit_result, log)
 
-    # --- Stage 3: Scaffold ---
-    scaffold_result = run_scaffold(
-        artifacts_root=artifacts_root,
-        decision_log_version=None,
-    )
-    _log_step("3-scaffold", scaffold_result, log)
-    _validate_or_raise(artifacts_root, "3", log)
-
-    # --- Mirror scaffolded .github/ into the meta-compiler repo ---
-    # Best-effort: if the repo has no .github (running from a temp dir) this
-    # still writes there; the user can inspect or discard as needed.
-    try:
-        sync_result = run_sync_agents(
-            artifacts_root=artifacts_root,
-            workspace_root=workspace_root,
-            scaffold_version=None,
-        )
-        _log_step("3-sync-agents", sync_result, log)
-    except Exception as sync_exc:  # noqa: BLE001
-        log.append({
-            "stage": "3-sync-agents",
-            "timestamp": iso_now(),
-            "status": "skipped",
-            "message": f"agent mirror skipped: {sync_exc}",
-        })
-
-    # --- Stage 4: Execute + Pitch ---
-    phase4_result = run_phase4_finalize(
-        artifacts_root=artifacts_root,
-        workspace_root=workspace_root,
-        decision_log_version=None,
-    )
-    _log_step("4-finalize", phase4_result, log)
-    _validate_or_raise(artifacts_root, "4", log)
-
     return {
-        "status": "complete",
+        "status": "stage-2-handoff",
         "started": started,
         "finished": iso_now(),
         "stages_completed": len([e for e in log if e["status"] == "ok" and not e["stage"].startswith("validate-")]),
+        "handoff_stage": "2",
+        "handoff_ready": True,
+        "next_steps": [
+            "Review workspace-artifacts/decision-logs/decision_log_v*.yaml.",
+            "Review workspace-artifacts/decision-logs/requirements_audit.yaml.",
+            "Run meta-compiler scaffold after human review.",
+        ],
         "pipeline_log": log,
         "message": (
-            "Full pipeline completed successfully. "
-            "Review workspace-artifacts/ for all generated outputs."
+            "Pipeline completed through Stage 2. "
+            "Review the Decision Log and requirements audit before running scaffold."
         ),
     }

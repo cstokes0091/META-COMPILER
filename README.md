@@ -31,15 +31,18 @@ python -m pip install -e .
 ## Commands
 
 ```bash
-# Full pipeline (single command — recommended for first-time users)
+# Run through the Stage 2 handoff (single command — recommended starting point)
 meta-compiler run-all --project-name "My Project" --problem-domain "Example domain" --project-type hybrid --problem-statement-file ./problem_statement.md
 
 # Core pipeline (individual stages)
 meta-compiler meta-init --project-name "My Project" --problem-domain "Example domain" --project-type algorithm --problem-statement-file ./problem_statement.md
+meta-compiler ingest --scope all
+meta-compiler ingest-validate
 meta-compiler research-breadth
 meta-compiler research-depth
 meta-compiler review
 meta-compiler elicit-vision --use-case "baseline design"
+meta-compiler audit-requirements
 meta-compiler scaffold
 meta-compiler phase4-finalize
 
@@ -57,6 +60,7 @@ meta-compiler clean-workspace --target-stage 0   # Reset to any stage
 meta-compiler validate-stage --stage all
 
 # Document processing
+python scripts/pdf_to_text.py <file.pdf>        # Extract text from PDFs for ingest
 python scripts/read_document.py <file.pdf>       # Extract text from PDF/DOCX/XLSX/PPTX
 python scripts/write_document.py <output.docx>   # Write text to documents
 ```
@@ -67,12 +71,15 @@ python scripts/write_document.py <output.docx>   # Write text to documents
 
 ```bash
 # Place seed documents in workspace-artifacts/seeds/
-# Then run the full pipeline:
+# Then run through the Stage 2 handoff:
 meta-compiler run-all \
   --project-name "My Project" \
   --problem-domain "Example domain" \
   --project-type hybrid \
   --problem-statement-file ./problem_statement.md
+
+# run-all stops after Stage 2 + requirements audit.
+# Review the Decision Log before running scaffold.
 
 # With a clean start:
 meta-compiler run-all \
@@ -94,9 +101,12 @@ meta-compiler validate-stage --stage 0
 # `meta-init` also provisions stage prompts into prompts/*.prompt.md
 # and workspace custom agents, prompts, and skills into .github/
 
-# Stage 1A: Breadth research
+# Stage 1A: Findings-backed breadth research
+meta-compiler ingest --scope all
+# Use prompts/ingest-orchestrator.prompt.md to write findings JSON
+meta-compiler ingest-validate
 meta-compiler research-breadth
-# LLM enriches wiki pages (see prompts/stage-1a-breadth.prompt.md)
+# Breadth enriches wiki pages from findings when present
 meta-compiler validate-stage --stage 1a
 
 # Stage 1A2: Orchestrate the 1B <-> 1C loop from one prompt
@@ -112,6 +122,9 @@ meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
 # LLM refines Decision Log via dialog (see prompts/stage-2-dialog.prompt.md)
 # Stage 2 also generates and stores the wiki name used in page headers and browser home.
 meta-compiler validate-stage --stage 2
+meta-compiler audit-requirements
+# run-all intentionally stops at this human review boundary.
+# Review decision_log_v*.yaml and requirements_audit.yaml before scaffold.
 
 # Stage 3: Scaffold
 meta-compiler scaffold
@@ -175,7 +188,7 @@ Read and write common document formats:
 
 ```bash
 # Extract text from any supported format
-python scripts/read_document.py paper.pdf
+python scripts/pdf_to_text.py paper.pdf --output paper.txt
 python scripts/read_document.py spec.docx --output extracted.txt
 
 # Create documents from text
@@ -188,9 +201,10 @@ Supported formats: `.pdf`, `.docx`, `.xlsx`, `.pptx`, `.txt`, `.md`, `.rst`, `.t
 ## VSCode Integration
 
 Tasks are configured in `.vscode/tasks.json`. Use the Command Palette
-(`Cmd+Shift+P` > `Tasks: Run Task`) to execute any stage or open the wiki browser.
-Stage 0 expects a problem-statement file path, and Stage 4 is available as a
-first-class task alongside the earlier stages.
+(`Cmd+Shift+P` > `Tasks: Run Task`) to execute the Stage 2 handoff flow,
+prepare ingest work plans, validate findings, audit Stage 2 requirements, or
+open the wiki browser. Stage 0 expects a problem-statement file path, and Stage
+4 remains available as a separate manual task after review.
 
 ## Artifact Root
 

@@ -15,6 +15,9 @@ pip install -r requirements.txt
 Extract full text from any supported document format:
 
 ```bash
+# Extract a PDF with the ingest-specific wrapper
+python scripts/pdf_to_text.py path/to/document.pdf --output extracted.txt
+
 # Print extracted text to stdout
 python scripts/read_document.py path/to/document.pdf
 
@@ -47,7 +50,7 @@ python scripts/write_document.py slides.pptx --input notes.txt --title "Presenta
 ## Use in the Pipeline
 
 These scripts are called automatically by the META-COMPILER pipeline:
-- **Stage 1A** can extract text from non-plaintext seed documents
+- **Stage 1A ingest prep** uses `pdf_to_text.py` for PDFs and `read_document.py` for other binary seeds
 - **Stage 3** scaffold generation can call these for document output
 - **Stage 4** uses the pptx writer for pitch deck generation
 - **Any agent** can call `read_document.py` to extract seed content
@@ -58,7 +61,10 @@ Any agent in the pipeline can invoke these scripts:
 
 ```bash
 # Extract a PDF seed for wiki ingestion
-python scripts/read_document.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+python scripts/pdf_to_text.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+
+# Extract a DOCX seed for wiki ingestion
+python scripts/read_document.py workspace-artifacts/seeds/spec.docx --output /tmp/spec_text.md
 
 # Generate a report document from wiki content
 python scripts/write_document.py workspace-artifacts/executions/v1/report.docx --input report.md

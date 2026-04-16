@@ -45,15 +45,18 @@ layer. Agents, prompts, and skills are structured for the `.github/agents/`,
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt && pip install -e .
 
-# Full pipeline (single command)
+# Run through the Stage 2 handoff
 meta-compiler run-all --project-name "X" --problem-domain "Y" --project-type hybrid --problem-statement-file ./problem_statement.md
 
 # Individual stage commands
 meta-compiler meta-init --project-name "X" --problem-domain "Y" --project-type hybrid --problem-statement-file ./problem_statement.md
+meta-compiler ingest --scope all
+meta-compiler ingest-validate
 meta-compiler research-breadth
 meta-compiler research-depth
 meta-compiler review
 meta-compiler elicit-vision --use-case "initial scaffold"
+meta-compiler audit-requirements
 meta-compiler scaffold
 meta-compiler phase4-finalize
 meta-compiler wiki-update
@@ -67,6 +70,7 @@ meta-compiler track-seeds                        # Auto-detect and ingest new se
 meta-compiler clean-workspace --target-stage 0   # Reset to any stage
 
 # Document processing
+python scripts/pdf_to_text.py <file.pdf>       # Extract text from PDFs for ingest
 python scripts/read_document.py <file.pdf>       # Extract text from documents
 python scripts/write_document.py <output.docx>   # Write text to documents
 ```
@@ -113,12 +117,22 @@ information fidelity.
 Read `prompts/stage-1a-breadth.prompt.md` for detailed instructions.
 
 ```bash
-meta-compiler research-breadth        # Creates baseline wiki structure
+meta-compiler ingest --scope all      # Writes work_plan.yaml and pre-extracts binaries
+# Then run prompts/ingest-orchestrator.prompt.md to produce findings JSON
+meta-compiler ingest-validate         # Validate findings JSON before enrichment
+meta-compiler research-breadth        # Creates baseline wiki structure and enriches from findings
 meta-compiler validate-stage --stage 1a
 ```
 
-After the CLI creates the baseline structure, **you must enrich the wiki pages**.
-The CLI only creates stubs. Read each seed document and fill in:
+The CLI now separates Stage 1A into deterministic ingest prep plus enrichment.
+`meta-compiler ingest` writes `workspace-artifacts/runtime/ingest/work_plan.yaml`
+and pre-extracts binary seeds. The ingest-orchestrator prompt fans out
+`seed-reader` subagents that write findings JSON under
+`workspace-artifacts/wiki/findings/`. Then `research-breadth` creates the
+baseline structure and enriches safe wiki pages from those findings.
+
+After the CLI creates the baseline structure, **you must enrich or review the
+wiki pages**. The CLI only creates stubs plus findings-backed upgrades. Fill in:
 - Precise definitions (not summaries)
 - Mathematical formalisms (LaTeX)
 - Key claims with citation IDs
@@ -134,9 +148,12 @@ and offset sigma_read" is a document. Create documents, not summaries.
 specific references (page number, section number, equation number) from source
 material. Pages with only paraphrased summaries are insufficient.
 
-**Non-plaintext seeds:** Extract text from PDFs, DOCX, XLSX, PPTX before processing:
+**Non-plaintext seeds:** PDFs use the dedicated wrapper and other binaries use
+the general document reader. `meta-compiler ingest` performs this pre-extract
+step automatically, but you can run the scripts directly when needed:
 ```bash
-python scripts/read_document.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+python scripts/pdf_to_text.py workspace-artifacts/seeds/paper.pdf --output /tmp/paper_text.md
+python scripts/read_document.py workspace-artifacts/seeds/spec.docx --output /tmp/spec_text.md
 ```
 
 ### Stage 1A2: 1B ↔ 1C Orchestration Loop
@@ -231,7 +248,11 @@ Read `prompts/stage-2-dialog.prompt.md` for detailed instructions.
 ```bash
 meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
 meta-compiler validate-stage --stage 2
+meta-compiler audit-requirements
 ```
+
+`run-all` intentionally stops here. The human must review the Decision Log and
+`workspace-artifacts/decision-logs/requirements_audit.yaml` before Stage 3.
 
 The `--non-interactive` flag creates a baseline Decision Log. Then you refine it
 through dialog:
@@ -261,7 +282,8 @@ meta-compiler scaffold
 meta-compiler validate-stage --stage 3
 ```
 
-Stage 3 consumes the Decision Log ONLY — not the wiki, not raw sources. It produces:
+Stage 3 consumes the Decision Log ONLY — not the wiki, not raw sources, and not
+the findings JSON directly. It produces:
 - Agent specifications with embedded decisions
 - Real `.github/agents/*.agent.md` files for downstream execution
 - Real `.github/skills/<name>/SKILL.md` files for domain-specific tasks

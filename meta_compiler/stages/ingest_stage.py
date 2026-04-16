@@ -1,8 +1,9 @@
 """ingest command: Prepare seeds for full-fidelity extraction by seed-reader subagents.
 
 Deterministic pre-work only. Enumerates seeds by scope (all|new), pre-extracts
-non-plaintext seeds via scripts/read_document.py, computes citation IDs, and
-writes a work plan YAML that the ingest-orchestrator agent fans out against.
+PDF seeds via scripts/pdf_to_text.py and other non-plaintext seeds via
+scripts/read_document.py, computes citation IDs, and writes a work plan YAML
+that the ingest-orchestrator agent fans out against.
 
 The orchestrator is responsible for the LLM-driven fan-out, findings JSON
 persistence, findings index updates, and ingest_report.yaml emission.
@@ -97,13 +98,18 @@ def _mint_citation_id(seed_stem: str, existing_ids: set[str]) -> str:
     return f"{candidate}-{suffix}"
 
 
+def _preextract_script_path(workspace_root: Path, suffix: str) -> tuple[Path, str]:
+    script_name = "pdf_to_text.py" if suffix == ".pdf" else "read_document.py"
+    return workspace_root / "scripts" / script_name, script_name
+
+
 def _preextract_binary(seed: Path, target: Path, workspace_root: Path) -> tuple[bool, str]:
     if target.exists():
         return True, "cached"
     target.parent.mkdir(parents=True, exist_ok=True)
-    script_path = workspace_root / "scripts" / "read_document.py"
+    script_path, script_name = _preextract_script_path(workspace_root, seed.suffix.lower())
     if not script_path.exists():
-        return False, f"read_document.py not found at {script_path}"
+        return False, f"{script_name} not found at {script_path}"
     try:
         subprocess.run(
             [

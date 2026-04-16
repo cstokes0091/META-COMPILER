@@ -69,6 +69,7 @@ runs. `seed-reader` exists specifically for strict full-read extraction.
 
 For each work item, spawn one `seed-reader` subagent. Run up to **4 in
 parallel** (concurrency cap — tune later). Each subagent receives a prompt with:
+
 - The exact path to the extracted text (or the original if plaintext).
 - The `citation_id` to stamp in the output.
 - A verbatim copy of the Findings Schema (see below).
