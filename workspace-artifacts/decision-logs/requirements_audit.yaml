@@ -1,0 +1,61 @@
+requirements_audit:
+  decision_log_version: 1
+  audited_at: '2026-04-16T18:51:36+00:00'
+  audited_by: cli-baseline
+  verdict: REVISE
+  coverage:
+    scope_items_total: 2
+    scope_items_uncovered:
+    - Stage 2 decision capture
+    - Stage 3 scaffold generation
+    problem_constraints_total: 7
+    problem_constraints_uncovered:
+    - '### Technical Constraints'
+    - '[e.g., Must run on Python 3.11+, single-threaded]'
+    - '[e.g., Maximum 10s per iteration]'
+    - '### Timeline Constraints'
+    - '[e.g., Proof of concept by end of sprint]'
+    - '### Resource Constraints'
+    - '[e.g., No GPU required, standard laptop]'
+    lens_counts:
+      functional: 1
+      performance: 0
+      reliability: 0
+      usability: 0
+      security: 0
+      maintainability: 0
+      portability: 0
+      constraint: 0
+      data: 1
+      interface: 0
+      business-rule: 0
+  req_findings:
+  - id: REQ-001
+    lens: data
+    ears_compliant: false
+    citations_resolve: true
+    issues:
+    - not EARS-compliant (missing trigger/shall)
+  - id: REQ-002
+    lens: functional
+    ears_compliant: false
+    citations_resolve: true
+    issues:
+    - not EARS-compliant (missing trigger/shall)
+  contradictions: []
+  proposed_additions: []
+  blocking_gaps:
+  - scope item 'Stage 2 decision capture' has zero requirement coverage
+  - scope item 'Stage 3 scaffold generation' has zero requirement coverage
+  - 'problem-statement constraint not captured: ''### Technical Constraints'''
+  - 'problem-statement constraint not captured: ''[e.g., Must run on Python 3.11+,
+    single-threaded]'''
+  - 'problem-statement constraint not captured: ''[e.g., Maximum 10s per iteration]'''
+  - 'problem-statement constraint not captured: ''### Timeline Constraints'''
+  - 'problem-statement constraint not captured: ''[e.g., Proof of concept by end of
+    sprint]'''
+  - 'problem-statement constraint not captured: ''### Resource Constraints'''
+  - 'problem-statement constraint not captured: ''[e.g., No GPU required, standard
+    laptop]'''
+  non_blocking_gaps:
+  - 2 requirements lack EARS phrasing

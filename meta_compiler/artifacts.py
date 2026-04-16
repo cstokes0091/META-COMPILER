@@ -24,6 +24,8 @@ class ArtifactPaths:
     reports_dir: Path
     reviews_dir: Path
     reviews_search_dir: Path
+    findings_dir: Path
+    findings_index_path: Path
     decision_logs_dir: Path
     scaffolds_dir: Path
     executions_dir: Path
@@ -51,6 +53,8 @@ def build_paths(root: Path) -> ArtifactPaths:
         reports_dir=wiki_dir / "reports",
         reviews_dir=wiki_dir / "reviews",
         reviews_search_dir=wiki_dir / "reviews" / "search",
+        findings_dir=wiki_dir / "findings",
+        findings_index_path=wiki_dir / "findings" / "index.yaml",
         decision_logs_dir=resolved / "decision-logs",
         scaffolds_dir=resolved / "scaffolds",
         executions_dir=resolved / "executions",
@@ -73,6 +77,7 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.reports_dir,
         paths.reviews_dir,
         paths.reviews_search_dir,
+        paths.findings_dir,
         paths.decision_logs_dir,
         paths.scaffolds_dir,
         paths.executions_dir,

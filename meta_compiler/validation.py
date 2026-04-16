@@ -6,7 +6,7 @@ from typing import Any
 
 from .artifacts import ArtifactPaths, latest_decision_log_path, load_manifest
 from .io import load_yaml, parse_frontmatter
-from .utils import read_text_safe
+from .utils import read_text_safe, slugify
 
 
 VALID_PROJECT_TYPES = {"algorithm", "report", "hybrid"}
@@ -371,6 +371,50 @@ def validate_karpathy_index_log(wiki_dir: Path) -> list[str]:
     return issues
 
 
+def validate_decision_log_density(payload: dict[str, Any]) -> list[str]:
+    """Stage 2 density gate: every in_scope item has at least one REQ that
+    references it, and the requirements list is non-empty."""
+    issues: list[str] = []
+    root = payload.get("decision_log")
+    if not isinstance(root, dict):
+        return issues
+
+    scope = root.get("scope") if isinstance(root.get("scope"), dict) else {}
+    in_scope = scope.get("in_scope") if isinstance(scope.get("in_scope"), list) else []
+    requirements = root.get("requirements") if isinstance(root.get("requirements"), list) else []
+
+    if not requirements:
+        issues.append("decision_log.requirements: density gate — requirements list is empty")
+        return issues
+
+    for idx, entry in enumerate(in_scope):
+        if not isinstance(entry, dict):
+            continue
+        item = entry.get("item")
+        if not isinstance(item, str) or not item.strip():
+            continue
+        slug = slugify(item)
+        tokens = [tok for tok in slug.split("-") if len(tok) >= 3][:3]
+        if not tokens:
+            continue
+
+        covered = False
+        for req in requirements:
+            if not isinstance(req, dict):
+                continue
+            desc_lower = str(req.get("description", "")).lower()
+            if all(tok in desc_lower for tok in tokens):
+                covered = True
+                break
+
+        if not covered:
+            issues.append(
+                f"decision_log.scope.in_scope[{idx}]: density gate — item '{item}' has no REQ referencing it"
+            )
+
+    return issues
+
+
 def validate_decision_log(payload: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     root = payload.get("decision_log")
@@ -514,12 +558,35 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
     return issues
 
 
+def _is_reviewer_or_orchestrator(agent_path: Path, frontmatter: dict[str, Any]) -> bool:
+    """Reviewer agents (fresh-context auditors) and orchestrators have
+    different contracts than implementers. Detect them by filename suffix or
+    by frontmatter name."""
+    stem = agent_path.stem.lower()
+    name = str(frontmatter.get("name", "")).lower()
+    return (
+        stem.endswith("-reviewer.agent")
+        or stem.endswith("-reviewer")
+        or stem.endswith("-orchestrator.agent")
+        or stem.endswith("-orchestrator")
+        or "reviewer" in name
+        or "orchestrator" in name
+    )
+
+
 def _validate_agent_delegation(frontmatter: dict[str, Any], agent_path: Path) -> list[str]:
     issues: list[str] = []
     tools = frontmatter.get("tools")
     if not isinstance(tools, list):
         issues.append(f"custom agent missing tools list: {agent_path.name}")
-    elif "agent" not in tools:
+        return issues
+
+    # Reviewers intentionally do not delegate; orchestrators may declare
+    # delegation differently. Skip the strict implementer check for them.
+    if _is_reviewer_or_orchestrator(agent_path, frontmatter):
+        return issues
+
+    if "agent" not in tools:
         issues.append(f"custom agent missing agent tool: {agent_path.name}")
 
     agents = frontmatter.get("agents")
@@ -542,6 +609,12 @@ def validate_custom_agent_file(agent_path: Path) -> list[str]:
 
     _require_fields(frontmatter, ["description"], f"custom agent {agent_path.name}", issues)
     issues.extend(_validate_agent_delegation(frontmatter, agent_path))
+
+    if _is_reviewer_or_orchestrator(agent_path, frontmatter):
+        # Reviewers and orchestrators have structured contracts instead of
+        # purpose/decision-trace sections.
+        return issues
+
     if "## Purpose" not in body:
         issues.append(f"custom agent missing purpose section: {agent_path.name}")
     if "## Decision Trace" not in body:
@@ -681,10 +754,22 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
         else:
             for agent_path in custom_agents:
                 issues.extend(validate_custom_agent_file(agent_path))
-            if isinstance(expected_agent_count, int) and expected_agent_count > 0 and len(custom_agents) != expected_agent_count:
+            implementer_agents = [
+                path
+                for path in custom_agents
+                if not path.stem.lower().endswith("-reviewer.agent")
+                and not path.stem.lower().endswith("-reviewer")
+                and not path.stem.lower().endswith("-orchestrator.agent")
+                and not path.stem.lower().endswith("-orchestrator")
+            ]
+            if (
+                isinstance(expected_agent_count, int)
+                and expected_agent_count > 0
+                and len(implementer_agents) != expected_agent_count
+            ):
                 issues.append(
                     "scaffold custom agent count mismatch: "
-                    f"expected {expected_agent_count}, found {len(custom_agents)}"
+                    f"expected {expected_agent_count} implementers, found {len(implementer_agents)}"
                 )
 
     custom_skills_dir = custom_root / "skills"
@@ -853,6 +938,7 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
             _, decision_log_path = latest
             decision_log = load_yaml(decision_log_path)
             issues.extend(validate_decision_log(decision_log))
+            issues.extend(validate_decision_log_density(decision_log))
 
     if stage in {"all", "3", "scaffold"}:
         scaffold_dirs = sorted(

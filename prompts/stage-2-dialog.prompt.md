@@ -20,6 +20,15 @@ produce a rigid Decision Log.
 present researched options from the wiki and the human makes decisions. You
 capture those decisions with citations.
 
+## Orchestration via `stage2-orchestrator`
+For non-trivial projects, prefer the `stage2-orchestrator` custom agent
+(`.github/agents/stage2-orchestrator.agent.md`). It seeds the draft via the
+CLI, fans out `requirement-deriver` subagents per in-scope item for dense
+lens-matrix coverage, calls the `requirements-auditor` for fresh-context
+review, and revises until the audit returns PROCEED or the iteration cap
+fires. Use this orchestrator whenever the project has more than 2 or 3
+in-scope items — it is the antidote to underspecced Decision Logs.
+
 ## Context
 - Wiki v2 is available in `workspace-artifacts/wiki/v2/`
 - Gap Report is in `workspace-artifacts/wiki/reports/`
@@ -68,12 +77,51 @@ Based on wiki coverage and the problem statement:
 - Present what could be excluded: "These topics exist but may not be needed: A, B"
 - For out-of-scope items, capture: item, rationale, revisit_if condition
 
-### 4. Requirements
-For each key capability:
-- Derive from architecture decisions and user goals
-- Assign IDs: REQ-001, REQ-002, etc.
-- Link to citations where requirements trace to literature
-- Define verification: "How will we know this requirement is met?"
+### 4. Requirements — Lens Matrix + EARS
+
+Do not ask "add a requirement? y/n" until you have walked the **lens matrix**
+for every in-scope item. That is how projects become underspecified.
+
+**Lens matrix.** For each in-scope item, consider every lens below. If the
+lens applies, draft at least one REQ for it. If it does not apply for this
+item, note why and move on — do not skip silently.
+
+| Lens | Question it answers |
+|------|---------------------|
+| functional | What must the system do for this item? |
+| performance | What speed, throughput, or latency bounds apply? |
+| reliability | What failure rate, recovery time, or durability is required? |
+| usability | What user-facing behavior or accessibility is required? |
+| security | What auth, authorization, or data protection is required? |
+| maintainability | What code or doc structure makes ongoing work feasible? |
+| portability | What environments must this support? |
+| constraint | What regulatory, legal, or resource limits apply? |
+| data | What inputs, outputs, or schemas are required? |
+| interface | What APIs or protocols with other components are required? |
+| business-rule | What domain invariants must hold? |
+
+**EARS template.** Phrase every REQ using one of:
+
+- "When `<trigger>`, the `<system>` shall `<response>`."
+- "While `<state>`, the `<system>` shall `<response>`."
+- "If `<condition>`, then the `<system>` shall `<response>`."
+- "Where `<feature>`, the `<system>` shall `<response>`."
+- "The `<system>` shall `<response>`." (ubiquitous — use sparingly)
+
+The trigger/state/condition makes verification mechanical. The `shall <response>`
+makes the expected behavior explicit. A REQ without both is a wish, not a
+requirement.
+
+**For each REQ:**
+- Assign ID sequentially: `REQ-001`, `REQ-002`, etc.
+- Link to at least one citation that traces the requirement to the wiki.
+- Define verification: concrete how-you-know-it-is-met criterion.
+- Classify by lens (stored alongside the REQ for the auditor to consume).
+
+**Minimum density check.** Before finalizing, count REQs per in-scope item.
+If any in-scope item has zero REQs, stop and fill it. If the project has only
+functional REQs (no non-functional), walk the lens matrix again — you have
+missed something.
 
 ### 5. Open Items
 Capture anything deferred:
@@ -146,12 +194,26 @@ decision_log:
 
 ## After Dialog
 
-Save the Decision Log and validate:
+Save the Decision Log and run the audit:
+
 ```bash
 meta-compiler validate-stage --stage 2
+meta-compiler audit-requirements
 ```
 
-Keep Stage 3 and Stage 4 in view while deciding: the Decision Log should make the later scaffold, execution contract, and final pitch legible without relying on hidden chat context.
+Then invoke the `requirements-auditor` agent in fresh context. It writes
+`workspace-artifacts/decision-logs/requirements_audit.yaml` with a PROCEED or
+REVISE verdict, a lens-coverage breakdown, a list of blocking gaps, and
+suggested additions.
+
+- If the audit returns `PROCEED`, Stage 2 is complete.
+- If it returns `REVISE`, add the auditor's `proposed_additions` to the
+  Decision Log (or justify rejecting each one with a citation), then re-run
+  `meta-compiler audit-requirements` until PROCEED or the iteration cap fires.
+
+Keep Stage 3 and Stage 4 in view while deciding: the Decision Log should make
+the later scaffold, execution contract, and final pitch legible without
+relying on hidden chat context.
 
 ## Document Processing
 

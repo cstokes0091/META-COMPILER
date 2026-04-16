@@ -15,15 +15,18 @@ from typing import Any
 
 from ..artifacts import build_paths, list_seed_files
 from ..utils import iso_now
+from .audit_stage import run_audit_requirements
 from .breadth_stage import run_research_breadth
 from .clean_stage import run_clean_workspace
 from .depth_stage import run_research_depth
 from .elicit_stage import run_elicit_vision
+from .ingest_stage import run_ingest, validate_all_findings
 from .init_stage import run_meta_init
 from .phase4_stage import run_phase4_finalize
 from .review_stage import run_review
 from .scaffold_stage import run_scaffold
 from .seed_tracker import check_and_update_seeds
+from .sync_agents_stage import run_sync_agents
 from .wiki_update_stage import run_wiki_update
 from ..validation import validate_stage
 
@@ -146,6 +149,16 @@ def run_all(
             ),
         })
 
+    # --- Ingest prep: prepare work plan for ingest-orchestrator agent ---
+    # The CLI does deterministic prep. The orchestrator agent (invoked outside
+    # run-all, driven by the Stage 1A prompt) does the LLM fan-out.
+    ingest_prep = run_ingest(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        scope="all",
+    )
+    _log_step("1a-ingest-prep", ingest_prep, log)
+
     # --- Stage 1A: Breadth Research ---
     breadth_result = run_research_breadth(
         artifacts_root=artifacts_root,
@@ -165,13 +178,19 @@ def run_all(
     review_result = run_review(artifacts_root=artifacts_root)
     _log_step("1c-review", review_result, log)
 
-    # --- Seed tracking: auto-detect and wiki-update ---
+    # --- Seed tracking: auto-detect new seeds and prep ingest for them ---
     seed_status = check_and_update_seeds(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
     )
     if seed_status.get("new_seeds_found"):
         _log_step("seed-auto-update", seed_status, log)
+        new_ingest_prep = run_ingest(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+            scope="new",
+        )
+        _log_step("seed-auto-ingest-prep", new_ingest_prep, log)
 
     # --- Stage 2: Vision Elicitation ---
     elicit_result = run_elicit_vision(
@@ -185,6 +204,18 @@ def run_all(
     _log_step("2-elicit", elicit_result, log)
     _validate_or_raise(artifacts_root, "2", log)
 
+    # --- Stage 2 audit: baseline for requirements-auditor agent ---
+    # The CLI computes deterministic coverage; the stage2-orchestrator agent
+    # (invoked outside run-all) fans out requirement-deriver subagents and
+    # re-runs the auditor in fresh context. run-all continues past REVISE —
+    # humans or the orchestrator are responsible for closing gaps.
+    audit_result = run_audit_requirements(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        decision_log_version=None,
+    )
+    _log_step("2-audit", audit_result, log)
+
     # --- Stage 3: Scaffold ---
     scaffold_result = run_scaffold(
         artifacts_root=artifacts_root,
@@ -192,6 +223,24 @@ def run_all(
     )
     _log_step("3-scaffold", scaffold_result, log)
     _validate_or_raise(artifacts_root, "3", log)
+
+    # --- Mirror scaffolded .github/ into the meta-compiler repo ---
+    # Best-effort: if the repo has no .github (running from a temp dir) this
+    # still writes there; the user can inspect or discard as needed.
+    try:
+        sync_result = run_sync_agents(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+            scaffold_version=None,
+        )
+        _log_step("3-sync-agents", sync_result, log)
+    except Exception as sync_exc:  # noqa: BLE001
+        log.append({
+            "stage": "3-sync-agents",
+            "timestamp": iso_now(),
+            "status": "skipped",
+            "message": f"agent mirror skipped: {sync_exc}",
+        })
 
     # --- Stage 4: Execute + Pitch ---
     phase4_result = run_phase4_finalize(

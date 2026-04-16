@@ -9,13 +9,16 @@ from .artifacts import build_paths
 from .stages.breadth_stage import run_research_breadth
 from .stages.clean_stage import run_clean_workspace
 from .stages.depth_stage import run_research_depth
+from .stages.audit_stage import run_audit_requirements
 from .stages.elicit_stage import run_elicit_vision
+from .stages.ingest_stage import run_ingest, validate_all_findings
 from .stages.init_stage import run_meta_init
 from .stages.phase4_stage import run_phase4_finalize
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
 from .stages.seed_tracker import check_and_update_seeds
+from .stages.sync_agents_stage import run_sync_agents
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
 from .stages.wiki_update_stage import run_wiki_update
 from .validation import validate_stage
@@ -163,6 +166,53 @@ def _build_parser() -> argparse.ArgumentParser:
     wiki_update_parser = subparsers.add_parser("wiki-update", help="Incremental wiki expansion from new seeds")
     _add_common_paths(wiki_update_parser)
 
+    audit_parser = subparsers.add_parser(
+        "audit-requirements",
+        help="Compute a baseline Stage 2 Decision Log audit for the requirements-auditor agent",
+    )
+    _add_common_paths(audit_parser)
+    audit_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to audit (default: latest)",
+    )
+
+    sync_agents_parser = subparsers.add_parser(
+        "sync-agents",
+        help="Mirror scaffolded .github/ agents, skills, and instructions into the meta-compiler repo",
+    )
+    _add_common_paths(sync_agents_parser)
+    sync_agents_parser.add_argument(
+        "--scaffold-version",
+        type=int,
+        default=None,
+        help="Scaffold version to mirror (default: latest)",
+    )
+    sync_agents_parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="Target repo root (default: same as workspace-root)",
+    )
+
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="Prepare seeds for full-fidelity extraction by the ingest-orchestrator agent",
+    )
+    _add_common_paths(ingest_parser)
+    ingest_parser.add_argument(
+        "--scope",
+        choices=["all", "new"],
+        default="new",
+        help="all = every seed; new = seeds not yet in findings/index.yaml",
+    )
+
+    ingest_validate_parser = subparsers.add_parser(
+        "ingest-validate",
+        help="Validate every findings JSON against the findings schema",
+    )
+    _add_common_paths(ingest_validate_parser)
+
     wiki_browser_parser = subparsers.add_parser("wiki-browse", help="Open the local wiki browser")
     _add_common_paths(wiki_browser_parser)
     wiki_browser_parser.add_argument("--port", type=int, default=7777, help="Preferred local port")
@@ -273,6 +323,31 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "wiki-update":
             result = run_wiki_update(artifacts_root=artifacts_root, workspace_root=workspace_root)
+        elif args.command == "audit-requirements":
+            result = run_audit_requirements(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "sync-agents":
+            repo_root_arg = Path(args.repo_root).resolve() if args.repo_root else None
+            result = run_sync_agents(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                scaffold_version=args.scaffold_version,
+                repo_root=repo_root_arg,
+            )
+        elif args.command == "ingest":
+            result = run_ingest(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                scope=args.scope,
+            )
+        elif args.command == "ingest-validate":
+            result = validate_all_findings(artifacts_root=artifacts_root)
+            if result.get("total_issues", 0) > 0:
+                print(json.dumps(result, indent=2))
+                return 2
         elif args.command == "run-all":
             result = run_all(
                 workspace_root=workspace_root,

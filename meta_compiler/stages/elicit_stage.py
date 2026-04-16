@@ -229,16 +229,106 @@ def _add_agents(log: dict[str, Any]) -> None:
         )
 
 
-def _auto_fill(log: dict[str, Any], wiki: WikiQueryInterface, context_note: str) -> None:
-    base_query = context_note if context_note.strip() else "core"
-    hits = wiki.search_wiki(base_query, limit=3)
+LENS_TEMPLATES = [
+    (
+        "functional",
+        "When a user invokes {item}, the system shall produce the declared output for {item} that satisfies the success criteria in the problem statement.",
+        "Exercise {item} via its entrypoint and confirm the output matches the declared contract.",
+    ),
+    (
+        "performance",
+        "While {item} is executing, the system shall complete the operation within the target time budget defined for {item}.",
+        "Benchmark {item} against typical inputs and confirm wall clock is within the documented budget.",
+    ),
+    (
+        "reliability",
+        "If {item} fails, then the system shall log the failure cause, preserve partial results, and surface a recoverable error to the caller.",
+        "Inject a failure during {item} and confirm the failure is logged, state is recoverable, and the caller sees a typed error.",
+    ),
+    (
+        "data",
+        "The {item} output shall conform to the schema documented in the wiki and include traceable provenance fields.",
+        "Validate {item} output against the documented schema with automated checks.",
+    ),
+    (
+        "interface",
+        "When {item} is invoked by another component, the system shall honour the declared interface contract without hidden state.",
+        "Call {item} from an external test harness and confirm no shared-state assumptions leak across the boundary.",
+    ),
+]
 
+
+def _extract_problem_section(problem_text: str, heading: str) -> list[str]:
+    if not problem_text:
+        return []
+    lines = problem_text.splitlines()
+    collected: list[str] = []
+    in_section = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == heading:
+            in_section = True
+            continue
+        if in_section and stripped.startswith("## "):
+            break
+        if in_section and stripped:
+            collected.append(stripped.lstrip("-* "))
+    return collected
+
+
+def _derive_scope_items(problem_text: str, wiki: WikiQueryInterface) -> list[str]:
+    goals = _extract_problem_section(problem_text, "## Goals and Success Criteria")
+    if goals:
+        items: list[str] = []
+        for goal in goals:
+            cleaned = goal.rstrip(".").strip()
+            if cleaned and cleaned not in items:
+                items.append(cleaned[:120])
+        if items:
+            return items[:8]
+
+    hits = wiki.search_wiki("core", limit=6)
+    return [str(hit["concept_id"]).replace("-", " ") for hit in hits if hit.get("concept_id")][:6]
+
+
+def _citations_for_item(wiki: WikiQueryInterface, item: str, limit: int = 3) -> list[str]:
+    hits = wiki.search_wiki(item, limit=3)
     citations: list[str] = []
     for hit in hits:
         for citation in wiki.get_citations(hit["concept_id"]):
             cid = citation.get("citation_id")
             if isinstance(cid, str) and cid not in citations:
                 citations.append(cid)
+            if len(citations) >= limit:
+                return citations
+    return citations
+
+
+def _auto_fill(log: dict[str, Any], wiki: WikiQueryInterface, context_note: str) -> None:
+    """Seed the Decision Log with a lens-matrix scaffold.
+
+    The goal is dense, revisable starting material — not final requirements.
+    The `stage2-orchestrator` agent (or a human) refines these via the
+    `requirement-deriver` subagent and the `requirements-auditor` loop.
+    """
+    base_query = context_note if context_note.strip() else "core"
+    default_hits = wiki.search_wiki(base_query, limit=3)
+
+    default_citations: list[str] = []
+    for hit in default_hits:
+        for citation in wiki.get_citations(hit["concept_id"]):
+            cid = citation.get("citation_id")
+            if isinstance(cid, str) and cid not in default_citations:
+                default_citations.append(cid)
+
+    # Problem statement introspection for scope + constraint coverage
+    problem_statement_path = Path("PROBLEM_STATEMENT.md")
+    problem_text = ""
+    if problem_statement_path.exists():
+        problem_text = read_text_safe(problem_statement_path)
+
+    scope_items = _derive_scope_items(problem_text, wiki)
+    problem_constraints = _extract_problem_section(problem_text, "## Constraints")
 
     log["decision_log"]["conventions"] = [
         {
@@ -246,8 +336,15 @@ def _auto_fill(log: dict[str, Any], wiki: WikiQueryInterface, context_note: str)
             "domain": "code",
             "choice": "Prefer clear modular Python with explicit validation",
             "rationale": "Maintain deterministic, auditable stage artifacts.",
-            "citations": citations[:2],
-        }
+            "citations": default_citations[:2],
+        },
+        {
+            "name": "Citation policy",
+            "domain": "citation",
+            "choice": "Every requirement cites at least one wiki page with locator fidelity",
+            "rationale": "Keeps requirements traceable through Stage 3 scaffolding and Stage 4 review.",
+            "citations": default_citations[:1],
+        },
     ]
     log["decision_log"]["architecture"] = [
         {
@@ -257,51 +354,86 @@ def _auto_fill(log: dict[str, Any], wiki: WikiQueryInterface, context_note: str)
                 {"name": "chat-history-coupled flow", "reason": "Violates fresh-context constraint."}
             ],
             "constraints_applied": ["fresh context", "artifact-only handoff", "strict validation"],
-            "citations": citations[:3],
+            "citations": default_citations[:3],
         }
     ]
-    log["decision_log"]["scope"]["in_scope"] = [
-        {"item": "Stage 2 decision capture", "rationale": "Required for scaffold generation."},
-        {"item": "Stage 3 scaffold generation", "rationale": "Build reusable project workshop output."},
-    ]
+
+    in_scope: list[dict[str, Any]] = []
+    if scope_items:
+        for item in scope_items:
+            in_scope.append({
+                "item": item,
+                "rationale": "Derived from problem statement goals during non-interactive Stage 2 seeding.",
+            })
+    else:
+        in_scope.append({
+            "item": "Project scaffold generation",
+            "rationale": "Placeholder scope item — the stage2-orchestrator should refine based on wiki content.",
+        })
+
+    log["decision_log"]["scope"]["in_scope"] = in_scope
     log["decision_log"]["scope"]["out_of_scope"] = [
         {
-            "item": "Full implementation execution",
-            "rationale": "Current tranche focuses on setup workshop, not final algorithm/report execution.",
-            "revisit_if": "When scaffolded project begins active implementation phase.",
+            "item": "Manual implementation of every downstream artifact",
+            "rationale": "Scaffold + Stage 4 orchestration handles implementation generation.",
+            "revisit_if": "Scaffolded orchestration proves insufficient for the declared deliverables.",
         }
     ]
-    log["decision_log"]["requirements"] = [
-        {
-            "id": "REQ-001",
-            "description": "Decision log must be schema-valid and citation-traceable.",
-            "source": "derived",
-            "citations": citations[:2],
-            "verification": "Run validate-stage --stage 2 with zero issues.",
-        },
-        {
-            "id": "REQ-002",
-            "description": "Scaffold generator must consume Decision Log only.",
-            "source": "derived",
-            "citations": citations[:2],
-            "verification": "Run scaffold command and verify generated files include decision traces.",
-        },
-    ]
+
+    requirements: list[dict[str, Any]] = []
+    req_counter = 1
+
+    # Per-item lens matrix walk
+    for item_entry in in_scope:
+        item = str(item_entry["item"])
+        item_citations = _citations_for_item(wiki, item, limit=3) or default_citations[:1]
+        for lens, template, verification in LENS_TEMPLATES:
+            requirements.append({
+                "id": f"REQ-{req_counter:03d}",
+                "description": template.format(item=item),
+                "source": "derived",
+                "citations": item_citations,
+                "verification": verification.format(item=item),
+                "lens": lens,
+            })
+            req_counter += 1
+
+    # Problem-statement constraint coverage (constraint lens)
+    for constraint in problem_constraints[:10]:
+        requirements.append({
+            "id": f"REQ-{req_counter:03d}",
+            "description": f"The system shall honour the constraint: {constraint.rstrip('.')}.",
+            "source": "user",
+            "citations": default_citations[:1],
+            "verification": "Inspect the Decision Log constraint field and the Stage 3 scaffold to confirm the constraint is reflected.",
+            "lens": "constraint",
+        })
+        req_counter += 1
+
+    log["decision_log"]["requirements"] = requirements
+
     log["decision_log"]["open_items"] = [
         {
-            "description": "Decide whether to include post-scaffold wiki-update automation in this cycle.",
-            "deferred_to": "future_work",
-            "owner": "human",
-        }
+            "description": "Run the requirements-auditor agent to validate lens coverage, EARS compliance, and citation fidelity before scaffolding.",
+            "deferred_to": "implementation",
+            "owner": "stage2-orchestrator",
+        },
     ]
     log["decision_log"]["agents_needed"] = [
         {
+            "role": "stage2-orchestrator",
+            "responsibility": "Refine these scaffolded requirements via the requirement-deriver and requirements-auditor ralph loop.",
+            "reads": ["decision_log", "wiki", "problem_statement", "findings"],
+            "writes": ["decision_log"],
+            "key_constraints": ["must PROCEED via audit before scaffold", "no citations without resolution"],
+        },
+        {
             "role": "scaffold-generator",
-            "responsibility": "Generate project structure and agent specs from Decision Log.",
+            "responsibility": "Generate project structure and agent specs from the audited Decision Log.",
             "reads": ["decision_log"],
             "writes": ["scaffold"],
             "key_constraints": ["no raw source access", "trace every instruction to decision log"],
-        }
+        },
     ]
 
 

@@ -16,20 +16,47 @@ Research Crawler agent. You ingest seed documents and build Wiki v1.
 
 ## Context
 The human has provided seed documents in `workspace-artifacts/seeds/` and written
-`PROBLEM_STATEMENT.md`. This prompt is the operator entry point for Stage 1A, so
-if baseline wiki stubs do not exist yet, run the CLI first:
+`PROBLEM_STATEMENT.md`. This prompt is the operator entry point for Stage 1A.
 
+Stage 1A now runs in two passes:
+
+1. **Ingest pass** (full-fidelity extraction into findings JSON).
+2. **Enrichment pass** (wiki pages built from findings JSON, not from seeds).
+
+### Ingest pass — run first
+```bash
+meta-compiler ingest --scope all
+```
+This writes `workspace-artifacts/runtime/ingest/work_plan.yaml` and pre-extracts
+any binary seeds. Then invoke the `ingest-orchestrator` custom agent
+(`.github/agents/ingest-orchestrator.agent.md`). It fans out `seed-reader`
+subagents, one per seed, and writes one findings JSON per seed under
+`workspace-artifacts/wiki/findings/<citation_id>.json` plus
+`findings/index.yaml`. Validate with:
+```bash
+meta-compiler ingest-validate
+```
+
+### Baseline wiki stubs — run after ingest
 ```bash
 meta-compiler research-breadth
 meta-compiler validate-stage --stage 1a
 ```
 
-Your job is to enrich the baseline artifacts into proper knowledge documents.
+Your enrichment job then reads the findings JSON (not the seeds) to fill wiki
+pages. The findings JSON already contains verbatim quotes, equations, and
+locators — treat it as the source of truth for Stage 1A enrichment.
 
 ## Delegation Rule
-- Use `explore` when you need a fast scan of the current workspace, wiki pages, or seed inventory.
-- Use `research` only when a seed reveals a meaningful missing concept that requires deeper external investigation.
-- Keep long discovery output in files and wiki artifacts rather than bloating the active orchestration context.
+- Use the `ingest-orchestrator` agent for reading seeds. It delegates to
+  `seed-reader` subagents, which read each document end-to-end. **DO NOT** use
+  the `explore` subagent to read seeds; Explore hallucinates on long documents.
+- Use `explore` only for fast scans of wiki pages, reports, or findings JSON
+  that already exist on disk.
+- Use `research` only when a finding reveals a meaningful missing concept that
+  requires deeper external investigation.
+- Keep long discovery output in files and wiki artifacts rather than bloating
+  the active orchestration context.
 
 ## Critical Rule: Full Paper Text, Not Summaries
 
@@ -55,13 +82,18 @@ Then process the extracted text as you would any markdown seed.
 
 ## Procedure
 
-### 1. Process Seeds Incrementally (File-by-File)
-For each file in `workspace-artifacts/seeds/`:
-- Read the full content (use `Read` tool for text files)
-- For PDFs, extract key content page by page
-- Immediately update affected wiki pages in `workspace-artifacts/wiki/v1/pages/` before moving to the next seed file
-- If context is nearing limits, persist progress before continuing (write updates to wiki files first; if needed also write a compact checkpoint note in `workspace-artifacts/wiki/v1/log.md`)
-- Note: seeds are curated by an SME and are the source of truth
+### 1. Process Findings, Not Seeds
+After the ingest pass is complete, enrichment reads from the findings JSON, not
+the seeds themselves. For each `workspace-artifacts/wiki/findings/<citation_id>.json`:
+- Read the JSON and identify which wiki pages it should populate or create
+- Copy verbatim quotes, equations, and locators into the matching wiki pages
+- Do NOT re-read the original seed — the seed-reader already extracted it
+- If a finding is marked `completeness: "partial"`, flag the wiki page's
+  Source Notes with the `partial_reason` so humans know the extraction is incomplete
+- If context is nearing limits, persist progress and mark the findings index
+  entry's `used_in_wiki: true` only for pages you have fully populated
+- Note: findings are derived directly from SME-curated seeds and are
+  schema-validated — they are the trustworthy source of truth for enrichment
 
 ### 2. Enrich Wiki Pages During Each File Pass
 As each seed is processed, update existing wiki pages:

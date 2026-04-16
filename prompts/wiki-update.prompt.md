@@ -20,15 +20,38 @@ new files to `workspace-artifacts/seeds/` and invokes this command.
 
 ## Procedure
 
-### 1. Run the CLI
+### 1. Run the Ingest Pass (new seeds only)
+```bash
+meta-compiler ingest --scope new
+```
+Then invoke the `ingest-orchestrator` agent
+(`.github/agents/ingest-orchestrator.agent.md`). It reads the work plan, fans
+out `seed-reader` subagents for the new seeds only, and writes one findings
+JSON per new seed under `workspace-artifacts/wiki/findings/`. The findings
+index is updated so future runs skip these seeds.
+
+Validate:
+```bash
+meta-compiler ingest-validate
+```
+
+**Critical:** Do NOT use the `explore` subagent for reading seeds. It
+hallucinates on long documents. Use `ingest-orchestrator`, which dispatches
+`seed-reader` subagents designed for faithful extraction.
+
+### 2. Run the wiki-update CLI
 ```bash
 meta-compiler wiki-update
 ```
-This detects new seeds, creates baseline wiki stubs, and produces an impact report.
+This registers citations, creates baseline wiki stubs for the new seeds, and
+produces an impact report. It reuses the citation IDs already minted during
+the ingest pass.
 
-### 2. Enrich New Pages
-Same as Stage 1A — read the new seed documents and fill in wiki pages with
-real extracted content. Documents, not summaries.
+### 3. Enrich New Pages from Findings
+Read `workspace-artifacts/wiki/findings/<citation_id>.json` for each newly
+added seed and populate the matching wiki pages with verbatim quotes,
+equations, and locators. Do NOT re-read the original seeds — the seed-reader
+subagents already extracted them faithfully during the ingest pass.
 
 ### 3. Review Impact Report
 Check `workspace-artifacts/wiki/reports/wiki_update_report.yaml`:

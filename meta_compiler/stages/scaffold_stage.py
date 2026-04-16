@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -500,6 +501,307 @@ def _write_agent_specs(
     return len(agents)
 
 
+def _infer_output_kind(writes: list[str], responsibility: str) -> str:
+    writes_set = {str(w).lower() for w in writes}
+    if writes_set & {"code", "tests"}:
+        return "code"
+    if writes_set & {"report", "references", "docs", "documentation"}:
+        return "document"
+    lowered = responsibility.lower()
+    if any(token in lowered for token in ("code", "test", "algorithm", "implementation")):
+        return "code"
+    if any(token in lowered for token in ("report", "draft", "outline", "narrative", "document")):
+        return "document"
+    return "artifact"
+
+
+def _write_ralph_loop_agents(
+    custom_agents_dir: Path,
+    custom_instructions_dir: Path,
+    decision_log: dict[str, Any],
+    version: int,
+    project_type: str,
+) -> dict[str, int]:
+    """Emit one reviewer per implementer plus a shared execution-orchestrator.
+
+    This gives every writing/editing agent a fresh-context reviewer that
+    verifies the work against Decision Log constraints and requirement traces
+    before the orchestrator accepts the change. The reviewer contract is
+    format-agnostic: the reviewer chooses the validator (tests+typecheck for
+    code, markdown-lint+schema for documents) based on `output_kind`.
+    """
+    root = decision_log["decision_log"]
+    agents = _merged_agents(project_type=project_type, root=root)
+
+    reviewers_written = 0
+    for idx, row in enumerate(agents, start=1):
+        role = str(row.get("role", f"agent-{idx}"))
+        slug = slugify(role) or f"agent-{idx}"
+        writes = _as_string_list(row.get("writes", []))
+        reads = _as_string_list(row.get("reads", []))
+        output_kind = _infer_output_kind(writes, str(row.get("responsibility", "")))
+
+        reviewer_frontmatter = {
+            "name": f"{slug}-reviewer",
+            "description": (
+                f"Fresh-context reviewer for the {role} implementer. "
+                f"Validates {output_kind} output against decision log constraints, requirement traceability, "
+                "and citation fidelity. Returns PASS or REVISE with actionable gaps."
+            ),
+            "tools": ["read", "search"],
+            "agents": [],
+            "user-invocable": False,
+            "argument-hint": f"Path to the artifact produced by {slug}",
+        }
+        reviewer_body = [
+            f"You are the {role} reviewer. Fresh context. You did not write the artifact you are reviewing.",
+            "",
+            "## Role",
+            f"Validate the latest output from the `{slug}` implementer against the Decision Log, requirement trace matrix, and scaffold guardrails. Return PASS when the artifact meets every gate, REVISE otherwise with a concrete list of gaps.",
+            "",
+            "## Output Kind",
+            f"- {output_kind}",
+            "",
+            "## Validation Gates",
+        ]
+        if output_kind == "code":
+            reviewer_body.extend([
+                "- Unit tests referenced in REQUIREMENTS_TRACED.md exist and pass.",
+                "- Type checker (mypy/pyright) reports zero new errors on the modified files.",
+                "- Every requirement ID in `requirements/REQ_TRACE_MATRIX.md` that applies to this artifact has a corresponding assertion or test.",
+                "- Citations referenced in code comments resolve to `workspace-artifacts/wiki/citations/index.yaml`.",
+            ])
+        elif output_kind == "document":
+            reviewer_body.extend([
+                "- Markdown is well-formed and follows CONVENTIONS.md.",
+                "- Every claim is backed by a citation ID that resolves to `workspace-artifacts/wiki/citations/index.yaml`.",
+                "- Section headings match the outline declared in the Decision Log or scaffold OUTLINE.md.",
+                "- Requirement IDs in `requirements/REQ_TRACE_MATRIX.md` that apply to this artifact are explicitly traced.",
+            ])
+        else:
+            reviewer_body.extend([
+                "- Artifact is syntactically valid for its declared format.",
+                "- Requirement IDs applicable to this artifact are traced.",
+                "- Citations referenced resolve to the canonical citation index.",
+                "- Scaffold guardrails (no chat-history-only decisions, no orphaned outputs) hold.",
+            ])
+        reviewer_body.extend([
+            "",
+            "## Contract",
+            "Return exactly one JSON object with this shape:",
+            "```json",
+            "{",
+            '  "verdict": "PASS | REVISE",',
+            '  "output_kind": "' + output_kind + '",',
+            '  "checked_requirements": ["REQ-NNN", ...],',
+            '  "blocking_gaps": ["string", ...],',
+            '  "non_blocking_gaps": ["string", ...],',
+            '  "proposed_fixes": ["string", ...]',
+            "}",
+            "```",
+            "",
+            "## Inputs",
+        ])
+        if reads:
+            reviewer_body.extend([f"- {item}" for item in reads])
+        else:
+            reviewer_body.append("- Decision Log and scaffold artifacts only")
+        reviewer_body.extend([
+            "",
+            "## Constraints",
+            "- DO NOT modify the artifact — audit only.",
+            "- DO NOT approve when any blocking gap is present.",
+            "- DO NOT invent requirement IDs or citations.",
+            f"- Decision log version under review: v{version}.",
+        ])
+
+        reviewer_path = custom_agents_dir / f"{slug}-reviewer.agent.md"
+        reviewer_path.write_text(
+            _markdown_with_frontmatter(reviewer_frontmatter, reviewer_body),
+            encoding="utf-8",
+        )
+        reviewers_written += 1
+
+    orchestrator_frontmatter = {
+        "name": "execution-orchestrator",
+        "description": (
+            "Run the scaffold Stage 4 ralph loop: pick an implementer from the registry, "
+            "invoke it, invoke its reviewer, revise until PASS, then advance. "
+            "Terminates when all registry entries are resolved or after the cycle cap."
+        ),
+        "tools": ["read", "search", "edit", "execute", "agent", "todo"],
+        "agents": ["*"],
+        "user-invocable": True,
+        "argument-hint": "Optional: specific agent slug to run, otherwise walks the full registry",
+    }
+    orchestrator_body = [
+        "You are the scaffold Execution Orchestrator.",
+        "",
+        "## Responsibility",
+        "Drive the ralph loop for every implementer in `AGENT_REGISTRY.yaml`:",
+        "1. Load `AGENT_REGISTRY.yaml` and build a dependency DAG using each agent's `inputs` and `outputs`.",
+        "2. Walk the DAG in topological order. For each implementer:",
+        "   a. Invoke the implementer with its scoped wiki brief and the current decision log.",
+        "   b. Invoke the matching `<slug>-reviewer` agent in fresh context against the produced artifact.",
+        "   c. If `verdict: PASS`, mark the registry entry `status: completed` and advance.",
+        "   d. If `verdict: REVISE` and `cycle < 3`, feed the reviewer's `blocking_gaps` and `proposed_fixes` back to the implementer. Increment cycle.",
+        "   e. If `cycle == 3`, force-advance and log an `open_item` in the execution manifest.",
+        "3. Write `executions/v<N>/ralph_loop_log.yaml` summarising cycles, verdicts, and unresolved gaps.",
+        "",
+        "## Constraints",
+        "- DO NOT skip the reviewer step — every implementer output must be reviewed in fresh context.",
+        "- DO NOT exceed 3 revision cycles per agent.",
+        "- DO NOT invent registry entries; only dispatch to agents that appear in `AGENT_REGISTRY.yaml`.",
+        "- DO pass the agent's declared `scoped_wiki_brief` paths, not the whole wiki.",
+        "",
+        "## Inputs",
+        "- `AGENT_REGISTRY.yaml` (scaffold root)",
+        "- `EXECUTION_MANIFEST.yaml`",
+        "- `requirements/REQ_TRACE_MATRIX.md`",
+        "- `workspace-artifacts/decision-logs/decision_log_v<N>.yaml`",
+        "",
+        "## Outputs",
+        "- `executions/v<N>/ralph_loop_log.yaml`",
+        "- `executions/v<N>/FINAL_OUTPUT_MANIFEST.yaml` (already written by run_stage4.py)",
+    ]
+    (custom_agents_dir / "execution-orchestrator.agent.md").write_text(
+        _markdown_with_frontmatter(orchestrator_frontmatter, orchestrator_body),
+        encoding="utf-8",
+    )
+
+    ralph_instruction = {
+        "description": "Ralph loop protocol for scaffold implementers",
+    }
+    ralph_body = [
+        "# Ralph Loop Instructions",
+        "",
+        "Every implementer in this scaffold follows the orchestrator -> implement -> review -> loop pattern.",
+        "",
+        "## Pattern",
+        "",
+        "1. **Orchestrator** reads `AGENT_REGISTRY.yaml`, picks the next unblocked implementer, and invokes it with a scoped brief.",
+        "2. **Implementer** produces its declared output artifact, writing only to paths it owns in the registry.",
+        "3. **Reviewer** (fresh context) validates the artifact against decision log constraints, requirement trace, and citation fidelity. Returns PASS or REVISE.",
+        "4. On REVISE, orchestrator feeds `blocking_gaps` and `proposed_fixes` back to the implementer. Max 3 cycles.",
+        "5. On PASS, registry entry is marked `completed` and the orchestrator advances.",
+        "",
+        "## Format-agnostic Review",
+        "",
+        "Reviewers pick their validator based on the implementer's `output_kind`:",
+        "",
+        "- `code` — unit tests + type checker + requirement trace.",
+        "- `document` — markdown lint + citation resolution + outline compliance + requirement trace.",
+        "- `artifact` — format-specific syntactic checks + requirement trace.",
+        "",
+        "## Termination",
+        "",
+        "- Every registry entry reaches `status: completed` or `status: force-advanced`.",
+        "- Force-advanced entries are logged in `executions/v<N>/ralph_loop_log.yaml` and in the Decision Log `open_items` list on the next Stage 2 re-entry.",
+    ]
+    (custom_instructions_dir / "ralph-loop.instructions.md").write_text(
+        "---\n" + render_frontmatter(ralph_instruction) + "\n---\n" + "\n".join(ralph_body).rstrip() + "\n",
+        encoding="utf-8",
+    )
+
+    return {
+        "reviewers_written": reviewers_written,
+        "orchestrator_written": 1,
+        "instruction_written": 1,
+    }
+
+
+def _infer_agent_triggers(row: dict[str, Any], project_type: str) -> list[str]:
+    triggers: list[str] = []
+    writes = {str(w).lower() for w in _as_string_list(row.get("writes", []))}
+    role = str(row.get("role", "")).lower()
+    responsibility = str(row.get("responsibility", "")).lower()
+
+    if writes & {"code", "tests"}:
+        triggers.append("implementation_scope_code")
+    if writes & {"report", "references"}:
+        triggers.append("implementation_scope_report")
+    if "citation" in role or "citation" in responsibility:
+        triggers.append("citation_touch")
+    if "review" in role or "audit" in role:
+        triggers.append("artifact_ready_for_review")
+    if "scaffold" in role:
+        triggers.append("decision_log_updated")
+    if not triggers:
+        triggers.append(f"project_type_{project_type}")
+    return triggers
+
+
+def _infer_scoped_wiki_brief(row: dict[str, Any]) -> list[str]:
+    brief: list[str] = []
+    role = str(row.get("role", "")).lower()
+    responsibility = str(row.get("responsibility", "")).lower()
+    keywords = set()
+    for token in re.findall(r"[a-z]{4,}", role + " " + responsibility):
+        keywords.add(token)
+    for keyword in sorted(keywords):
+        brief.append(f"workspace-artifacts/wiki/v2/pages/{keyword}.md")
+        if len(brief) >= 4:
+            break
+    brief.append("workspace-artifacts/wiki/citations/index.yaml")
+    return brief
+
+
+def _write_agent_registry(
+    scaffold_root: Path,
+    decision_log: dict[str, Any],
+    project_type: str,
+    version: int,
+) -> tuple[Path, int]:
+    """Emit AGENT_REGISTRY.yaml declaring every scaffolded agent's IO + triggers.
+
+    The registry is what the execution-orchestrator walks at runtime. Each
+    entry captures inputs (so the DAG can be built), outputs (so ownership
+    never overlaps), capabilities (tools), triggers_when (predicates over the
+    current work item), and scoped_wiki_brief (the subset of the wiki the
+    agent needs).
+    """
+    root = decision_log["decision_log"]
+    agents = _merged_agents(project_type=project_type, root=root)
+
+    entries: list[dict[str, Any]] = []
+    for idx, row in enumerate(agents, start=1):
+        role = str(row.get("role", f"agent-{idx}"))
+        slug = slugify(role) or f"agent-{idx}"
+        writes = _as_string_list(row.get("writes", []))
+        reads = _as_string_list(row.get("reads", []))
+        output_kind = _infer_output_kind(writes, str(row.get("responsibility", "")))
+        triggers = _infer_agent_triggers(row, project_type)
+        scoped_brief = _infer_scoped_wiki_brief(row)
+
+        entries.append({
+            "slug": slug,
+            "role": role,
+            "responsibility": row.get("responsibility", ""),
+            "output_kind": output_kind,
+            "inputs": reads or ["decision_log"],
+            "outputs": writes or ["scaffold"],
+            "capabilities": _infer_agent_tools(row),
+            "triggers_when": triggers,
+            "reviewer": f"{slug}-reviewer",
+            "scoped_wiki_brief": scoped_brief,
+            "status": "pending",
+            "max_cycles": 3,
+        })
+
+    registry = {
+        "agent_registry": {
+            "generated_at": iso_now(),
+            "decision_log_version": version,
+            "project_type": project_type,
+            "orchestrator": "execution-orchestrator",
+            "entries": entries,
+        }
+    }
+    registry_path = scaffold_root / "AGENT_REGISTRY.yaml"
+    dump_yaml(registry_path, registry)
+    return registry_path, len(entries)
+
+
 def _write_requirements_matrix(requirements_dir: Path, decision_log: dict[str, Any]) -> int:
     root = decision_log["decision_log"]
     requirements = [row for row in root.get("requirements", []) if isinstance(row, dict)]
@@ -618,6 +920,41 @@ def _write_execution_contract(
         f"CITATION_IDS = {citation_ids!r}",
         "",
         "",
+        "def _load_agent_registry():",
+        "    registry_path = SCAFFOLD_ROOT / 'AGENT_REGISTRY.yaml'",
+        "    if not registry_path.exists():",
+        "        return []",
+        "    with registry_path.open('r', encoding='utf-8') as handle:",
+        "        payload = yaml.safe_load(handle) or {}",
+        "    root = payload.get('agent_registry', {})",
+        "    entries = root.get('entries', [])",
+        "    return entries if isinstance(entries, list) else []",
+        "",
+        "",
+        "def _topological_dispatch_plan(entries):",
+        "    produced = {output for entry in entries for output in entry.get('outputs', [])}",
+        "    resolved = set()",
+        "    plan = []",
+        "    remaining = list(entries)",
+        "    guard = 0",
+        "    while remaining and guard < len(entries) * len(entries) + 1:",
+        "        progressed = False",
+        "        for entry in list(remaining):",
+        "            deps = [inp for inp in entry.get('inputs', []) if inp in produced and inp not in resolved]",
+        "            blocked = [d for d in deps if d not in resolved]",
+        "            if not blocked:",
+        "                plan.append(entry)",
+        "                resolved.update(entry.get('outputs', []))",
+        "                remaining.remove(entry)",
+        "                progressed = True",
+        "        if not progressed:",
+        "            # Cycle or missing inputs: append remaining in declared order.",
+        "            plan.extend(remaining)",
+        "            remaining = []",
+        "        guard += 1",
+        "    return plan",
+        "",
+        "",
         "def _load_generated_module():",
         "    module_path = SCAFFOLD_ROOT / 'code' / 'main.py'",
         "    if not module_path.exists():",
@@ -644,6 +981,35 @@ def _write_execution_contract(
         "    output_dir.mkdir(parents=True, exist_ok=True)",
         "    deliverables: list[dict[str, str]] = []",
         "    execution_notes: list[str] = []",
+        "",
+        "    # Build and persist the ralph-loop dispatch plan from AGENT_REGISTRY.yaml.",
+        "    # The LLM-driven execution-orchestrator agent walks this plan at runtime,",
+        "    # invoking each implementer and its reviewer in fresh context.",
+        "    registry_entries = _load_agent_registry()",
+        "    dispatch_plan = _topological_dispatch_plan(registry_entries)",
+        "    plan_payload = {",
+        "        'ralph_loop_plan': {",
+        "            'decision_log_version': DECISION_LOG_VERSION,",
+        "            'project_type': PROJECT_TYPE,",
+        "            'entries': [",
+        "                {",
+        "                    'slug': entry.get('slug'),",
+        "                    'role': entry.get('role'),",
+        "                    'reviewer': entry.get('reviewer'),",
+        "                    'output_kind': entry.get('output_kind'),",
+        "                    'triggers_when': entry.get('triggers_when', []),",
+        "                    'scoped_wiki_brief': entry.get('scoped_wiki_brief', []),",
+        "                    'status': entry.get('status', 'pending'),",
+        "                }",
+        "                for entry in dispatch_plan",
+        "            ],",
+        "        }",
+        "    }",
+        "    plan_path = output_dir / 'ralph_loop_plan.yaml'",
+        "    with plan_path.open('w', encoding='utf-8') as handle:",
+        "        yaml.safe_dump(plan_payload, handle, sort_keys=False, allow_unicode=False)",
+        "    deliverables.append({'kind': 'ralph-loop-plan', 'path': str(plan_path)})",
+        "    execution_notes.append(f'dispatch_plan_entries={len(dispatch_plan)}')",
         "",
         "    if PROJECT_TYPE in {'algorithm', 'hybrid'}:",
         "        generated_module = _load_generated_module()",
@@ -1323,6 +1689,12 @@ def run_scaffold(
         version=version,
         project_type=project_type,
     )
+    registry_path, registry_entry_count = _write_agent_registry(
+        layout["root"],
+        decision_log,
+        project_type=project_type,
+        version=version,
+    )
     skill_file_count = _write_skill_files(
         layout["skills"],
         layout["custom_skills"],
@@ -1336,6 +1708,13 @@ def run_scaffold(
         decision_log,
         project_type=project_type,
         version=version,
+    )
+    ralph_counts = _write_ralph_loop_agents(
+        layout["custom_agents"],
+        layout["custom_instructions"],
+        decision_log,
+        version=version,
+        project_type=project_type,
     )
     requirements_file_count = _write_requirements_matrix(layout["requirements"], decision_log)
     code_file_count = _write_code_starter_files(layout, decision_log, project_type=project_type)
@@ -1376,6 +1755,9 @@ def run_scaffold(
             "execution_manifest_path": str(execution_manifest_path),
             "orchestrator_path": str(orchestrator_path),
             "what_i_built_path": str(what_i_built_path),
+            "agent_registry_path": str(registry_path),
+            "agent_registry_entries": registry_entry_count,
+            "reviewers_written": ralph_counts["reviewers_written"],
             "root": str(scaffold_root),
         }
     }
@@ -1424,4 +1806,7 @@ def run_scaffold(
         "execution_manifest_path": str(execution_manifest_path),
         "orchestrator_path": str(orchestrator_path),
         "what_i_built_path": str(what_i_built_path),
+        "agent_registry_path": str(registry_path),
+        "agent_registry_entries": registry_entry_count,
+        "reviewers_written": ralph_counts["reviewers_written"],
     }

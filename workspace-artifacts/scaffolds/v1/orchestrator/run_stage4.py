@@ -14,6 +14,41 @@ REQUIREMENT_IDS = ['REQ-001', 'REQ-002']
 CITATION_IDS = ['src-decision-seed', 'src-sample-seed']
 
 
+def _load_agent_registry():
+    registry_path = SCAFFOLD_ROOT / 'AGENT_REGISTRY.yaml'
+    if not registry_path.exists():
+        return []
+    with registry_path.open('r', encoding='utf-8') as handle:
+        payload = yaml.safe_load(handle) or {}
+    root = payload.get('agent_registry', {})
+    entries = root.get('entries', [])
+    return entries if isinstance(entries, list) else []
+
+
+def _topological_dispatch_plan(entries):
+    produced = {output for entry in entries for output in entry.get('outputs', [])}
+    resolved = set()
+    plan = []
+    remaining = list(entries)
+    guard = 0
+    while remaining and guard < len(entries) * len(entries) + 1:
+        progressed = False
+        for entry in list(remaining):
+            deps = [inp for inp in entry.get('inputs', []) if inp in produced and inp not in resolved]
+            blocked = [d for d in deps if d not in resolved]
+            if not blocked:
+                plan.append(entry)
+                resolved.update(entry.get('outputs', []))
+                remaining.remove(entry)
+                progressed = True
+        if not progressed:
+            # Cycle or missing inputs: append remaining in declared order.
+            plan.extend(remaining)
+            remaining = []
+        guard += 1
+    return plan
+
+
 def _load_generated_module():
     module_path = SCAFFOLD_ROOT / 'code' / 'main.py'
     if not module_path.exists():
@@ -40,6 +75,35 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     deliverables: list[dict[str, str]] = []
     execution_notes: list[str] = []
+
+    # Build and persist the ralph-loop dispatch plan from AGENT_REGISTRY.yaml.
+    # The LLM-driven execution-orchestrator agent walks this plan at runtime,
+    # invoking each implementer and its reviewer in fresh context.
+    registry_entries = _load_agent_registry()
+    dispatch_plan = _topological_dispatch_plan(registry_entries)
+    plan_payload = {
+        'ralph_loop_plan': {
+            'decision_log_version': DECISION_LOG_VERSION,
+            'project_type': PROJECT_TYPE,
+            'entries': [
+                {
+                    'slug': entry.get('slug'),
+                    'role': entry.get('role'),
+                    'reviewer': entry.get('reviewer'),
+                    'output_kind': entry.get('output_kind'),
+                    'triggers_when': entry.get('triggers_when', []),
+                    'scoped_wiki_brief': entry.get('scoped_wiki_brief', []),
+                    'status': entry.get('status', 'pending'),
+                }
+                for entry in dispatch_plan
+            ],
+        }
+    }
+    plan_path = output_dir / 'ralph_loop_plan.yaml'
+    with plan_path.open('w', encoding='utf-8') as handle:
+        yaml.safe_dump(plan_payload, handle, sort_keys=False, allow_unicode=False)
+    deliverables.append({'kind': 'ralph-loop-plan', 'path': str(plan_path)})
+    execution_notes.append(f'dispatch_plan_entries={len(dispatch_plan)}')
 
     if PROJECT_TYPE in {'algorithm', 'hybrid'}:
         generated_module = _load_generated_module()

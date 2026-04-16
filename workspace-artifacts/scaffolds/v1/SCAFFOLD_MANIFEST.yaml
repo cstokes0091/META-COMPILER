@@ -1,5 +1,5 @@
 scaffold:
-  generated_at: '2026-04-14T03:06:30+00:00'
+  generated_at: '2026-04-16T18:50:25+00:00'
   decision_log_version: 1
   decision_log_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/decision-logs/decision_log_v1.yaml
   project_type: hybrid
@@ -13,4 +13,7 @@ scaffold:
   execution_manifest_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1/EXECUTION_MANIFEST.yaml
   orchestrator_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1/orchestrator/run_stage4.py
   what_i_built_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/wiki/provenance/what_i_built.md
+  agent_registry_path: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1/AGENT_REGISTRY.yaml
+  agent_registry_entries: 6
+  reviewers_written: 6
   root: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1

@@ -1,18 +1,26 @@
 ## What I Built
 
-- Decision Log Version: v1
+- Scaffold version: v1
 - Project type: hybrid
-- Output directory: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1
+- Scaffold root: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/scaffolds/v1
+- Agent specs: 6
+- Skill files: 5
+- Instruction files: 3
+- Requirement artifacts: 1
+- Code artifacts: 4
+- Report artifacts: 4
 
-### Final Deliverables
-- algorithm-output: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/algorithm_output.md
-- report-output: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/report_output.md
-- final-product-summary: /Users/christianstokes/Downloads/META-COMPILER/workspace-artifacts/executions/v1/final_product_summary.md
+### Decisions Carried Forward
+- workflow-orchestrator: Artifact-driven stage transitions with strict schema checks
 
-### Execution Notes
-- run_workflow_executed
-- report_artifacts_compiled
+### Requirement Spine
+- REQ-001: Decision log must be schema-valid and citation-traceable.
+- REQ-002: Scaffold generator must consume Decision Log only.
 
-### Why This Matters
-- Stage 4 converts the scaffold execution contract into real final-output artifacts.
-- The resulting deliverables and the pitch deck share the same evidence trail.
+### Execution Path
+- Stage 3 emits orchestrator/run_stage4.py as the deterministic Stage 4 runner.
+- Stage 4 executes that orchestrator to create final product artifacts and a pitch deck.
+- Generated agents default to the explore/research subagent palette for downstream work.
+
+### Agent Roles
+- scaffold-generator: Generate project structure and agent specs from Decision Log.
