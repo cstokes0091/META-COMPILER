@@ -41,7 +41,9 @@ meta-compiler ingest-validate
 meta-compiler research-breadth
 meta-compiler research-depth
 meta-compiler review
-meta-compiler elicit-vision --use-case "baseline design"
+meta-compiler elicit-vision --start        # write Stage 2 brief + transcript skeleton
+# (LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md)
+meta-compiler elicit-vision --finalize     # compile transcript → decision_log_v{N}.yaml
 meta-compiler audit-requirements
 meta-compiler scaffold
 meta-compiler phase4-finalize
@@ -78,8 +80,11 @@ meta-compiler run-all \
   --project-type hybrid \
   --problem-statement-file ./problem_statement.md
 
-# run-all stops after Stage 2 + requirements audit.
-# Review the Decision Log before running scaffold.
+# run-all stops after Stage 2 preflight (writes brief + transcript skeleton).
+# The Stage 2 dialog then happens in an LLM runtime driven by
+# .github/prompts/stage-2-dialog.prompt.md, which invokes the stage2-orchestrator
+# agent and calls `meta-compiler elicit-vision --finalize` when done.
+# Review the Decision Log and requirements audit before running scaffold.
 
 # With a clean start:
 meta-compiler run-all \
@@ -117,13 +122,17 @@ meta-compiler validate-stage --stage 1a
 # Reviewer-specific web-search artifacts are persisted under
 # workspace-artifacts/wiki/reviews/search/ for the Python review stage to aggregate.
 
-# Stage 2: Vision elicitation
-meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
-# LLM refines Decision Log via dialog (see prompts/stage-2-dialog.prompt.md)
-# Stage 2 also generates and stores the wiki name used in page headers and browser home.
+# Stage 2: Vision elicitation (prompt-as-conductor — see .github/docs/stage-2-hardening.md)
+meta-compiler elicit-vision --start          # write brief + transcript skeleton
+# LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md:
+#   1. @stage2-orchestrator mode=preflight  (semantic readiness audit)
+#   2. converse with human, append decision blocks to transcript.md
+meta-compiler elicit-vision --finalize       # parse blocks → decision_log_v{N}.yaml
+# LLM continues:
+#   3. @stage2-orchestrator mode=postflight (fidelity audit of compile)
 meta-compiler validate-stage --stage 2
 meta-compiler audit-requirements
-# run-all intentionally stops at this human review boundary.
+# run-all intentionally stops at the Stage 2 preflight boundary.
 # Review decision_log_v*.yaml and requirements_audit.yaml before scaffold.
 
 # Stage 3: Scaffold

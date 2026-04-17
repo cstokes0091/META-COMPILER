@@ -34,12 +34,23 @@ class ArtifactPaths:
     manifest_path: Path
     source_bindings_path: Path
     runtime_dir: Path
+    # Stage 2 prompt-as-conductor runtime artifacts.
+    # See .github/docs/stage-2-hardening.md §6.
+    stage2_runtime_dir: Path
+    stage2_brief_path: Path
+    stage2_transcript_path: Path
+    stage2_precheck_request_path: Path
+    stage2_precheck_verdict_path: Path
+    stage2_postcheck_request_path: Path
+    stage2_postcheck_verdict_path: Path
 
 
 def build_paths(root: Path) -> ArtifactPaths:
     resolved = root.resolve()
     wiki_dir = resolved / "wiki"
     manifests_dir = resolved / "manifests"
+    runtime_dir = resolved / "runtime"
+    stage2_runtime_dir = runtime_dir / "stage2"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -62,7 +73,14 @@ def build_paths(root: Path) -> ArtifactPaths:
         manifests_dir=manifests_dir,
         manifest_path=manifests_dir / MANIFEST_NAME,
         source_bindings_path=manifests_dir / "source_bindings.yaml",
-        runtime_dir=resolved / "runtime",
+        runtime_dir=runtime_dir,
+        stage2_runtime_dir=stage2_runtime_dir,
+        stage2_brief_path=stage2_runtime_dir / "brief.md",
+        stage2_transcript_path=stage2_runtime_dir / "transcript.md",
+        stage2_precheck_request_path=stage2_runtime_dir / "precheck_request.yaml",
+        stage2_precheck_verdict_path=stage2_runtime_dir / "precheck_verdict.yaml",
+        stage2_postcheck_request_path=stage2_runtime_dir / "postcheck_request.yaml",
+        stage2_postcheck_verdict_path=stage2_runtime_dir / "postcheck_verdict.yaml",
     )
 
 
@@ -84,6 +102,7 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.pitches_dir,
         paths.manifests_dir,
         paths.runtime_dir,
+        paths.stage2_runtime_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

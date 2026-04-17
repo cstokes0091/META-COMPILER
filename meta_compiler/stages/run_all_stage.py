@@ -1,11 +1,15 @@
-"""run-all command: Execute META-COMPILER through the Stage 2 review handoff.
+"""run-all command: Execute META-COMPILER through the Stage 2 preflight handoff.
 
-Runs Stages 0 → 1A → 1B → 1C → 2 sequentially, validating after the major
-handoff stages. Stops on the first validation failure so the user can fix
-issues before continuing.
+Runs Stages 0 → 1A → 1B → 1C → 2-start sequentially, validating after the
+major handoff stages. Stops on the first validation failure so the user
+can fix issues before continuing.
 
-This command intentionally stops at the Stage 2 human review boundary. Stage 3
-and Stage 4 are run manually after the Decision Log and audit are reviewed.
+The pipeline intentionally stops after `elicit-vision --start` writes the
+Stage 2 brief and transcript skeleton. The Stage 2 dialog itself must
+happen in a chat runtime driven by `.github/prompts/stage-2-dialog.prompt.md`
+— `run-all` cannot hold a conversation, so it hands off to the prompt.
+After the dialog, the operator runs `meta-compiler elicit-vision --finalize`
+and `meta-compiler audit-requirements` manually.
 """
 from __future__ import annotations
 
@@ -14,11 +18,10 @@ from typing import Any
 
 from ..artifacts import build_paths, list_seed_files
 from ..utils import iso_now
-from .audit_stage import run_audit_requirements
 from .breadth_stage import run_research_breadth
 from .clean_stage import run_clean_workspace
 from .depth_stage import run_research_depth
-from .elicit_stage import run_elicit_vision
+from .elicit_stage import run_elicit_vision_start
 from .ingest_stage import run_ingest
 from .init_stage import run_meta_init
 from .review_stage import run_review
@@ -187,45 +190,51 @@ def run_all(
         )
         _log_step("seed-auto-ingest-prep", new_ingest_prep, log)
 
-    # --- Stage 2: Vision Elicitation ---
-    elicit_result = run_elicit_vision(
+    # --- Stage 2 preflight: write brief + transcript skeleton ---
+    # The dialog itself happens outside run-all — it requires a chat runtime
+    # reading .github/prompts/stage-2-dialog.prompt.md. run-all's job is to
+    # prepare the preflight artifacts and hand off.
+    elicit_start_result = run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-        use_case=use_case,
-        resume=False,
-        non_interactive=True,
-        context_note="",
     )
-    _log_step("2-elicit", elicit_result, log)
-    _validate_or_raise(artifacts_root, "2", log)
-
-    # --- Stage 2 audit: baseline for requirements-auditor agent ---
-    # The CLI computes deterministic coverage; the stage2-orchestrator agent
-    # (invoked outside run-all) fans out requirement-deriver subagents and
-    # re-runs the auditor in fresh context. Humans are responsible for closing
-    # any gaps before running scaffold.
-    audit_result = run_audit_requirements(
-        artifacts_root=artifacts_root,
-        workspace_root=workspace_root,
-        decision_log_version=None,
-    )
-    _log_step("2-audit", audit_result, log)
+    _log_step("2-preflight", elicit_start_result, log)
 
     return {
-        "status": "stage-2-handoff",
+        "status": "stage-2-preflight-handoff",
         "started": started,
         "finished": iso_now(),
-        "stages_completed": len([e for e in log if e["status"] == "ok" and not e["stage"].startswith("validate-")]),
-        "handoff_stage": "2",
+        "stages_completed": len(
+            [
+                e
+                for e in log
+                if e["status"] == "ok" and not e["stage"].startswith("validate-")
+            ]
+        ),
+        "handoff_stage": "2-preflight",
         "handoff_ready": True,
+        "brief_path": elicit_start_result.get("brief_path"),
+        "transcript_path": elicit_start_result.get("transcript_path"),
+        "precheck_request_path": elicit_start_result.get("precheck_request_path"),
         "next_steps": [
-            "Review workspace-artifacts/decision-logs/decision_log_v*.yaml.",
-            "Review workspace-artifacts/decision-logs/requirements_audit.yaml.",
-            "Run meta-compiler scaffold after human review.",
+            "Open .github/prompts/stage-2-dialog.prompt.md in your LLM runtime "
+            "(Copilot Chat, Claude Code, etc.).",
+            "Walk the prompt's five steps: it invokes "
+            "@stage2-orchestrator for preflight, conducts the dialog, appends "
+            "decision blocks to workspace-artifacts/runtime/stage2/transcript.md, "
+            "then calls meta-compiler elicit-vision --finalize.",
+            "After --finalize writes decision_log_v{N}.yaml, the prompt invokes "
+            "@stage2-orchestrator for postflight and then runs "
+            "meta-compiler audit-requirements.",
+            "Review workspace-artifacts/decision-logs/decision_log_v{N}.yaml and "
+            "workspace-artifacts/decision-logs/requirements_audit.yaml before "
+            "running meta-compiler scaffold.",
         ],
         "pipeline_log": log,
+        "use_case": use_case,
         "message": (
-            "Pipeline completed through Stage 2. "
-            "Review the Decision Log and requirements audit before running scaffold."
+            "Pipeline completed through Stage 2 preflight. The Stage 2 dialog "
+            "is handed off to the stage-2-dialog prompt; run-all cannot hold "
+            "the conversation itself."
         ),
     }

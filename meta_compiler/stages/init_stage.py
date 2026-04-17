@@ -48,7 +48,11 @@ def _provision_workspace_customizations(workspace_root: Path, force: bool) -> li
     if not source_dir.exists():
         raise RuntimeError(f"Workspace customization templates directory not found: {source_dir}")
 
-    source_files = sorted(path for path in source_dir.rglob("*") if path.is_file())
+    source_files = sorted(
+        path
+        for path in source_dir.rglob("*")
+        if path.is_file() and not path.name.startswith(".")
+    )
     if not source_files:
         raise RuntimeError(f"No workspace customization templates found in: {source_dir}")
 

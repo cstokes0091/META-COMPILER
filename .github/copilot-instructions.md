@@ -14,7 +14,7 @@ review, and human-facing dialog.
 
 ## Stage Boundaries
 
-- `meta-compiler run-all` stops at Stage 2. It prepares ingest, runs Stage 1A/1B/1C, creates the Decision Log, and writes `workspace-artifacts/decision-logs/requirements_audit.yaml`. Humans review those artifacts before `meta-compiler scaffold`.
+- `meta-compiler run-all` stops after Stage 2 preflight. It prepares ingest, runs Stage 1A/1B/1C, and runs `elicit-vision --start` which writes `workspace-artifacts/runtime/stage2/brief.md`, `transcript.md`, and `precheck_request.yaml`. The Stage 2 dialog itself happens in a chat runtime reading `.github/prompts/stage-2-dialog.prompt.md`; after the dialog the operator runs `meta-compiler elicit-vision --finalize` (compiles transcript → `decision_log_v{N}.yaml`) and `meta-compiler audit-requirements`. Humans review the Decision Log and the requirements audit before `meta-compiler scaffold`. Full spec: `.github/docs/stage-2-hardening.md`.
 - Stage 1A is findings-first:
   1. `meta-compiler ingest --scope all|new`
   2. Use `prompts/ingest-orchestrator.prompt.md` or `@ingest-orchestrator` to write findings JSON under `workspace-artifacts/wiki/findings/`

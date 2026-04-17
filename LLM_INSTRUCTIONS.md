@@ -55,7 +55,8 @@ meta-compiler ingest-validate
 meta-compiler research-breadth
 meta-compiler research-depth
 meta-compiler review
-meta-compiler elicit-vision --use-case "initial scaffold"
+meta-compiler elicit-vision --start
+meta-compiler elicit-vision --finalize
 meta-compiler audit-requirements
 meta-compiler scaffold
 meta-compiler phase4-finalize
@@ -234,42 +235,41 @@ aggregate `suggested_sources` into the Stage 1A2 handoff.
 
 The human decides: PROCEED or ITERATE back to Stage 1B.
 
-### Stage 2: Vision Elicitation
+### Stage 2: Vision Elicitation (prompt-as-conductor)
 
-**Your job:** Conduct an asymmetric dialog with the human. YOU ask questions
-based on wiki content, the human provides intent and decisions.
+**Your job:** Walk `.github/prompts/stage-2-dialog.prompt.md` top to bottom.
+The prompt is the sequencer: it invokes the CLI, invokes the
+`stage2-orchestrator` agent, and conducts the dialog. You do not improvise
+the sequence.
 
-Stage 2 also generates and stores the wiki name. Preserve that name when
-referring to the index or page headers, and keep Stage 3/4 execution needs in
-view while you narrow the decision space.
-
-Read `prompts/stage-2-dialog.prompt.md` for detailed instructions.
+The full design is in `.github/docs/stage-2-hardening.md`. The short version:
 
 ```bash
-meta-compiler elicit-vision --use-case "initial scaffold" --non-interactive
-meta-compiler validate-stage --stage 2
+meta-compiler elicit-vision --start       # Step 1: mechanical preflight
+# [Step 2: @stage2-orchestrator mode=preflight → semantic readiness audit]
+# [Step 3: converse with human — append decision blocks to transcript.md]
+meta-compiler elicit-vision --finalize    # Step 4: compile transcript → Decision Log
+# [Step 5: @stage2-orchestrator mode=postflight → fidelity audit]
 meta-compiler audit-requirements
 ```
 
-`run-all` intentionally stops here. The human must review the Decision Log and
-`workspace-artifacts/decision-logs/requirements_audit.yaml` before Stage 3.
+`run-all` intentionally stops after Step 1 — the dialog cannot happen inside
+a CLI subprocess. After `--finalize` and the postflight audit, the human
+reviews `workspace-artifacts/decision-logs/decision_log_v{N}.yaml` and
+`requirements_audit.yaml` before Stage 3.
 
-The `--non-interactive` flag creates a baseline Decision Log. Then you refine it
-through dialog:
+**Decision block format.** The dialog produces a transcript with fenced
+decision blocks. The `--finalize` step parses the blocks mechanically into
+YAML — you never edit Decision Log YAML directly. The block format and the
+per-Section required fields are documented in the brief the CLI writes for
+you (`workspace-artifacts/runtime/stage2/brief.md`) and in the prompt.
 
-1. Query the wiki for each decision area (conventions, architecture, scope, etc.)
-2. Present researched options: "The literature shows approaches A and B. A has
-   property X, B has property Y. Which fits your requirements?"
-3. Capture each decision with: choice, alternatives rejected, rationale, citations
-4. The output is a rigid Decision Log schema — not prose
-
-When capturing `agents_needed`, record execution-time delegation expectations.
-If an agent is expected to delegate, note that it should expose the `agent`
-tool and include `explore` and `research` in its allowlist unless a narrower
-policy is explicitly justified.
-
-**Key principle:** Structure the conversation to narrow the solution space. This
-is systematic disambiguation using researched options, not open-ended brainstorming.
+**Key principle:** Structure the conversation to narrow the solution space.
+This is systematic disambiguation using researched options, not open-ended
+brainstorming. When capturing `agents_needed`, record execution-time
+delegation expectations — if an agent is expected to delegate, note that it
+should expose the `agent` tool and include `explore` and `research` in its
+allowlist unless a narrower policy is explicitly justified.
 
 ### Stage 3: Scaffold
 

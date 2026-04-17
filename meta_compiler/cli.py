@@ -10,7 +10,10 @@ from .stages.audit_stage import run_audit_requirements
 from .stages.breadth_stage import run_research_breadth
 from .stages.clean_stage import run_clean_workspace
 from .stages.depth_stage import run_research_depth
-from .stages.elicit_stage import run_elicit_vision
+from .stages.elicit_stage import (
+    run_elicit_vision_finalize,
+    run_elicit_vision_start,
+)
 from .stages.ingest_stage import run_ingest, validate_all_findings
 from .stages.init_stage import run_meta_init
 from .stages.phase4_stage import run_phase4_finalize
@@ -104,19 +107,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Decision log version to audit (default: latest)",
     )
 
-    elicit_parser = subparsers.add_parser("elicit-vision", help="Run Stage 2 vision elicitation")
+    elicit_parser = subparsers.add_parser(
+        "elicit-vision",
+        help="Stage 2 vision elicitation bookends (prompt-as-conductor)",
+    )
     _add_common_paths(elicit_parser)
-    elicit_parser.add_argument("--use-case", required=True, help="Decision log use case summary")
-    elicit_parser.add_argument("--resume", action="store_true", help="Resume from Decision Log draft")
-    elicit_parser.add_argument(
-        "--non-interactive",
+    # Prompt-as-conductor bookends — see .github/docs/stage-2-hardening.md.
+    # Exactly one of --start or --finalize is required; the dialog itself
+    # happens between them in the LLM runtime, driven by
+    # .github/prompts/stage-2-dialog.prompt.md.
+    elicit_mode_group = elicit_parser.add_mutually_exclusive_group(required=True)
+    elicit_mode_group.add_argument(
+        "--start",
         action="store_true",
-        help="Auto-generate Decision Log from context note without interactive prompts",
+        help="Stage 2 preflight: write brief.md, transcript.md skeleton, precheck_request.yaml",
+    )
+    elicit_mode_group.add_argument(
+        "--finalize",
+        action="store_true",
+        help="Stage 2 finalize: parse transcript decision blocks, compile decision_log_v<N>.yaml",
     )
     elicit_parser.add_argument(
-        "--context-note",
-        default="",
-        help="Context note used for non-interactive Stage 2 generation",
+        "--override-iterate",
+        default=None,
+        metavar="REASON",
+        help="Override a Stage 1C ITERATE handoff when running --start (reason is recorded)",
     )
 
     scaffold_parser = subparsers.add_parser("scaffold", help="Run Stage 3 scaffold generation")
@@ -301,14 +316,17 @@ def main(argv: list[str] | None = None) -> int:
                 decision_log_version=args.decision_log_version,
             )
         elif args.command == "elicit-vision":
-            result = run_elicit_vision(
-                artifacts_root=artifacts_root,
-                workspace_root=workspace_root,
-                use_case=args.use_case,
-                resume=args.resume,
-                non_interactive=args.non_interactive,
-                context_note=args.context_note,
-            )
+            if args.start:
+                result = run_elicit_vision_start(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    override_iterate_reason=args.override_iterate,
+                )
+            else:  # --finalize (argparse enforces one of --start/--finalize)
+                result = run_elicit_vision_finalize(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                )
         elif args.command == "scaffold":
             result = run_scaffold(
                 artifacts_root=artifacts_root,
@@ -363,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "finalize-reentry":
             result = run_finalize_reentry(
                 artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
                 version=args.version,
             )
         elif args.command == "validate-stage":

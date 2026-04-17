@@ -43,12 +43,20 @@ def _patch_run_all_dependencies(monkeypatch, seed_status: dict[str, object]) -> 
         _record("track-seeds", seed_status),
     )
     monkeypatch.setattr(
-        "meta_compiler.stages.run_all_stage.run_elicit_vision",
-        _record("elicit", {"status": "elicit"}),
-    )
-    monkeypatch.setattr(
-        "meta_compiler.stages.run_all_stage.run_audit_requirements",
-        _record("audit", {"status": "audit"}),
+        "meta_compiler.stages.run_all_stage.run_elicit_vision_start",
+        _record(
+            "elicit-start",
+            {
+                "status": "ready_for_orchestrator",
+                "brief_path": "workspace-artifacts/runtime/stage2/brief.md",
+                "transcript_path": "workspace-artifacts/runtime/stage2/transcript.md",
+                "precheck_request_path": (
+                    "workspace-artifacts/runtime/stage2/precheck_request.yaml"
+                ),
+                "decision_log_version": 1,
+                "instruction": "Invoke @stage2-orchestrator mode=preflight next.",
+            },
+        ),
     )
     monkeypatch.setattr("meta_compiler.stages.run_all_stage.validate_stage", validate_stub)
     monkeypatch.setattr(
@@ -74,10 +82,16 @@ def test_run_all_stops_at_stage2_handoff(tmp_path: Path, monkeypatch):
         problem_statement="# Problem\n",
     )
 
-    assert result["status"] == "stage-2-handoff"
+    assert result["status"] == "stage-2-preflight-handoff"
     assert result["handoff_ready"] is True
-    assert result["handoff_stage"] == "2"
-    assert result["next_steps"][-1] == "Run meta-compiler scaffold after human review."
+    assert result["handoff_stage"] == "2-preflight"
+    # Pipeline hands off to the stage-2-dialog prompt; final user-facing step
+    # is scaffolding after the dialog + finalize + audit are complete.
+    assert any("meta-compiler scaffold" in step for step in result["next_steps"])
+    assert any(
+        "stage-2-dialog.prompt.md" in step or "elicit-vision --finalize" in step
+        for step in result["next_steps"]
+    )
     assert calls == [
         "init",
         "validate:0",
@@ -87,9 +101,7 @@ def test_run_all_stops_at_stage2_handoff(tmp_path: Path, monkeypatch):
         "depth",
         "review",
         "track-seeds",
-        "elicit",
-        "validate:2",
-        "audit",
+        "elicit-start",
     ]
 
 

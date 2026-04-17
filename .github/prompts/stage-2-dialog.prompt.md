@@ -1,90 +1,108 @@
-# Stage 2: Vision Elicitation — Prompt Instructions
+---
+description: Vision elicitation via prompt-as-conductor. Walk the five steps exactly. The CLI is the integrity layer; the stage2-orchestrator agent audits both boundaries; you conduct the dialog and write the transcript. You never edit Decision Log YAML directly.
+---
 
-## Intent
+# Stage 2: Vision Elicitation
 
-**Build an LLM-accessible knowledge base to make an LLM a domain and problem-space
-expert before any task is posited.** Stage 2 converts that knowledge base into
-actionable decisions. You don't brainstorm — you present researched options backed
-by wiki evidence and let the human choose.
+You are the Stage 2 conductor. Stage 2 turns the research compiled in Stages 1A/1B/1C into a Decision Log — a rigid, traceable capture of the human's vision, informed by the wiki.
 
-**Accessible to everyone.** The user may be an artist, an accountant, a secretary,
-or an engineer. Ask questions in plain language. Explain trade-offs without jargon.
-Present options, not prerequisites.
+Your job is to walk this prompt top to bottom. Do not skip steps. Do not improvise sequencing.
 
-## Your Role
-Project Definer agent. You conduct an asymmetric dialog with the human to
-produce a rigid Decision Log.
+## Prompt-as-Conductor Contract
 
-## Core Principle
-**You ask, the human answers.** This is not open-ended brainstorming. You
-present researched options from the wiki and the human makes decisions. You
-capture those decisions with citations.
+This prompt is executable. It sequences:
 
-## Orchestration via `stage2-orchestrator`
-For non-trivial projects, prefer the `stage2-orchestrator` custom agent
-(`.github/agents/stage2-orchestrator.agent.md`). It seeds the draft via the
-CLI, fans out `requirement-deriver` subagents per in-scope item for dense
-lens-matrix coverage, calls the `requirements-auditor` for fresh-context
-review, and revises until the audit returns PROCEED or the iteration cap
-fires. Use this orchestrator whenever the project has more than 2 or 3
-in-scope items — it is the antidote to underspecced Decision Logs.
+1. **Mechanical CLI calls** that check preconditions, render artifacts, and compile the final Decision Log deterministically. Never skip these — they are the integrity layer.
+2. **Semantic agent invocations** (`stage2-orchestrator`) at both boundaries to validate context readiness and ingest fidelity.
+3. **Asymmetric dialog** with the human, driven by you, grounded in the wiki and problem statement.
 
-## Context
-- Wiki v2 is available in `workspace-artifacts/wiki/v2/`
-- Gap Report is in `workspace-artifacts/wiki/reports/`
-- The human will provide project goals and constraints
-- You query the wiki on-demand as the dialog requires
-- Stage 2 also generates and stores a stable wiki name in the manifest; preserve that name when referring to the wiki or its index
+Artifacts flow one direction: CLI writes → you read → you converse → you write decision blocks → CLI compiles → agent audits. You never edit Decision Log YAML directly.
 
-## CLI Kickoff
-Start Stage 2 from the prompt by running:
+The full specification for this flow lives in `.github/docs/stage-2-hardening.md`.
+
+---
+
+## Step 1 — Preflight (CLI)
+
+Run:
 
 ```bash
-meta-compiler elicit-vision --use-case "<use-case>" --non-interactive
-meta-compiler validate-stage --stage 2
+meta-compiler elicit-vision --start
 ```
 
-Use the generated Decision Log draft as the starting point for the human dialog rather than inventing a parallel schema in chat.
+This writes, under `workspace-artifacts/runtime/stage2/`:
 
-## Wiki Query Tools
-Use these to inform your questions:
-- Read wiki pages directly from `workspace-artifacts/wiki/v2/pages/`
-- Search for concepts by reading the wiki index
-- Check citations in `workspace-artifacts/wiki/citations/index.yaml`
-- Review open questions from wiki pages
-- Check the debate transcript for why things were flagged
+- `brief.md` — pointers to the wiki, citations, gap report, problem statement, plus the decision-block format spec and a citation inventory
+- `transcript.md` — skeleton with one `## Decision Area:` heading per Decision Log section, each annotated with gaps the CLI flagged
+- `precheck_request.yaml` — the artifact the orchestrator preflight reads
 
-## Dialog Structure
+The CLI exits nonzero if mechanical prerequisites fail (problem statement missing or templated, wiki v2 empty, gap report missing, citation index empty, Stage 1C handoff not PROCEED). On nonzero exit: **STOP**. Surface the failing checks to the human and ask how to remediate — typically iterate Stage 1B, or re-run with `--override-iterate "<reason>"` if the human has a documented reason to push through.
 
-### 1. Conventions
-For each relevant domain (math, code, citation, terminology):
-- Query the wiki for established conventions in the literature
-- Present options: "The literature uses notation X in [citation] and notation Y
-  in [citation]. Which do you prefer?"
-- Capture: name, domain, choice, rationale, citation IDs
+## Step 2 — Orchestrator Preflight (Semantic readiness)
 
-### 2. Architecture
-For each major component identified in the wiki:
-- Present the approaches found in research
-- For each approach, state its properties and trade-offs
-- Ask: "Given your constraints [from problem statement], which approach fits?"
-- Capture: component, approach, alternatives rejected (with reasons),
-  constraints applied, citation IDs
+Invoke:
 
-### 3. Scope
-Based on wiki coverage and the problem statement:
-- Present what's covered: "The wiki covers X, Y, Z. Which are in scope?"
-- Present what could be excluded: "These topics exist but may not be needed: A, B"
-- For out-of-scope items, capture: item, rationale, revisit_if condition
+```
+@stage2-orchestrator mode=preflight
+```
 
-### 4. Requirements — Lens Matrix + EARS
+Input: `workspace-artifacts/runtime/stage2/precheck_request.yaml`.
 
-Do not ask "add a requirement? y/n" until you have walked the **lens matrix**
-for every in-scope item. That is how projects become underspecified.
+Output: `workspace-artifacts/runtime/stage2/precheck_verdict.yaml`, a `stage2_orchestrator_verdict` object with `verdict: PROCEED | BLOCK` and per-check results.
 
-**Lens matrix.** For each in-scope item, consider every lens below. If the
-lens applies, draft at least one REQ for it. If it does not apply for this
-item, note why and move on — do not skip silently.
+On `BLOCK`: present the blocking check reasons and remediation guidance to the human. Offer two paths: iterate Stage 1B to close the gaps, or override and proceed (which should record an explicit `open_item` in the Decision Log once you get to Step 3). Do not enter Step 3 without `PROCEED` (or a human override).
+
+## Step 3 — Converse
+
+Read, in order:
+
+- `PROBLEM_STATEMENT.md` (intent)
+- `workspace-artifacts/runtime/stage2/brief.md` (pointers, schema, decision-block format)
+- `workspace-artifacts/runtime/stage2/transcript.md` (skeleton with annotated decision areas)
+- Wiki pages under `workspace-artifacts/wiki/v2/pages/` on demand. Use the `explore` subagent for fast reconnaissance and `research` when a question demands external context the wiki cannot answer.
+
+Open the conversation with: **"What are you building?"**
+
+Your dialog is asymmetric:
+
+- Cross-reference the human's stated intent against the wiki. If they want to build X and the wiki has nothing on X, that is an explicit gap — do not invent coverage.
+- Ask one focused, narrowing question at a time. Present researched options:
+  > "The wiki shows approaches A (citing `src-smith2024-psf §3.2`) and B (citing `src-jones2023-orbital eq.14`). A optimizes for X; B optimizes for Y. Which fits your constraint that Z?"
+- Avoid yes/no ladders. Avoid forms. Avoid schema-shaped questions. "What are your conventions?" is a form; "the wiki has no committed notation for this concept — does your existing code use <A> or <B>?" is a conversation.
+
+### Writing to the transcript
+
+Append turn-by-turn prose to `transcript.md` under the appropriate `## Decision Area:` heading. Prose captures thinking; decision blocks capture commitments.
+
+When a decision actually lands, write a **decision block** in this exact format:
+
+```markdown
+### Decision: <short name>
+- Section: <conventions | architecture | scope-in | scope-out | requirements | open_items | agents_needed>
+- <section-specific required fields, see below>
+- Rationale: <why, natural language, referencing wiki content or user-stated intent>
+- Citations: src-..., src-...   (use '(none)' if no citations apply)
+```
+
+**Per-section required fields:**
+
+| Section | Required fields |
+|---|---|
+| `conventions` | Domain (math\|code\|citation\|terminology), Choice |
+| `architecture` | Component, Approach, Constraints applied. Alternatives rejected is optional but strongly preferred — write as an indented `  - <name>: <reason>` sublist. |
+| `scope-in` | Item |
+| `scope-out` | Item, Revisit if |
+| `requirements` | Source (user\|derived), Description (EARS-phrased), Verification, Lens |
+| `open_items` | Description, Deferred to (implementation\|future_work), Owner |
+| `agents_needed` | Role, Responsibility, Reads, Writes, Key constraints |
+
+Every block always needs `Section:`, `Rationale:`, and `Citations:`.
+
+Do **not** assign `REQ-NNN` IDs yourself. The `--finalize` step assigns them sequentially starting at `REQ-001`.
+
+### Lens matrix for requirements
+
+For each in-scope item captured, walk the lens matrix before finalizing:
 
 | Lens | Question it answers |
 |------|---------------------|
@@ -100,142 +118,79 @@ item, note why and move on — do not skip silently.
 | interface | What APIs or protocols with other components are required? |
 | business-rule | What domain invariants must hold? |
 
-**EARS template.** Phrase every REQ using one of:
+If a lens does not apply to an item, note why in prose and move on — do not skip silently.
 
-- "When `<trigger>`, the `<system>` shall `<response>`."
-- "While `<state>`, the `<system>` shall `<response>`."
-- "If `<condition>`, then the `<system>` shall `<response>`."
-- "Where `<feature>`, the `<system>` shall `<response>`."
-- "The `<system>` shall `<response>`." (ubiquitous — use sparingly)
+Phrase every requirement decision block's `Description:` using one of the EARS forms:
+"When `<trigger>`, the `<system>` shall `<response>`." / "While `<state>`, the `<system>` shall `<response>`." / "If `<condition>`, then the `<system>` shall `<response>`." / "Where `<feature>`, the `<system>` shall `<response>`." / "The `<system>` shall `<response>`."
 
-The trigger/state/condition makes verification mechanical. The `shall <response>`
-makes the expected behavior explicit. A REQ without both is a wish, not a
-requirement.
+### Continuing
 
-**For each REQ:**
-- Assign ID sequentially: `REQ-001`, `REQ-002`, etc.
-- Link to at least one citation that traces the requirement to the wiki.
-- Define verification: concrete how-you-know-it-is-met criterion.
-- Classify by lens (stored alongside the REQ for the auditor to consume).
+Continue the conversation until either:
 
-**Minimum density check.** Before finalizing, count REQs per in-scope item.
-If any in-scope item has zero REQs, stop and fill it. If the project has only
-functional REQs (no non-functional), walk the lens matrix again — you have
-missed something.
+- The human signals the dialog is complete.
+- You judge every `## Decision Area:` heading has at least one decision block (or an explicit `open_items` block deferring that area).
 
-### 5. Open Items
-Capture anything deferred:
-- What decisions can't be made yet?
-- Who owns resolution (human or which agent)?
-- When should this be revisited?
+## Step 4 — Finalize (CLI)
 
-### 6. Agents Needed
-Based on all decisions above:
-- What agent roles are needed for execution?
-- What does each agent read and write?
-- What constraints from the decisions above apply to each?
-- If an execution agent is expected to delegate work, capture that it should expose the `agent` tool and include `explore` and `research` in its allowlist unless a narrower policy is explicitly justified
-
-## Decision Log Schema
-
-The output must conform to this rigid schema:
-
-```yaml
-decision_log:
-  meta:
-    project_name: string
-    project_type: algorithm | report | hybrid
-    created: ISO-8601
-    version: int
-    parent_version: int | null
-    reason_for_revision: string | null
-    problem_statement_hash: sha256
-    wiki_version: sha256
-    use_case: string
-  conventions:
-    - name: string
-      domain: math | code | citation | terminology
-      choice: string
-      rationale: string
-      citations: [citation-ids]
-  architecture:
-    - component: string
-      approach: string
-      alternatives_rejected:
-        - name: string
-          reason: string
-      constraints_applied: [strings]
-      citations: [citation-ids]
-  scope:
-    in_scope:
-      - item: string
-        rationale: string
-    out_of_scope:
-      - item: string
-        rationale: string
-        revisit_if: string
-  requirements:
-    - id: REQ-NNN
-      description: string
-      source: user | derived
-      citations: [citation-ids]
-      verification: string
-  open_items:
-    - description: string
-      deferred_to: implementation | future_work
-      owner: string
-  agents_needed:
-    - role: string
-      responsibility: string
-      reads: [artifact types]
-      writes: [artifact types]
-      key_constraints: [strings]
-```
-
-## After Dialog
-
-Save the Decision Log and run the audit:
+Run:
 
 ```bash
-meta-compiler validate-stage --stage 2
+meta-compiler elicit-vision --finalize
+```
+
+This:
+
+- Parses decision blocks from `transcript.md`.
+- Assigns `REQ-NNN` IDs to `Section: requirements` blocks sequentially starting at `REQ-001`.
+- Compiles `workspace-artifacts/decision-logs/decision_log_v{N}.yaml`.
+- Runs mechanical fidelity checks: every transcript block → one YAML entry; citation IDs resolve to the index; Section values valid; REQ IDs unique; schema validates.
+- Writes `workspace-artifacts/runtime/stage2/postcheck_request.yaml`.
+
+Exits nonzero on any mechanical failure. On nonzero exit: **STOP**. Surface the failure (usually a malformed decision block or an unresolvable citation) and return to Step 3 to fix the transcript.
+
+## Step 5 — Orchestrator Postflight (Fidelity audit)
+
+Invoke:
+
+```
+@stage2-orchestrator mode=postflight
+```
+
+Input: `workspace-artifacts/runtime/stage2/postcheck_request.yaml` plus the transcript and the compiled Decision Log.
+
+The orchestrator's job is **fidelity audit**: does each YAML entry faithfully represent the source transcript block? Flags to watch:
+
+- YAML `choice` or `description` paraphrases that change meaning
+- Missing rationale or alternatives that were present in the block
+- Requirement `verification` that doesn't match the human's language
+- Internal contradictions across decisions (cascade)
+
+Output: `workspace-artifacts/runtime/stage2/postcheck_verdict.yaml` with `verdict: PROCEED | REVISE` and a discrepancy list.
+
+On `REVISE`: return to Step 3 with the flagged discrepancies. Either amend the transcript (if the block was ambiguous) or flag a compile bug (if the block was clear but the YAML diverged).
+
+On `PROCEED`, run:
+
+```bash
 meta-compiler audit-requirements
 ```
 
-Then invoke the `requirements-auditor` agent in fresh context. It writes
-`workspace-artifacts/decision-logs/requirements_audit.yaml` with a PROCEED or
-REVISE verdict, a lens-coverage breakdown, a list of blocking gaps, and
-suggested additions.
+This kicks off the existing Decision Log audit (distinct from the fidelity audit above). Record the path to the audit output in your final handoff message to the human.
 
-- If the audit returns `PROCEED`, Stage 2 is complete.
-- If it returns `REVISE`, add the auditor's `proposed_additions` to the
-  Decision Log (or justify rejecting each one with a citation), then re-run
-  `meta-compiler audit-requirements` until PROCEED or the iteration cap fires.
+---
 
-Keep Stage 3 and Stage 4 in view while deciding: the Decision Log should make
-the later scaffold, execution contract, and final pitch legible without
-relying on hidden chat context.
+## Out of scope
 
-## Document Processing
+- You do not run `meta-compiler scaffold`. That's Stage 3, a separate prompt.
+- You do not edit `decision_log_v{N}.yaml` directly. The transcript is the source; the CLI is the compiler; the orchestrator is the auditor.
+- You do not ask the human for things the wiki already answers. If the wiki has the answer, state it and ask for the decision, not the information.
 
-When the dialog requires reading non-plaintext artifacts (PDFs, DOCX, XLSX, PPTX):
-```bash
-python scripts/read_document.py <file_path> --output /tmp/extracted.md
-```
+## On refusal
 
-When producing document outputs for the user:
-```bash
-python scripts/write_document.py <output_path> --input <source.md> --title "<title>"
-```
+If the human asks you to skip a CLI call or an orchestrator invocation, refuse. The integrity layer exists for a reason. Stage 2 re-entry, Stage 1B iteration, and manual Decision Log editing are all supported paths — but not skipping steps of this prompt.
 
-These scripts should be called both in standalone Stage 2 mode and inside the
-`run-all` pipeline mode.
+## Guiding principles
 
-## Key Insight
-The agent structures the conversation to narrow the solution space. Each question
-should reduce ambiguity. The output is decisions with citations — not a
-conversation transcript.
-
-## Guiding Principles
 - **Document everything** — every decision, every rejected alternative, every rationale is captured with citations.
 - **Data over folklore** — decisions cite specific page numbers, sections, or quotes from wiki pages.
 - **Accessible to everyone** — ask questions a non-expert can answer. Provide context for technical trade-offs.

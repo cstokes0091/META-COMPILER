@@ -784,6 +784,124 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
     return issues
 
 
+VALID_STAGE2_PRECHECK_VERDICTS = {"PROCEED", "BLOCK"}
+VALID_STAGE2_POSTCHECK_VERDICTS = {"PROCEED", "REVISE"}
+
+
+def _validate_stage2_check_entries(
+    checks: Any, prefix: str, issues: list[str]
+) -> None:
+    if not isinstance(checks, list):
+        issues.append(f"{prefix}: must be a list")
+        return
+    for idx, row in enumerate(checks):
+        if not isinstance(row, dict):
+            issues.append(f"{prefix}[{idx}]: must be an object")
+            continue
+        _require_fields(row, ["name", "result"], f"{prefix}[{idx}]", issues)
+        result = row.get("result")
+        if result not in {"PASS", "FAIL", "WARN"}:
+            issues.append(f"{prefix}[{idx}].result: must be PASS|FAIL|WARN")
+
+
+def validate_stage2_precheck_request(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    root = payload.get("stage2_precheck_request")
+    if not isinstance(root, dict):
+        return ["stage2 precheck request: missing stage2_precheck_request root"]
+
+    _require_fields(
+        root,
+        [
+            "generated_at",
+            "decision_log_version",
+            "mechanical_checks",
+            "verdict_output_path",
+        ],
+        "stage2_precheck_request",
+        issues,
+    )
+    _validate_stage2_check_entries(
+        root.get("mechanical_checks"),
+        "stage2_precheck_request.mechanical_checks",
+        issues,
+    )
+    return issues
+
+
+def validate_stage2_postcheck_request(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    root = payload.get("stage2_postcheck_request")
+    if not isinstance(root, dict):
+        return ["stage2 postcheck request: missing stage2_postcheck_request root"]
+
+    _require_fields(
+        root,
+        [
+            "generated_at",
+            "decision_log_version",
+            "inputs",
+            "mechanical_checks",
+            "verdict_output_path",
+        ],
+        "stage2_postcheck_request",
+        issues,
+    )
+    inputs = root.get("inputs")
+    if isinstance(inputs, dict):
+        _require_fields(
+            inputs,
+            ["transcript", "decision_log"],
+            "stage2_postcheck_request.inputs",
+            issues,
+        )
+    else:
+        issues.append("stage2_postcheck_request.inputs: must be an object")
+    _validate_stage2_check_entries(
+        root.get("mechanical_checks"),
+        "stage2_postcheck_request.mechanical_checks",
+        issues,
+    )
+    return issues
+
+
+def validate_stage2_verdict(payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    root = payload.get("stage2_orchestrator_verdict")
+    if not isinstance(root, dict):
+        return ["stage2 verdict: missing stage2_orchestrator_verdict root"]
+
+    _require_fields(
+        root,
+        ["stage", "verdict", "generated_at", "decision_log_version", "checks", "summary"],
+        "stage2_orchestrator_verdict",
+        issues,
+    )
+    stage = root.get("stage")
+    verdict = root.get("verdict")
+    if stage == "preflight":
+        if verdict not in VALID_STAGE2_PRECHECK_VERDICTS:
+            issues.append(
+                "stage2_orchestrator_verdict.verdict: preflight must be PROCEED|BLOCK"
+            )
+    elif stage == "postflight":
+        if verdict not in VALID_STAGE2_POSTCHECK_VERDICTS:
+            issues.append(
+                "stage2_orchestrator_verdict.verdict: postflight must be PROCEED|REVISE"
+            )
+    else:
+        issues.append(
+            "stage2_orchestrator_verdict.stage: must be preflight|postflight"
+        )
+
+    _validate_stage2_check_entries(
+        root.get("checks"),
+        "stage2_orchestrator_verdict.checks",
+        issues,
+    )
+    return issues
+
+
 def validate_stage_4(paths: ArtifactPaths) -> list[str]:
     issues: list[str] = []
 
@@ -904,6 +1022,25 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
             _, decision_log_path = latest
             decision_log = load_yaml(decision_log_path)
             issues.extend(validate_decision_log(decision_log))
+
+        # Stage 2 prompt-as-conductor runtime artifacts are optional — they
+        # only exist mid-flow. When present they must pass schema validation.
+        if paths.stage2_precheck_request_path.exists():
+            payload = load_yaml(paths.stage2_precheck_request_path)
+            if payload:
+                issues.extend(validate_stage2_precheck_request(payload))
+        if paths.stage2_precheck_verdict_path.exists():
+            payload = load_yaml(paths.stage2_precheck_verdict_path)
+            if payload:
+                issues.extend(validate_stage2_verdict(payload))
+        if paths.stage2_postcheck_request_path.exists():
+            payload = load_yaml(paths.stage2_postcheck_request_path)
+            if payload:
+                issues.extend(validate_stage2_postcheck_request(payload))
+        if paths.stage2_postcheck_verdict_path.exists():
+            payload = load_yaml(paths.stage2_postcheck_verdict_path)
+            if payload:
+                issues.extend(validate_stage2_verdict(payload))
 
     if stage in {"all", "3", "scaffold"}:
         scaffold_dirs = sorted(

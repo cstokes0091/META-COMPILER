@@ -51,11 +51,20 @@
       "problemMatcher": []
     },
     {
-      "label": "Stage 2: Vision Elicitation (non-interactive)",
+      "label": "Stage 2: Preflight (--start)",
       "type": "shell",
-      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli elicit-vision --use-case \"${input:useCase}\" --non-interactive && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --start; else python3 -m meta_compiler.cli elicit-vision --start; fi",
       "group": "build",
-      "problemMatcher": []
+      "problemMatcher": [],
+      "detail": "Writes workspace-artifacts/runtime/stage2/ brief + transcript skeleton + precheck_request.yaml. Then open .github/prompts/stage-2-dialog.prompt.md in your LLM runtime."
+    },
+    {
+      "label": "Stage 2: Finalize (--finalize)",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --finalize && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli elicit-vision --finalize && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
+      "group": "build",
+      "problemMatcher": [],
+      "detail": "Parses decision blocks from transcript.md and compiles decision_log_v{N}.yaml. Run after the Stage 2 dialog is complete."
     },
     {
       "label": "Stage 2: Audit Requirements",
@@ -163,11 +172,6 @@
       "id": "problemStatementFile",
       "type": "promptString",
       "description": "Path to a markdown file containing the Stage 0 problem statement"
-    },
-    {
-      "id": "useCase",
-      "type": "promptString",
-      "description": "Use case for this scaffold"
     },
     {
       "id": "reentryReason",
