@@ -115,15 +115,7 @@ Without it, breadth search is unbounded.
 and claims into wiki pages. Build citations. This is the most critical stage for
 information fidelity.
 
-Read `prompts/stage-1a-breadth.prompt.md` for detailed instructions.
-
-```bash
-meta-compiler ingest --scope all      # Writes work_plan.yaml and pre-extracts binaries
-# Then run prompts/ingest-orchestrator.prompt.md to produce findings JSON
-meta-compiler ingest-validate         # Validate findings JSON before enrichment
-meta-compiler research-breadth        # Creates baseline wiki structure and enriches from findings
-meta-compiler validate-stage --stage 1a
-```
+Invoke the stage prompt (`/stage-1a-breadth`). Pure-CLI steps auto-fire via hooks; your job is the semantic work. Specifically, `meta-compiler ingest --scope all` fires on prompt invocation, and after the `ingest-orchestrator` subagent stops, `ingest-validate`, `research-breadth`, and `validate-stage --stage 1a` auto-fire via the `subagent_stop_dispatch` hook.
 
 The CLI now separates Stage 1A into deterministic ingest prep plus enrichment.
 `meta-compiler ingest` writes `workspace-artifacts/runtime/ingest/work_plan.yaml`
@@ -242,15 +234,15 @@ The prompt is the sequencer: it invokes the CLI, invokes the
 `stage2-orchestrator` agent, and conducts the dialog. You do not improvise
 the sequence.
 
-The full design is in `.github/docs/stage-2-hardening.md`. The short version:
+The full design is in `.github/docs/stage-2-hardening.md`. Invoke `/stage-2-dialog`. Step 1 (`elicit-vision --start`) auto-fires via the `user_prompt_submit_dispatch` hook. The remaining steps stay LLM-driven:
 
-```bash
-meta-compiler elicit-vision --start       # Step 1: mechanical preflight
+```
+# [auto-fired] Step 1: meta-compiler elicit-vision --start
 # [Step 2: @stage2-orchestrator mode=preflight → semantic readiness audit]
 # [Step 3: converse with human — append decision blocks to transcript.md]
-meta-compiler elicit-vision --finalize    # Step 4: compile transcript → Decision Log
+# [Step 4: meta-compiler elicit-vision --finalize]
 # [Step 5: @stage2-orchestrator mode=postflight → fidelity audit]
-meta-compiler audit-requirements
+# [Step 6: meta-compiler audit-requirements]
 ```
 
 `run-all` intentionally stops after Step 1 — the dialog cannot happen inside
@@ -275,12 +267,7 @@ allowlist unless a narrower policy is explicitly justified.
 
 **Your job:** The CLI handles this mechanically. Review the output.
 
-Read `prompts/stage-3-scaffold.prompt.md` for detailed instructions.
-
-```bash
-meta-compiler scaffold
-meta-compiler validate-stage --stage 3
-```
+Invoke the stage prompt (`/stage-3-scaffold`). Pure-CLI steps auto-fire via hooks (`meta-compiler scaffold` + `validate-stage --stage 3`); your job is the semantic work.
 
 Stage 3 consumes the Decision Log ONLY — not the wiki, not raw sources, and not
 the findings JSON directly. It produces:
@@ -304,12 +291,7 @@ Run the self-tests: `pytest workspace-artifacts/scaffolds/v1/tests/`
 **Your job:** Run the scaffold-generated execution contract, verify the final
 deliverables, and ensure the product is packaged into a real PowerPoint deck.
 
-Read `prompts/stage-4-finalize.prompt.md` for detailed instructions.
-
-```bash
-meta-compiler phase4-finalize
-meta-compiler validate-stage --stage 4
-```
+Invoke the stage prompt (`/stage-4-finalize`). Pure-CLI steps auto-fire via hooks (`meta-compiler phase4-finalize` + `validate-stage --stage 4`); your job is the semantic work and the final deliverable review.
 
 Stage 4 should:
 - execute the generated `orchestrator/run_stage4.py`
@@ -351,18 +333,9 @@ meta-compiler clean-workspace --target-stage 0   # Full reset (keep seeds)
 
 ### Post-Scaffold: Stage 2 Re-entry
 
-When scope, use case, or requirements change:
+When scope, use case, or requirements change, follow `.github/prompts/stage2-reentry.prompt.md` — it is a 6-step conductor prompt. The first step is the non-skippable **Step 0**: re-ingest the problem space with the human, optionally update `PROBLEM_STATEMENT.md`, and write `workspace-artifacts/runtime/stage2/reentry_request.yaml`. The `gate_reentry_request` hook refuses the CLI otherwise.
 
-```bash
-meta-compiler stage2-reentry --reason "expanded to include X" --sections "architecture,requirements"
-```
-
-This creates a revision template with cascade analysis. Conduct the dialog, then:
-
-```bash
-meta-compiler finalize-reentry
-meta-compiler scaffold  # Re-scaffold with new decisions
-```
+After Step 0, the CLI (`meta-compiler stage2-reentry --from-request …`) seeds the transcript, emits `brief.md` and `precheck_request.yaml`, and marks the manifest mid-flight. The remaining steps are: orchestrator preflight, scoped dialog (only for `revised_sections`), `meta-compiler elicit-vision --finalize` (with block-freshness enforcement), orchestrator postflight, and `meta-compiler audit-requirements`. Scaffold is a separate, subsequent decision.
 
 ## Key Artifacts
 

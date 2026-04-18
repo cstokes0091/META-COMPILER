@@ -67,6 +67,18 @@ python scripts/read_document.py <file.pdf>       # Extract text from PDF/DOCX/XL
 python scripts/write_document.py <output.docx>   # Write text to documents
 ```
 
+## Hooks and Determinism
+
+Meta-compiler uses VSCode Copilot hooks (`.github/hooks/main.json` + per-agent `hooks:` frontmatter) to enforce pipeline ordering and artifact integrity. Hooks gate out-of-order CLI calls, auto-fire deterministic steps at transition boundaries, and capture command output so the LLM cannot paraphrase it.
+
+**Key points:**
+
+- **Auto-fired steps:** Invoking a stage prompt (e.g., `/stage-1a-breadth`) auto-fires the pure-CLI calls for that stage. The prompt body describes only the semantic work (what the LLM is supposed to reason about).
+- **Gated calls:** `meta-compiler` invocations are denied unless the manifest's `last_completed_stage` matches the command's precondition. Override with `META_COMPILER_SKIP_HOOK=1` only where integrity permits.
+- **Stage 2 re-entry:** Non-overridable gate requires `reentry_request.yaml` (produced by Step 0 of `stage2-reentry.prompt.md`) before the CLI fires.
+
+See `.github/docs/hooks.md` for the full check inventory, override mechanisms, and audit log format.
+
 ## End-to-End Flow
 
 ### Quick Start (Single Command)
