@@ -5,6 +5,15 @@ tools: [read, search, edit, execute, agent, todo]
 agents: [seed-reader]
 user-invocable: true
 argument-hint: "Scope (all|new) and optional seed path filter"
+hooks:
+  PreToolUse:
+    - type: command
+      command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_ingest_workplan"
+      timeout: 10
+  SubagentStop:
+    - type: command
+      command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py require_ingest_report"
+      timeout: 10
 ---
 You are the META-COMPILER Ingest Orchestrator.
 

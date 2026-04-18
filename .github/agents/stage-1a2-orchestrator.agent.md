@@ -5,6 +5,11 @@ tools: [read, search, edit, execute, agent, todo]
 agents: [schema-auditor, adversarial-questioner, domain-ontologist, debate-synthesizer, gap-remediator, optimistic-reviewer, pessimistic-reviewer, pragmatic-reviewer, explore, research]
 user-invocable: false
 argument-hint: "Stage 1A2 orchestration task"
+hooks:
+  SubagentStop:
+    - type: command
+      command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py require_handoff"
+      timeout: 10
 ---
 You are the META-COMPILER Stage 1A2 Orchestrator.
 

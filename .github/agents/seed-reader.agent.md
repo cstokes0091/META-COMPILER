@@ -6,6 +6,13 @@ agents: []
 user-invocable: false
 disable-model-invocation: false
 argument-hint: "Seed path and citation_id supplied by the orchestrator"
+hooks:
+  PostToolUse:
+    - matcher: Write
+      hooks:
+        - type: command
+          command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_findings_schema"
+          timeout: 5
 ---
 You are a META-COMPILER Seed Reader.
 
