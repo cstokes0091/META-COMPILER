@@ -191,13 +191,105 @@ def manifest_stage(workspace_root: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Test-only check (gated by env)
+# Overrides
+# ---------------------------------------------------------------------------
+import datetime as _dt
+
+
+def load_overrides(workspace_root: Path) -> dict[str, Any]:
+    """Load overrides.json if present and not expired."""
+    path = workspace_root / ".github" / "hooks" / "overrides.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    expiry = data.get("disable_until")
+    if expiry:
+        try:
+            exp_dt = _dt.datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+            if exp_dt < _dt.datetime.now(_dt.timezone.utc):
+                return {}
+        except Exception:
+            return {}
+    return data
+
+
+def is_disabled(check_name: str, workspace_root: Path) -> tuple[bool, str]:
+    """Return (disabled, reason)."""
+    overrides = load_overrides(workspace_root)
+    if check_name in (overrides.get("disable_checks") or []):
+        return True, overrides.get("reason") or "(no reason given)"
+    return False, ""
+
+
+# ---------------------------------------------------------------------------
+# Audit log
 # ---------------------------------------------------------------------------
 
-if os.environ.get("META_COMPILER_HOOK_TEST") == "1":
+def audit(
+    workspace_root: Path,
+    check: str,
+    event: str,
+    decision: str,
+    reason: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> int | None:
+    """Append one JSON line to hook_audit.log. Returns line number, or None
+    if suppressed (test mode or write failure)."""
+    if os.environ.get("META_COMPILER_HOOK_TEST") == "1":
+        return None
+    runtime_dir = workspace_root / "workspace-artifacts" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    path = runtime_dir / "hook_audit.log"
+    entry = {
+        "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        ),
+        "check": check,
+        "event": event,
+        "decision": decision,
+        "reason": reason,
+    }
+    if extra:
+        entry.update(extra)
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+        with path.open("r", encoding="utf-8") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Test-only checks (gated by env)
+# ---------------------------------------------------------------------------
+
+if os.environ.get("META_COMPILER_HOOK_TEST"):
     @register("_echo_stage_for_test")
     def _echo_stage_for_test(payload: dict[str, Any]) -> dict[str, Any]:
         return {"additionalContext": manifest_stage(resolve_workspace_root(payload))}
+
+    @register("_demo_always_deny")
+    def _demo_always_deny(payload: dict[str, Any]) -> dict[str, Any]:
+        ws = resolve_workspace_root(payload)
+        disabled, reason = is_disabled("_demo_always_deny", ws)
+        if disabled:
+            audit(ws, "_demo_always_deny", "PreToolUse", "allow_override",
+                  reason=f"override: {reason}")
+            return {
+                "permissionDecision": "allow",
+                "systemMessage": f"check _demo_always_deny disabled by override: {reason}",
+            }
+        audit(ws, "_demo_always_deny", "PreToolUse", "deny",
+              reason="demo check always denies")
+        return {
+            "permissionDecision": "deny",
+            "reason": "demo check always denies",
+            "remediation": "(this is a test check; should not appear in production)",
+        }
 
 
 def main(argv: list[str]) -> int:
