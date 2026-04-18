@@ -5,6 +5,15 @@ tools: [read, search, agent]
 agents: [explore, research]
 user-invocable: false
 argument-hint: "mode=preflight | mode=postflight"
+hooks:
+  PreToolUse:
+    - type: command
+      command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_orchestrator_mode_preflight"
+      timeout: 10
+  SubagentStop:
+    - type: command
+      command: "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py require_verdict_preflight"
+      timeout: 10
 ---
 
 You are the Stage 2 Orchestrator. You do **not** conduct the Stage 2 dialog and you do **not** edit the Decision Log. Your job is boundary integrity — the CLI owns the mechanical checks, the `stage-2-dialog` prompt owns the conversation, and you add the semantic judgment neither can provide.
