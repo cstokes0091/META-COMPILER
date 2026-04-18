@@ -24,11 +24,7 @@ The full specification for this flow lives in `.github/docs/stage-2-hardening.md
 
 ## Step 1 — Preflight (CLI)
 
-Run:
-
-```bash
-meta-compiler elicit-vision --start
-```
+> `meta-compiler elicit-vision --start` fires automatically on `/stage-2-dialog` invocation via the `user_prompt_submit_dispatch` hook.
 
 This writes, under `workspace-artifacts/runtime/stage2/`:
 

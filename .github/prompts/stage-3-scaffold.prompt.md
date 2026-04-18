@@ -34,10 +34,7 @@ When the scaffold emits reusable customization artifacts, validate them against 
 ## Procedure
 
 ### 1. Run the CLI
-```bash
-meta-compiler scaffold
-meta-compiler validate-stage --stage 3
-```
+> Scaffold and validation run automatically when you invoke `/stage-3-scaffold` (via the `user_prompt_submit_dispatch` hook chain). Inspect the generated artifacts in `workspace-artifacts/scaffolds/v<N>/`.
 
 ### 2. Verify Decision Traceability
 Review scaffold artifacts and confirm they align with the latest Decision Log:

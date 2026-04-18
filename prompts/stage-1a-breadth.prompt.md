@@ -23,25 +23,12 @@ Stage 1A now runs in two passes:
 1. **Ingest pass** (full-fidelity extraction into findings JSON).
 2. **Enrichment pass** (wiki pages built from findings JSON, not from seeds).
 
-### Ingest pass — run first
-```bash
-meta-compiler ingest --scope all
-```
-This writes `workspace-artifacts/runtime/ingest/work_plan.yaml` and pre-extracts
-any binary seeds. Then invoke the `ingest-orchestrator` custom agent
-(`.github/agents/ingest-orchestrator.agent.md`). It fans out `seed-reader`
-subagents, one per seed, and writes one findings JSON per seed under
-`workspace-artifacts/wiki/findings/<citation_id>.json` plus
-`findings/index.yaml`. Validate with:
-```bash
-meta-compiler ingest-validate
-```
+> Ingest runs automatically on prompt invocation (`meta-compiler ingest --scope all` fires via the `user_prompt_submit_dispatch` hook). Conduct the seed fan-out via the `ingest-orchestrator` subagent. After it stops, `meta-compiler ingest-validate`, `meta-compiler research-breadth`, and `meta-compiler validate-stage --stage 1a` run automatically via the `subagent_stop_dispatch` hook.
 
-### Baseline wiki stubs — run after ingest
-```bash
-meta-compiler research-breadth
-meta-compiler validate-stage --stage 1a
-```
+The `ingest-orchestrator` fans out `seed-reader` subagents, one per seed, and
+writes one findings JSON per seed under
+`workspace-artifacts/wiki/findings/<citation_id>.json` plus
+`findings/index.yaml`.
 
 Your enrichment job then reads the findings JSON (not the seeds) to fill wiki
 pages. The findings JSON already contains verbatim quotes, equations, and
@@ -118,9 +105,8 @@ After processing each seed (and again at the end):
 - Ensure no orphan pages (every page links to at least one other)
 
 ### 5. Validate
-```bash
-meta-compiler validate-stage --stage 1a
-```
+Validation runs automatically after the `ingest-orchestrator` subagent stops
+(via the `subagent_stop_dispatch` hook chain). No manual command needed.
 
 ## Wiki Page Schema
 

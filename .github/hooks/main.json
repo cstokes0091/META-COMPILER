@@ -12,6 +12,18 @@
         "type": "command",
         "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py inject_state",
         "timeout": 10
+      },
+      {
+        "type": "command",
+        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py user_prompt_submit_dispatch",
+        "timeout": 60
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py subagent_stop_dispatch",
+        "timeout": 120
       }
     ],
     "PreToolUse": [

@@ -26,16 +26,13 @@ verify the produced deliverables, refresh the product summary, and ensure a real
 ## Procedure
 
 ### 1. Run the CLI
-```bash
-meta-compiler phase4-finalize
-meta-compiler validate-stage --stage 4
-```
+> `meta-compiler phase4-finalize` and `meta-compiler validate-stage --stage 4` run automatically when you invoke `/stage-4-finalize` (via the `user_prompt_submit_dispatch` hook chain).
 
-If you need to target a specific decision-log/scaffold version, use:
+If you need to target a specific decision-log/scaffold version, invoke the CLI explicitly (the hook chain still auto-fires the default, so set `META_COMPILER_SKIP_HOOK=1` or disable the chain before running):
 
 ```bash
-meta-compiler phase4-finalize --decision-log-version <N>
-meta-compiler validate-stage --stage 4
+META_COMPILER_SKIP_HOOK=1 meta-compiler phase4-finalize --decision-log-version <N>
+META_COMPILER_SKIP_HOOK=1 meta-compiler validate-stage --stage 4
 ```
 
 ### 2. Verify the Execution Contract
