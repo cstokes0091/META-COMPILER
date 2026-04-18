@@ -26,6 +26,13 @@
         "timeout": 120
       }
     ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py nudge_finalize",
+        "timeout": 5
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
