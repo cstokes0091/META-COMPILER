@@ -515,6 +515,33 @@ def capture_output(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@register("nudge_finalize")
+def nudge_finalize(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    stage = manifest_stage(ws)
+    MID_FLIGHT = {"2-reentry-seeded", "2-dialog-started"}
+    if stage not in MID_FLIGHT:
+        return {}
+    disabled, ov = is_disabled("nudge_finalize", ws)
+    if disabled:
+        return {"systemMessage": f"nudge_finalize disabled: {ov}"}
+    reasons = {
+        "2-reentry-seeded": (
+            "Stage 2 re-entry is seeded but not finalized. "
+            "Complete the scoped dialog in transcript.md, then run "
+            "`meta-compiler elicit-vision --finalize`. "
+            "If you mean to pause and resume later, say so explicitly."
+        ),
+        "2-dialog-started": (
+            "Stage 2 dialog is in progress. Finalize with "
+            "`meta-compiler elicit-vision --finalize` or document the pause."
+        ),
+    }
+    audit(ws, "nudge_finalize", "Stop", "block",
+          reason=f"stage={stage}")
+    return {"decision": "block", "reason": reasons[stage]}
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
