@@ -1,0 +1,9 @@
+workspace_manifest:
+  project_name: test-project
+  problem_domain: test-domain
+  project_type: research
+  research:
+    last_completed_stage: "1a"
+    reentry_version: null
+  decision_logs: []
+  seeds: []
