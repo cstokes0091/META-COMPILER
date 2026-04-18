@@ -766,6 +766,58 @@ def require_handoff(payload):
     )
 
 
+FINDINGS_SCHEMA_REQUIRED: list[str] = ["source_id", "findings"]
+FINDINGS_ITEM_REQUIRED: list[str] = ["claim", "quote", "location"]
+
+
+@register("validate_findings_schema")
+def validate_findings_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    fp_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not fp_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(fp_str).resolve()
+        rel = fp.relative_to(ws).as_posix()
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+    if not rel.startswith("workspace-artifacts/wiki/findings/") or not rel.endswith(".json"):
+        return {"permissionDecision": "allow"}
+    if rel.endswith("/index.yaml") or rel.endswith("/index.json"):
+        return {"permissionDecision": "allow"}
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "validate_findings_schema", "PostToolUse", "deny",
+                     reason=msg, extra={"file_path": rel})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": "Repair the findings JSON before the file is committed to wiki/findings/.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    try:
+        data = json.loads(fp.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return _deny(f"{fp.name} is not valid JSON: {e}")
+
+    if not isinstance(data, dict):
+        return _deny(f"{fp.name} top-level is not an object.")
+    for field in FINDINGS_SCHEMA_REQUIRED:
+        if field not in data:
+            return _deny(f"{fp.name} missing required field '{field}'.")
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return _deny(f"{fp.name}: 'findings' must be a list.")
+    for i, item in enumerate(findings):
+        if not isinstance(item, dict):
+            return _deny(f"{fp.name}: findings[{i}] is not an object.")
+        for field in FINDINGS_ITEM_REQUIRED:
+            if field not in item:
+                return _deny(f"{fp.name}: findings[{i}] missing '{field}'.")
+    return {"permissionDecision": "allow"}
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
