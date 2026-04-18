@@ -13,6 +13,18 @@
         "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py inject_state",
         "timeout": 10
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py capture_output",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
