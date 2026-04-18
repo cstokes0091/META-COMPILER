@@ -410,6 +410,56 @@ def gate_cli(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@register("gate_artifact_writes")
+def gate_artifact_writes(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    file_path_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not file_path_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(file_path_str).resolve()
+        rel = fp.relative_to(ws)
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+
+    rel_posix = rel.as_posix()
+
+    if os.environ.get("META_COMPILER_SKIP_HOOK") == "1":
+        audit(ws, "gate_artifact_writes", "PreToolUse", "allow_override",
+              reason="META_COMPILER_SKIP_HOOK=1",
+              extra={"file_path": rel_posix, "override": "env"})
+        return {"permissionDecision": "allow"}
+
+    # Immutable seeds
+    if rel_posix.startswith("workspace-artifacts/seeds/"):
+        line = audit(ws, "gate_artifact_writes", "PreToolUse", "deny",
+                     reason="seeds are immutable",
+                     extra={"file_path": rel_posix})
+        return {
+            "permissionDecision": "deny",
+            "reason": "workspace-artifacts/seeds/** is immutable once tracked.",
+            "remediation": "If a new seed is needed, add it to the seeds directory before Stage 1A and re-run ingest.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    # Compiled Decision Log YAMLs (CLI-only)
+    if (
+        rel_posix.startswith("workspace-artifacts/decision-logs/")
+        and rel_posix.endswith(".yaml")
+    ):
+        line = audit(ws, "gate_artifact_writes", "PreToolUse", "deny",
+                     reason="decision-logs/*.yaml is CLI-compiled",
+                     extra={"file_path": rel_posix})
+        return {
+            "permissionDecision": "deny",
+            "reason": "workspace-artifacts/decision-logs/*.yaml is compiled by meta-compiler elicit-vision --finalize. Direct edits desynchronize the source transcript from the YAML.",
+            "remediation": "Edit workspace-artifacts/runtime/stage2/transcript.md instead; re-run --finalize to regenerate the YAML.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    return {"permissionDecision": "allow"}
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
