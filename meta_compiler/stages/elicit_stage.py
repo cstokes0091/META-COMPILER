@@ -1342,12 +1342,41 @@ def run_elicit_vision_finalize(
     if not manifest:
         raise RuntimeError("Manifest missing. Run `meta-compiler meta-init` first.")
     wm = manifest["workspace_manifest"]
+    research = wm.get("research") or {}
+    is_reentry = research.get("last_completed_stage") == "2-reentry-seeded"
 
     prior = latest_decision_log_path(paths)
     prior_version = prior[0] if prior is not None else None
     reason_for_revision = (
         f"Revision via prompt-as-conductor Stage 2 dialog" if prior_version else None
     )
+
+    # Re-entry mode: require at least one fresh decision block per revised
+    # section. The cascade report was emitted by stage2-reentry when the
+    # transcript was seeded.
+    if is_reentry:
+        if prior is None:
+            raise RuntimeError(
+                "Re-entry state detected but no parent Decision Log exists."
+            )
+        _, parent_path = prior
+        parent_log = load_yaml(parent_path) or {}
+        reentry_version = research.get("reentry_version")
+        cascade_path = (
+            paths.stage2_runtime_dir / f"cascade_report_v{reentry_version}.yaml"
+        )
+        cascade_report = load_yaml(cascade_path) if cascade_path.exists() else {}
+
+        freshness_issues = _check_reentry_block_freshness(
+            transcript_blocks=blocks,
+            cascade_report=cascade_report,
+            parent_log=parent_log,
+        )
+        if freshness_issues:
+            raise RuntimeError(
+                "Re-entry block-freshness check failed:\n"
+                + "\n".join(f"  - {issue}" for issue in freshness_issues)
+            )
 
     default_use_case = (
         f"Stage 2 dialog v{(prior_version or 0) + 1}"
@@ -1426,7 +1455,10 @@ def run_elicit_vision_finalize(
         if not (isinstance(row, dict) and row.get("version") == new_version)
     ]
     decision_logs.append(entry)
-    wm.setdefault("research", {})["last_completed_stage"] = "2"
+    research_out = wm.setdefault("research", {})
+    research_out["last_completed_stage"] = "2"
+    if is_reentry:
+        research_out.pop("reentry_version", None)
     save_manifest(paths, manifest)
 
     _write_postcheck_request(

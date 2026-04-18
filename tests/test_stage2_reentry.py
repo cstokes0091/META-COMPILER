@@ -210,6 +210,64 @@ def test_reentry_to_finalize_produces_v2_with_parent_version(tmp_path):
     assert len(v2["decision_log"]["architecture"]) == 1  # carried
 
 
+def test_finalize_fails_when_revised_section_has_no_fresh_block(tmp_path):
+    """After stage2-reentry seeds the transcript, running --finalize without
+    authoring new blocks under revised sections raises RuntimeError."""
+    workspace_root, artifacts_root = _produce_v1_decision_log(tmp_path)
+
+    run_stage2_reentry(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        reason="revise scope without doing the dialog work",
+        sections=["scope"],
+    )
+
+    # Do NOT amend the transcript. The seeded transcript for a revised
+    # section is empty of blocks, so finalize must refuse to compile v2.
+    with pytest.raises(RuntimeError) as exc:
+        run_finalize_reentry(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+        )
+    assert "scope" in str(exc.value)
+    assert "fresh" in str(exc.value).lower() or "no fresh" in str(exc.value).lower()
+
+
+def test_finalize_reentry_clears_reentry_state_on_success(tmp_path):
+    """After a successful re-entry finalize, manifest.research goes back to
+    last_completed_stage='2' and reentry_version is cleared."""
+    workspace_root, artifacts_root = _produce_v1_decision_log(tmp_path)
+    paths = build_paths(artifacts_root)
+
+    run_stage2_reentry(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        reason="revise scope",
+        sections=["scope"],
+    )
+    existing = paths.stage2_transcript_path.read_text(encoding="utf-8")
+    amended = (
+        existing
+        + "\n"
+        "### Decision: Revised in-scope item\n"
+        "- Section: scope-in\n"
+        "- Item: Brand-new item\n"
+        "- Rationale: fresh\n"
+        "- Citations: src-test\n"
+    )
+    paths.stage2_transcript_path.write_text(amended, encoding="utf-8")
+
+    run_finalize_reentry(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+    )
+
+    manifest = yaml.safe_load(paths.manifest_path.read_text(encoding="utf-8"))
+    research = manifest["workspace_manifest"]["research"]
+    assert research.get("last_completed_stage") == "2"
+    assert "reentry_version" not in research or research["reentry_version"] is None
+
+
 def test_finalize_reentry_rejects_version_mismatch(tmp_path):
     workspace_root, artifacts_root = _produce_v1_decision_log(tmp_path)
     paths = build_paths(artifacts_root)
