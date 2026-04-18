@@ -1207,6 +1207,98 @@ def _write_postcheck_request(
     return paths.stage2_postcheck_request_path
 
 
+def _block_title_for_section(block: Any, revised_section: str) -> str:
+    """Return the string used to test "fresh vs prior" for a block in a
+    revised section. Test-only dummy objects may expose a plain `.title`
+    attribute; real `DecisionBlock` objects expose `.name` plus typed
+    fields keyed by section.
+    """
+    direct = getattr(block, "title", None)
+    if direct:
+        return str(direct)
+    fields = getattr(block, "fields", {}) or {}
+    if revised_section == "conventions":
+        return str(getattr(block, "name", "") or fields.get("choice", ""))
+    if revised_section == "architecture":
+        return str(fields.get("component", "") or getattr(block, "name", ""))
+    if revised_section == "scope":
+        return str(fields.get("item", "") or getattr(block, "name", ""))
+    if revised_section == "requirements":
+        return str(fields.get("description", "") or getattr(block, "name", ""))
+    if revised_section == "open_items":
+        return str(fields.get("description", "") or getattr(block, "name", ""))
+    if revised_section == "agents_needed":
+        return str(fields.get("role", "") or getattr(block, "name", ""))
+    return str(getattr(block, "name", ""))
+
+
+def _check_reentry_block_freshness(
+    transcript_blocks: list,
+    cascade_report: dict,
+    parent_log: dict,
+) -> list[str]:
+    """For each revised section in the cascade report, require >=1 block
+    with a title that does NOT appear in the parent Decision Log.
+
+    Returns list of issue strings, one per empty revised section. Empty
+    list means pass. Called only when re-entry is detected.
+    """
+    revised = set(
+        (cascade_report.get("cascade_report") or {}).get("revised_sections") or []
+    )
+    if not revised:
+        return []
+
+    dl = parent_log.get("decision_log") or {}
+    issues: list[str] = []
+
+    def _titles_for_revised(section: str) -> set[str]:
+        titles: set[str] = set()
+        if section == "conventions":
+            for row in dl.get("conventions") or []:
+                titles.add(str(row.get("name") or row.get("choice") or ""))
+        elif section == "architecture":
+            for row in dl.get("architecture") or []:
+                titles.add(str(row.get("component") or ""))
+        elif section == "scope":
+            scope = dl.get("scope") or {}
+            for row in (scope.get("in_scope") or []) + (scope.get("out_of_scope") or []):
+                titles.add(str(row.get("item") or ""))
+        elif section == "requirements":
+            for row in dl.get("requirements") or []:
+                titles.add(str(row.get("id") or row.get("description") or ""))
+        elif section == "open_items":
+            for row in dl.get("open_items") or []:
+                titles.add(str(row.get("description") or ""))
+        elif section == "agents_needed":
+            for row in dl.get("agents_needed") or []:
+                titles.add(str(row.get("role") or ""))
+        return {t for t in titles if t}
+
+    def _block_matches_revised(block_section: str, revised_name: str) -> bool:
+        if revised_name == "scope":
+            return block_section in {"scope-in", "scope-out"}
+        return block_section == revised_name
+
+    for section in sorted(revised):
+        prior_titles = _titles_for_revised(section)
+        has_fresh = False
+        for b in transcript_blocks:
+            b_section = getattr(b, "section", "") or ""
+            if not _block_matches_revised(b_section, section):
+                continue
+            b_title = _block_title_for_section(b, section)
+            if b_title and b_title not in prior_titles:
+                has_fresh = True
+                break
+        if not has_fresh:
+            issues.append(
+                f"Revised section '{section}' has no fresh decision block in the transcript. "
+                f"Add at least one decision block under that section whose title differs from the prior log."
+            )
+    return issues
+
+
 def run_elicit_vision_finalize(
     artifacts_root: Path,
     workspace_root: Path,
