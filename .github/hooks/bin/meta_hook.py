@@ -623,6 +623,149 @@ def gate_reentry_request(payload: dict[str, Any]) -> dict[str, Any]:
     return {"permissionDecision": "allow"}
 
 
+def _presence_check(
+    payload: dict[str, Any],
+    check_name: str,
+    rel_path: str,
+    event: str,
+    missing_reason: str,
+    missing_remediation: str,
+    require_field: str | None = None,
+    deny_mode: str = "deny",
+) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    target = ws / rel_path
+    if not target.exists():
+        line = audit(ws, check_name, event, deny_mode, reason=missing_reason)
+        if deny_mode == "block":
+            return {
+                "decision": "block",
+                "reason": f"{missing_reason} {missing_remediation}",
+            }
+        return {
+            "permissionDecision": "deny",
+            "reason": missing_reason,
+            "remediation": missing_remediation,
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+    if require_field:
+        try:
+            parsed = _parse_yaml_subset(target.read_text(encoding="utf-8"))
+        except Exception as e:
+            return {"decision": "block", "reason": f"{target} parse error: {e}"}
+        if not _has_field_anywhere(parsed, require_field):
+            audit(ws, check_name, event, deny_mode,
+                  reason=f"{target.name} missing field '{require_field}'")
+            if deny_mode == "block":
+                return {
+                    "decision": "block",
+                    "reason": (
+                        f"{target.name} is missing required field '{require_field}'. "
+                        f"{missing_remediation}"
+                    ),
+                }
+            return {
+                "permissionDecision": "deny",
+                "reason": f"{target.name} is missing required field '{require_field}'.",
+                "remediation": missing_remediation,
+            }
+    return {"permissionDecision": "allow"} if deny_mode == "deny" else {}
+
+
+def _has_field_anywhere(obj: Any, field: str) -> bool:
+    if isinstance(obj, dict):
+        if field in obj and obj[field] is not None:
+            return True
+        return any(_has_field_anywhere(v, field) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_has_field_anywhere(v, field) for v in obj)
+    return False
+
+
+@register("gate_orchestrator_mode_preflight")
+def gate_orchestrator_mode_preflight(payload):
+    return _presence_check(
+        payload, "gate_orchestrator_mode_preflight",
+        "workspace-artifacts/runtime/stage2/precheck_request.yaml",
+        "PreToolUse",
+        "precheck_request.yaml is missing.",
+        "Run `meta-compiler elicit-vision --start` or `meta-compiler stage2-reentry --from-request ...` first.",
+    )
+
+
+@register("gate_orchestrator_mode_postflight")
+def gate_orchestrator_mode_postflight(payload):
+    return _presence_check(
+        payload, "gate_orchestrator_mode_postflight",
+        "workspace-artifacts/runtime/stage2/postcheck_request.yaml",
+        "PreToolUse",
+        "postcheck_request.yaml is missing.",
+        "Run `meta-compiler elicit-vision --finalize` before invoking postflight.",
+    )
+
+
+@register("require_verdict_preflight")
+def require_verdict_preflight(payload):
+    return _presence_check(
+        payload, "require_verdict_preflight",
+        "workspace-artifacts/runtime/stage2/precheck_verdict.yaml",
+        "SubagentStop",
+        "precheck_verdict.yaml was not written.",
+        "Preflight must write its verdict before stopping.",
+        require_field="verdict",
+        deny_mode="block",
+    )
+
+
+@register("require_verdict_postflight")
+def require_verdict_postflight(payload):
+    return _presence_check(
+        payload, "require_verdict_postflight",
+        "workspace-artifacts/runtime/stage2/postcheck_verdict.yaml",
+        "SubagentStop",
+        "postcheck_verdict.yaml was not written.",
+        "Postflight must write its verdict before stopping.",
+        require_field="verdict",
+        deny_mode="block",
+    )
+
+
+@register("gate_ingest_workplan")
+def gate_ingest_workplan(payload):
+    return _presence_check(
+        payload, "gate_ingest_workplan",
+        "workspace-artifacts/runtime/ingest/work_plan.yaml",
+        "PreToolUse",
+        "ingest work_plan.yaml is missing.",
+        "Run `meta-compiler ingest --scope all` (or `--scope new`) before the orchestrator fans out.",
+    )
+
+
+@register("require_ingest_report")
+def require_ingest_report(payload):
+    return _presence_check(
+        payload, "require_ingest_report",
+        "workspace-artifacts/wiki/reports/ingest_report.yaml",
+        "SubagentStop",
+        "ingest_report.yaml was not written.",
+        "The ingest-orchestrator must write the run summary before stopping.",
+        deny_mode="block",
+    )
+
+
+@register("require_handoff")
+def require_handoff(payload):
+    return _presence_check(
+        payload, "require_handoff",
+        "workspace-artifacts/wiki/reviews/1a2_handoff.yaml",
+        "SubagentStop",
+        "1a2_handoff.yaml was not written.",
+        "The stage-1a2-orchestrator must record its handoff decision before stopping.",
+        require_field="decision",
+        deny_mode="block",
+    )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
