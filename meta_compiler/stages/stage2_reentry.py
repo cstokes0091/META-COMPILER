@@ -407,11 +407,38 @@ def _render_seeded_transcript(
 def run_stage2_reentry(
     artifacts_root: Path,
     workspace_root: Path,
-    reason: str,
-    sections: list[str],
+    reason: str | None = None,
+    sections: list[str] | None = None,
+    from_request: Path | None = None,
 ) -> dict[str, Any]:
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
+
+    # If --from-request passed, derive reason and sections from the artifact.
+    request_data: dict[str, Any] | None = None
+    if from_request is not None:
+        if not from_request.exists():
+            raise RuntimeError(f"--from-request path does not exist: {from_request}")
+        request_data = load_yaml(from_request) or {}
+        req = request_data.get("stage2_reentry_request") or {}
+        artifact_reason = req.get("reason")
+        artifact_sections = req.get("revised_sections") or []
+        if reason is not None and artifact_reason is not None and reason != artifact_reason:
+            raise RuntimeError(
+                f"--reason='{reason}' conflicts with request.reason='{artifact_reason}'. "
+                "Pass one or the other, or align them."
+            )
+        if sections and artifact_sections and set(sections) != set(artifact_sections):
+            raise RuntimeError(
+                f"--sections={sections} conflicts with request.revised_sections={artifact_sections}."
+            )
+        reason = reason or artifact_reason
+        sections = sections or list(artifact_sections)
+
+    if not reason:
+        raise RuntimeError("reason is required (via --reason or request.reason).")
+    if sections is None:
+        raise RuntimeError("sections are required (via --sections or request.revised_sections).")
 
     manifest = load_manifest(paths)
     if not manifest:
@@ -469,6 +496,75 @@ def run_stage2_reentry(
         },
     )
 
+    # Emit brief.md for the orchestrator preflight
+    brief_lines = [
+        f"# Stage 2 Brief — Re-entry v{new_version}",
+        "",
+        f"Generated: {generated_at}",
+        f"Decision Log version (parent): v{prior_version}",
+        "",
+        "## Where to look",
+        "",
+        "- PROBLEM_STATEMENT.md",
+        "- workspace-artifacts/wiki/v2/index.md",
+        "- workspace-artifacts/wiki/citations/index.yaml",
+        f"- workspace-artifacts/decision-logs/decision_log_v{prior_version}.yaml (parent)",
+        "",
+        "## Re-entry context",
+        "",
+        f"- Revised sections: {', '.join(sections)}",
+        f"- Revision reason: {reason}",
+    ]
+    if request_data is not None:
+        req = request_data.get("stage2_reentry_request") or {}
+        summary = req.get("problem_change_summary") or ""
+        if summary:
+            brief_lines += ["", "### Problem-change summary", "", summary]
+        risks = req.get("carried_consistency_risks") or []
+        if risks:
+            brief_lines += ["", "### Carried consistency risks", ""]
+            for r in risks:
+                if isinstance(r, dict):
+                    brief_lines.append(
+                        f"- {r.get('prior_decision', '?')} ({r.get('section', '?')}): {r.get('concern', '')}"
+                    )
+    brief_lines += ["", "## Transcript path", "",
+                    "workspace-artifacts/runtime/stage2/transcript.md"]
+    paths.stage2_brief_path.write_text("\n".join(brief_lines) + "\n", encoding="utf-8")
+
+    # Emit precheck_request.yaml for the orchestrator preflight
+    precheck_payload: dict[str, Any] = {
+        "stage2_precheck_request": {
+            "generated_at": generated_at,
+            "decision_log_version": new_version,
+            "parent_version": prior_version,
+            "mechanical_checks": [
+                {"name": "parent_log_present", "result": "PASS"},
+                {"name": "reentry_request_present",
+                 "result": "PASS" if request_data else "SKIP"},
+            ],
+            "reentry": {
+                "parent_version": prior_version,
+                "revised_sections": sections,
+                "reason": reason,
+                "problem_change_summary": (
+                    (request_data or {}).get("stage2_reentry_request", {}).get(
+                        "problem_change_summary", ""
+                    )
+                ),
+                "carried_consistency_risks": (
+                    (request_data or {}).get("stage2_reentry_request", {}).get(
+                        "carried_consistency_risks", []
+                    )
+                ),
+            },
+            "verdict_output_path": (
+                "workspace-artifacts/runtime/stage2/precheck_verdict.yaml"
+            ),
+        }
+    }
+    dump_yaml(paths.stage2_precheck_request_path, precheck_payload)
+
     # Track re-entry state in the manifest so the next `--start` knows we're
     # mid-revision and `--finalize` can look up the prior version correctly.
     wm = manifest["workspace_manifest"]
@@ -482,18 +578,22 @@ def run_stage2_reentry(
         "new_version": new_version,
         "parent_version": prior_version,
         "sections_to_revise": sections,
+        "reason": reason,
         "cascade": cascade,
         "transcript_path": str(
             paths.stage2_transcript_path.relative_to(paths.root).as_posix()
+        ),
+        "brief_path": str(paths.stage2_brief_path.relative_to(paths.root).as_posix()),
+        "precheck_request_path": str(
+            paths.stage2_precheck_request_path.relative_to(paths.root).as_posix()
         ),
         "cascade_report_path": str(
             cascade_report_path.relative_to(paths.root).as_posix()
         ),
         "next_step": (
-            "Open .github/prompts/stage-2-dialog.prompt.md in your LLM runtime and walk "
-            "its five steps. The seeded transcript already contains carried-forward "
-            "decisions; the dialog only needs to author blocks for the revised "
-            "sections. Then run `meta-compiler elicit-vision --finalize`."
+            "Open .github/prompts/stage2-reentry.prompt.md in your LLM runtime and walk "
+            "its 6 steps. Step 1 is already complete (this call). "
+            "Next: invoke @stage2-orchestrator mode=preflight."
         ),
     }
 

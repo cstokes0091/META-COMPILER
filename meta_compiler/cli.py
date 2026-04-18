@@ -218,11 +218,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     reentry_parser = subparsers.add_parser("stage2-reentry", help="Revise Decision Log for changed scope")
     _add_common_paths(reentry_parser)
-    reentry_parser.add_argument("--reason", required=True, help="Reason for revision")
+    reentry_parser.add_argument("--reason", default=None, help="Reason for revision (optional when --from-request is used)")
     reentry_parser.add_argument(
         "--sections",
-        required=True,
-        help="Comma-separated sections to revise (conventions,architecture,scope,requirements,open_items,agents_needed)",
+        default=None,
+        help="Comma-separated sections to revise (conventions,architecture,scope,requirements,open_items,agents_needed). Optional when --from-request is used.",
+    )
+    reentry_parser.add_argument(
+        "--from-request",
+        type=Path,
+        default=None,
+        help="Path to stage2 reentry_request.yaml. When passed, --reason and --sections are derived from the artifact.",
     )
 
     finalize_parser = subparsers.add_parser("finalize-reentry", help="Finalize a re-entry Decision Log after editing")
@@ -371,12 +377,17 @@ def main(argv: list[str] | None = None) -> int:
                 prefer_v1=args.prefer_v1,
             )
         elif args.command == "stage2-reentry":
-            sections = [s.strip() for s in args.sections.split(",") if s.strip()]
+            sections = (
+                [s.strip() for s in args.sections.split(",") if s.strip()]
+                if args.sections
+                else None
+            )
             result = run_stage2_reentry(
                 artifacts_root=artifacts_root,
                 workspace_root=workspace_root,
                 reason=args.reason,
                 sections=sections,
+                from_request=args.from_request,
             )
         elif args.command == "finalize-reentry":
             result = run_finalize_reentry(
