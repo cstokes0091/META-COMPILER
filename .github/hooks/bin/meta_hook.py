@@ -292,6 +292,124 @@ if os.environ.get("META_COMPILER_HOOK_TEST"):
         }
 
 
+# ---------------------------------------------------------------------------
+# Stage ordering state machine
+# ---------------------------------------------------------------------------
+
+# Map from meta-compiler subcommand to allowed prior stage values.
+# Stage strings match workspace_manifest.research.last_completed_stage.
+# Derived from meta_compiler/stages/run_all_stage.py.
+STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
+    "meta-init": {"allowed_prior": ["(none)"], "sets": "0"},
+    "ingest": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
+    "ingest-validate": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
+    "research-breadth": {"allowed_prior": ["0"], "sets": None},
+    "research-depth": {"allowed_prior": ["1a"], "sets": None},
+    "review": {"allowed_prior": ["1b"], "sets": None},
+    "elicit-vision--start": {"allowed_prior": ["1c"], "sets": None},
+    "elicit-vision--finalize": {
+        "allowed_prior": ["1c", "2-dialog-started", "2-reentry-seeded"],
+        "sets": "2",
+    },
+    "audit-requirements": {"allowed_prior": ["2"], "sets": None},
+    "stage2-reentry": {"allowed_prior": ["2"], "sets": "2-reentry-seeded"},
+    "finalize-reentry": {"allowed_prior": ["2-reentry-seeded"], "sets": "2"},
+    "scaffold": {"allowed_prior": ["2"], "sets": "3"},
+    "phase4-finalize": {"allowed_prior": ["3"], "sets": "4"},
+    "wiki-update": {"allowed_prior": ["1a", "1b", "1c", "2"], "sets": None},
+    "track-seeds": {"allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
+    "clean-workspace": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
+                                          "2-dialog-started", "2-reentry-seeded"], "sets": None},
+    "validate-stage": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
+                                          "2-dialog-started", "2-reentry-seeded"], "sets": None},
+    "wiki-browse": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
+    "run-all": {"allowed_prior": ["(none)", "0"], "sets": None},
+}
+
+
+def _parse_meta_compiler_command(cmd: str) -> str | None:
+    """Extract the meta-compiler subcommand key. Returns None if not a
+    meta-compiler command. 'elicit-vision --start' → 'elicit-vision--start'."""
+    parts = cmd.strip().split()
+    if len(parts) < 2 or parts[0] != "meta-compiler":
+        return None
+    sub = parts[1]
+    # Special-case elicit-vision mode flags
+    if sub == "elicit-vision":
+        if "--start" in parts:
+            return "elicit-vision--start"
+        if "--finalize" in parts:
+            return "elicit-vision--finalize"
+        return sub
+    return sub
+
+
+@register("gate_cli")
+def gate_cli(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+
+    # Env-var override
+    if os.environ.get("META_COMPILER_SKIP_HOOK") == "1":
+        audit(ws, "gate_cli", "PreToolUse", "allow_override",
+              reason="META_COMPILER_SKIP_HOOK=1",
+              extra={"command": cmd, "override": "env"})
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_cli", ws)
+    if disabled:
+        audit(ws, "gate_cli", "PreToolUse", "allow_override",
+              reason=f"overrides.json: {ov_reason}",
+              extra={"command": cmd, "override": "config"})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": f"gate_cli disabled by override: {ov_reason}",
+        }
+
+    sub = _parse_meta_compiler_command(cmd)
+    if sub is None:
+        return {"permissionDecision": "allow"}
+
+    # Missing manifest is a distinct case: nothing to gate against
+    if not (ws / "workspace-artifacts" / "manifests" / "workspace_manifest.yaml").exists():
+        if sub == "meta-init" or sub == "run-all":
+            return {"permissionDecision": "allow"}
+        line = audit(ws, "gate_cli", "PreToolUse", "deny",
+                     reason="manifest missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "No workspace manifest found.",
+            "remediation": "Run `meta-compiler meta-init ...` first to initialize the workspace.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    pre = STAGE_PRECONDITIONS.get(sub)
+    if pre is None:
+        # Unknown subcommand: don't gate
+        return {"permissionDecision": "allow"}
+
+    current = manifest_stage(ws)
+    if current in pre["allowed_prior"]:
+        return {"permissionDecision": "allow"}
+
+    line = audit(ws, "gate_cli", "PreToolUse", "deny",
+                 reason=f"last_completed_stage={current}, {sub} requires one of {pre['allowed_prior']}",
+                 extra={"command": cmd})
+    return {
+        "permissionDecision": "deny",
+        "reason": (
+            f"last_completed_stage is '{current}'; '{sub}' requires one of "
+            f"{pre['allowed_prior']}."
+        ),
+        "remediation": (
+            f"Complete the prior stage first, or set META_COMPILER_SKIP_HOOK=1 "
+            f"in the env if you explicitly want to bypass."
+        ),
+        "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
