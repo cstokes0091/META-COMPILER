@@ -460,6 +460,61 @@ def gate_artifact_writes(payload: dict[str, Any]) -> dict[str, Any]:
     return {"permissionDecision": "allow"}
 
 
+@register("inject_state")
+def inject_state(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    m = read_manifest(ws).get("workspace_manifest") or {}
+    research = m.get("research") or {}
+    stage = research.get("last_completed_stage") or "(none)"
+    reentry_version = research.get("reentry_version")
+
+    # Next-action hints (same ordering as run-all)
+    NEXT: dict[str, str] = {
+        "(none)": "Run `meta-compiler meta-init ...` to initialize the workspace.",
+        "0": "Stage 1A: run `/stage-1a-breadth` (ingest + breadth research).",
+        "1a": "Stage 1B: run `/stage-1b-evaluators` (depth via stage-1a2-orchestrator).",
+        "1b": "Stage 1C: run `/stage-1c-review` (three-reviewer debate).",
+        "1c": "Stage 2: run `/stage-2-dialog` (vision elicitation).",
+        "2": "Stage 3: run `/stage-3-scaffold` (generate executor).",
+        "2-dialog-started": "Stage 2 preflight complete; open the Stage 2 dialog prompt and converse.",
+        "2-reentry-seeded": "Stage 2 re-entry in progress; conduct the scoped dialog, then run `meta-compiler elicit-vision --finalize`.",
+        "3": "Stage 4: run `/stage-4-finalize`.",
+        "4": "Pipeline complete. Use `/clean-workspace` or `/stage2-reentry` to iterate.",
+    }
+
+    lines = [
+        "# Meta-compiler workspace state",
+        f"- last_completed_stage: {stage}",
+        f"- suggested next: {NEXT.get(stage, 'unknown')}",
+    ]
+    if reentry_version is not None and stage == "2-reentry-seeded":
+        lines.append(f"- RE-ENTRY IN PROGRESS: revising toward v{reentry_version}. "
+                     "Conduct the scoped dialog before finalize.")
+    return {"additionalContext": "\n".join(lines)}
+
+
+@register("capture_output")
+def capture_output(payload: dict[str, Any]) -> dict[str, Any]:
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not cmd.strip().startswith("meta-compiler"):
+        return {}
+    stdout = (payload.get("tool_result") or {}).get("stdout") or ""
+    if not stdout.strip():
+        return {}
+    # Try to render JSON compactly; otherwise wrap as code block.
+    try:
+        parsed = json.loads(stdout)
+        rendered = "```json\n" + json.dumps(parsed, indent=2) + "\n```"
+    except (json.JSONDecodeError, ValueError):
+        rendered = "```\n" + stdout.rstrip() + "\n```"
+    ws = resolve_workspace_root(payload)
+    audit(ws, "capture_output", "PostToolUse", "inject",
+          extra={"command": cmd, "stdout_bytes": len(stdout)})
+    return {
+        "additionalContext": f"Output of `{cmd}`:\n\n{rendered}",
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
