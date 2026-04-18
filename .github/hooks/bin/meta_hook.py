@@ -542,6 +542,87 @@ def nudge_finalize(payload: dict[str, Any]) -> dict[str, Any]:
     return {"decision": "block", "reason": reasons[stage]}
 
 
+import hashlib as _hashlib
+
+
+def _sha256_file(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        return _hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+@register("gate_reentry_request")
+def gate_reentry_request(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if "stage2-reentry" not in cmd or not cmd.strip().startswith("meta-compiler"):
+        return {"permissionDecision": "allow"}
+
+    # NOT honored by META_COMPILER_SKIP_HOOK — explicitly non-skippable.
+    req_path = ws / "workspace-artifacts" / "runtime" / "stage2" / "reentry_request.yaml"
+    ps_path = ws / "PROBLEM_STATEMENT.md"
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "gate_reentry_request", "PreToolUse", "deny",
+                     reason=msg, extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": (
+                "Complete Step 0 of .github/prompts/stage2-reentry.prompt.md "
+                "(problem-space dialog + reentry_request.yaml authoring) before invoking the CLI."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    if not req_path.exists():
+        return _deny("reentry_request.yaml is missing.")
+
+    try:
+        parsed = _parse_yaml_subset(req_path.read_text(encoding="utf-8"))
+        req = parsed.get("stage2_reentry_request") or {}
+        ps_block = req.get("problem_statement") or {}
+        prev_sha = ps_block.get("previously_ingested_sha256")
+        cur_sha_claimed = ps_block.get("current_sha256")
+        updated = bool(ps_block.get("updated"))
+    except Exception as e:
+        return _deny(f"reentry_request.yaml parse error: {e}")
+
+    if not prev_sha or not cur_sha_claimed:
+        return _deny("reentry_request.yaml is missing problem_statement sha256 fields.")
+
+    live_sha = _sha256_file(ps_path)
+    if live_sha is None:
+        return _deny("PROBLEM_STATEMENT.md is missing on disk.")
+
+    if live_sha != cur_sha_claimed:
+        return _deny(
+            f"reentry_request.yaml claims current_sha256={cur_sha_claimed[:8]}... "
+            f"but PROBLEM_STATEMENT.md is {live_sha[:8]}.... "
+            "Re-author the request after any edits."
+        )
+
+    if updated and live_sha == prev_sha:
+        return _deny(
+            "reentry_request.yaml says problem_statement.updated=true, "
+            "but the live SHA equals previously_ingested_sha256. No edit actually occurred."
+        )
+
+    if not updated and live_sha != prev_sha:
+        return _deny(
+            "reentry_request.yaml says problem_statement.updated=false, "
+            "but the live SHA differs from previously_ingested_sha256. Set updated=true "
+            "and record rationale, or revert PROBLEM_STATEMENT.md."
+        )
+
+    audit(ws, "gate_reentry_request", "PreToolUse", "allow",
+          extra={"command": cmd, "parent_version": req.get("parent_version")})
+    return {"permissionDecision": "allow"}
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
