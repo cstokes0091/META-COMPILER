@@ -818,6 +818,129 @@ def validate_findings_schema(payload: dict[str, Any]) -> dict[str, Any]:
     return {"permissionDecision": "allow"}
 
 
+import subprocess as _subprocess
+
+
+PROMPT_TRIGGERS: dict[str, list[str]] = {
+    # Maps /<prompt-name> → ordered chain of shell commands to run on UserPromptSubmit.
+    # Empty list = match the slash but don't run (useful for gating).
+    "stage-1a-breadth": ["meta-compiler ingest --scope all"],
+    "stage-2-dialog": ["meta-compiler elicit-vision --start"],
+    "stage-3-scaffold": [
+        "meta-compiler scaffold",
+        "meta-compiler validate-stage --stage 3",
+    ],
+    "stage-4-finalize": [
+        "meta-compiler phase4-finalize",
+        "meta-compiler validate-stage --stage 4",
+    ],
+}
+
+SUBAGENT_STOP_CHAINS: dict[str, list[str]] = {
+    # Maps agent name → ordered chain of shell commands to run on SubagentStop.
+    "ingest-orchestrator": [
+        "meta-compiler ingest-validate",
+        "meta-compiler research-breadth",
+        "meta-compiler validate-stage --stage 1a",
+    ],
+    "stage-1a2-orchestrator": [
+        "meta-compiler research-depth",
+        "meta-compiler validate-stage --stage 1b",
+        "meta-compiler review",
+        "meta-compiler validate-stage --stage 1c",
+    ],
+}
+
+
+def _run_chain(commands: list[str], cwd: Path) -> tuple[list[str], str | None]:
+    """Run commands sequentially. Return (per-step output list, failure-message or None).
+    On failure, stops; subsequent commands are not run.
+
+    If META_COMPILER_TEST_CHAIN is set, its ';'-separated commands replace
+    the `commands` list entirely (used by unit tests to avoid invoking real
+    meta-compiler)."""
+    outputs: list[str] = []
+    env = dict(os.environ)
+    env["META_COMPILER_SKIP_HOOK"] = "1"
+    test_chain = os.environ.get("META_COMPILER_TEST_CHAIN")
+    effective_cmds = test_chain.split(";") if test_chain else commands
+    for cmd in effective_cmds:
+        try:
+            r = _subprocess.run(cmd, shell=True, cwd=str(cwd), env=env,
+                                capture_output=True, text=True, timeout=300)
+            if r.returncode != 0:
+                return outputs, f"`{cmd}` failed (rc={r.returncode}): {r.stderr.strip()}"
+            outputs.append(f"$ {cmd}\n{r.stdout.strip()}")
+        except Exception as e:
+            return outputs, f"`{cmd}` raised: {e}"
+    return outputs, None
+
+
+def _detect_prompt_slash(prompt_text: str) -> str | None:
+    """Extract /<name> at start of user prompt. Returns name or None."""
+    stripped = prompt_text.lstrip()
+    if not stripped.startswith("/"):
+        return None
+    first_token = stripped.split()[0][1:]  # drop leading /
+    return first_token
+
+
+@register("user_prompt_submit_dispatch")
+def user_prompt_submit_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    prompt_text = (payload.get("tool_input") or {}).get("prompt") or ""
+    slash = _detect_prompt_slash(prompt_text)
+    if slash is None:
+        return {}
+    # Test-mode hook: match any /__test_chain__ or real triggers
+    if slash == "__test_chain__" or slash in PROMPT_TRIGGERS:
+        commands = PROMPT_TRIGGERS.get(slash, [])
+        outputs, failure = _run_chain(commands, ws)
+        body_parts: list[str] = []
+        if outputs:
+            body_parts.append("Auto-fired chain output:")
+            for o in outputs:
+                body_parts.append("```\n" + o + "\n```")
+        result: dict[str, Any] = {}
+        if body_parts:
+            result["additionalContext"] = "\n\n".join(body_parts)
+        if failure:
+            result["systemMessage"] = f"Chain failed: {failure}"
+        audit(ws, "user_prompt_submit_dispatch", "UserPromptSubmit",
+              "chain_ok" if not failure else "chain_failed",
+              reason=slash, extra={"failure": failure})
+        return result
+    return {}
+
+
+@register("subagent_stop_dispatch")
+def subagent_stop_dispatch(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    # The agent name comes from the hook event; exact field name is
+    # subagent_id or similar depending on runtime. Accept either.
+    agent = (
+        payload.get("subagent_id")
+        or payload.get("agent_name")
+        or (payload.get("tool_input") or {}).get("agent_name")
+        or ""
+    )
+    if agent not in SUBAGENT_STOP_CHAINS:
+        return {}
+    commands = SUBAGENT_STOP_CHAINS[agent]
+    outputs, failure = _run_chain(commands, cwd=ws)
+    result: dict[str, Any] = {}
+    if outputs:
+        result["additionalContext"] = "Post-subagent chain output:\n" + "\n".join(
+            "```\n" + o + "\n```" for o in outputs
+        )
+    if failure:
+        result["systemMessage"] = f"Chain failed: {failure}"
+    audit(ws, "subagent_stop_dispatch", "SubagentStop",
+          "chain_ok" if not failure else "chain_failed",
+          reason=agent, extra={"failure": failure})
+    return result
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         fail_open("(none)", "no check name provided as argv[1]")
