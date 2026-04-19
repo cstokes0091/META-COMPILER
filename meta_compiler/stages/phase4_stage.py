@@ -231,6 +231,165 @@ def _write_pitch_deck(
     prs.save(str(pptx_path))
 
 
+def _load_agent_registry(scaffold_root: Path) -> list[dict[str, Any]]:
+    registry_path = scaffold_root / "AGENT_REGISTRY.yaml"
+    if not registry_path.exists():
+        return []
+    payload = load_yaml(registry_path) or {}
+    registry = payload.get("agent_registry", {}) if isinstance(payload, dict) else {}
+    entries = registry.get("entries", []) if isinstance(registry, dict) else []
+    return [row for row in entries if isinstance(row, dict)]
+
+
+def run_phase4_start(
+    artifacts_root: Path,
+    workspace_root: Path,
+    decision_log_version: int | None = None,
+) -> dict[str, Any]:
+    """Stage 4 preflight: write dispatch plan + execution request, then stop.
+
+    The LLM ralph loop (driven by stage-4-finalize.prompt.md) consumes the
+    dispatch plan to fan out scaffold-generated implementer agents. After the
+    loop populates `executions/v{N}/work/`, the operator runs
+    `meta-compiler phase4-finalize --finalize` to compile the final manifest
+    and emit the pitch deck.
+    """
+    paths = build_paths(artifacts_root)
+    ensure_layout(paths)
+
+    version = _resolve_decision_log_version(paths, decision_log_version)
+    scaffold_version, scaffold_root = _resolve_scaffold_root(paths, decision_log_version=version)
+    if scaffold_version != version:
+        raise RuntimeError(
+            f"Latest scaffold version (v{scaffold_version}) does not match Decision Log v{version}."
+        )
+
+    execution_manifest_path = scaffold_root / "EXECUTION_MANIFEST.yaml"
+    if not execution_manifest_path.exists():
+        raise RuntimeError(f"Execution manifest missing: {execution_manifest_path}")
+
+    execution_payload = load_yaml(execution_manifest_path)
+    execution_root = execution_payload.get("execution", {}) if isinstance(execution_payload, dict) else {}
+    project_type = str(execution_root.get("project_type") or "algorithm")
+
+    output_dir = paths.executions_dir / f"v{version}"
+    work_dir = output_dir / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    agent_entries = _load_agent_registry(scaffold_root)
+    dispatch_assignments: list[dict[str, Any]] = []
+    for entry in agent_entries:
+        slug = entry.get("slug") or entry.get("role")
+        if not slug:
+            continue
+        agent_work_dir = work_dir / str(slug)
+        dispatch_assignments.append(
+            {
+                "agent": slug,
+                "role": entry.get("role"),
+                "responsibility": entry.get("responsibility"),
+                "output_kind": entry.get("output_kind"),
+                "outputs": entry.get("outputs", []),
+                "expected_work_dir": str(agent_work_dir.relative_to(paths.root)),
+                "max_cycles": entry.get("max_cycles", 3),
+                "status": "pending",
+            }
+        )
+
+    dispatch_plan_path = output_dir / "dispatch_plan.yaml"
+    dump_yaml(
+        dispatch_plan_path,
+        {
+            "dispatch_plan": {
+                "generated_at": iso_now(),
+                "decision_log_version": version,
+                "project_type": project_type,
+                "scaffold_root": str(scaffold_root.relative_to(paths.root.parent)) if scaffold_root.is_relative_to(paths.root.parent) else str(scaffold_root),
+                "execution_output_dir": str(output_dir.relative_to(paths.root)),
+                "work_dir": str(work_dir.relative_to(paths.root)),
+                "assignments": dispatch_assignments,
+            }
+        },
+    )
+
+    request_payload = {
+        "phase4_execution_request": {
+            "generated_at": iso_now(),
+            "decision_log_version": version,
+            "project_type": project_type,
+            "dispatch_plan_path": str(dispatch_plan_path.relative_to(paths.root)),
+            "work_dir": str(work_dir.relative_to(paths.root)),
+            "verdict_output_path": str(paths.phase4_preflight_verdict_path.relative_to(paths.root)),
+            "next_action": (
+                "Invoke @execution-orchestrator (or per-agent implementers from "
+                "the dispatch plan) to populate the work_dir, then run "
+                "meta-compiler phase4-finalize --finalize."
+            ),
+        }
+    }
+    dump_yaml(paths.phase4_execution_request_path, request_payload)
+
+    return {
+        "status": "ready_for_orchestrator",
+        "decision_log_version": version,
+        "project_type": project_type,
+        "dispatch_plan_path": str(dispatch_plan_path),
+        "execution_request_path": str(paths.phase4_execution_request_path),
+        "work_dir": str(work_dir),
+        "agent_count": len(dispatch_assignments),
+    }
+
+
+def _compile_final_output_manifest(
+    output_dir: Path,
+    work_dir: Path,
+    *,
+    decision_log_version: int,
+    project_type: str,
+    scaffold_root: Path,
+) -> dict[str, Any]:
+    """Compile FINAL_OUTPUT_MANIFEST.yaml from LLM-populated work/ directory.
+
+    Walks each per-agent subdirectory, records every output file as a
+    deliverable, and writes the manifest.
+    """
+    deliverables: list[dict[str, Any]] = []
+    if work_dir.exists():
+        for agent_dir in sorted(work_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            for path in sorted(agent_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                deliverables.append(
+                    {
+                        "agent": agent_dir.name,
+                        "kind": path.suffix.lstrip(".") or "file",
+                        "path": str(path.relative_to(output_dir.parent.parent))
+                        if path.is_relative_to(output_dir.parent.parent)
+                        else str(path),
+                    }
+                )
+
+    manifest_payload = {
+        "final_output": {
+            "generated_at": iso_now(),
+            "decision_log_version": decision_log_version,
+            "project_type": project_type,
+            "scaffold_root": str(scaffold_root),
+            "work_dir": str(work_dir),
+            "deliverables": deliverables,
+            "execution_notes": [
+                f"Compiled from {len(deliverables)} file(s) in work_dir",
+                "Conducted via stage-4-finalize.prompt.md ralph loop",
+            ],
+        }
+    }
+    manifest_path = output_dir / "FINAL_OUTPUT_MANIFEST.yaml"
+    dump_yaml(manifest_path, manifest_payload)
+    return manifest_payload
+
+
 def run_phase4_finalize(
     artifacts_root: Path,
     workspace_root: Path,
@@ -250,8 +409,6 @@ def run_phase4_finalize(
     orchestrator_path = scaffold_root / "orchestrator" / "run_stage4.py"
     if not execution_manifest_path.exists():
         raise RuntimeError(f"Execution manifest missing: {execution_manifest_path}")
-    if not orchestrator_path.exists():
-        raise RuntimeError(f"Stage 4 orchestrator missing: {orchestrator_path}")
 
     execution_payload = load_yaml(execution_manifest_path)
     execution_root = execution_payload.get("execution", {}) if isinstance(execution_payload, dict) else {}
@@ -259,19 +416,48 @@ def run_phase4_finalize(
 
     output_dir = paths.executions_dir / f"v{version}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    command = [sys.executable, str(orchestrator_path), "--output-dir", str(output_dir)]
-    completed = subprocess.run(
-        command,
-        cwd=str(scaffold_root),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    work_dir = output_dir / "work"
 
+    completed_stdout = ""
+    completed_stderr = ""
     final_output_manifest_path = output_dir / "FINAL_OUTPUT_MANIFEST.yaml"
-    if not final_output_manifest_path.exists():
-        raise RuntimeError("Stage 4 orchestrator completed without FINAL_OUTPUT_MANIFEST.yaml")
-    final_output_manifest = load_yaml(final_output_manifest_path)
+
+    work_populated = work_dir.exists() and any(work_dir.rglob("*"))
+
+    if work_populated:
+        # Conductor mode: LLM ralph loop populated work_dir; compile manifest.
+        final_output_manifest = _compile_final_output_manifest(
+            output_dir,
+            work_dir,
+            decision_log_version=version,
+            project_type=project_type,
+            scaffold_root=scaffold_root,
+        )
+    elif final_output_manifest_path.exists():
+        # Manifest already on disk (e.g., LLM agent wrote it directly).
+        final_output_manifest = load_yaml(final_output_manifest_path)
+    else:
+        # Legacy fallback: invoke the scaffold-generated subprocess.
+        if not orchestrator_path.exists():
+            raise RuntimeError(
+                f"Stage 4 orchestrator missing: {orchestrator_path}. "
+                "Either populate executions/v{N}/work/ via the LLM conductor "
+                "(meta-compiler phase4-finalize --start, then run the prompt) "
+                "or regenerate the scaffold."
+            )
+        command = [sys.executable, str(orchestrator_path), "--output-dir", str(output_dir)]
+        completed = subprocess.run(
+            command,
+            cwd=str(scaffold_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        completed_stdout = completed.stdout.strip()
+        completed_stderr = completed.stderr.strip()
+        if not final_output_manifest_path.exists():
+            raise RuntimeError("Stage 4 orchestrator completed without FINAL_OUTPUT_MANIFEST.yaml")
+        final_output_manifest = load_yaml(final_output_manifest_path)
 
     manifest = load_manifest(paths)
     if not manifest:
@@ -348,6 +534,23 @@ def run_phase4_finalize(
     wm["pitches"] = pitches
     save_manifest(paths, manifest)
 
+    dump_yaml(
+        paths.phase4_postcheck_request_path,
+        {
+            "phase4_postcheck_request": {
+                "generated_at": iso_now(),
+                "decision_log_version": version,
+                "execution_output_dir": str(output_dir.relative_to(paths.root)),
+                "final_output_manifest_path": str(final_output_manifest_path.relative_to(paths.root)),
+                "verdict_output_path": str(paths.phase4_postcheck_verdict_path.relative_to(paths.root)),
+                "next_action": (
+                    "Invoke @execution-orchestrator mode=postflight to spot-verify "
+                    "deliverable fidelity against the dispatch plan."
+                ),
+            }
+        },
+    )
+
     return {
         "decision_log_version": version,
         "project_type": project_type,
@@ -355,6 +558,7 @@ def run_phase4_finalize(
         "pitch_pptx_path": str(pptx_path),
         "pitch_markdown_path": str(markdown_pitch_path),
         "what_i_built_path": str(what_i_built_path),
-        "stdout": completed.stdout.strip(),
-        "stderr": completed.stderr.strip(),
+        "postcheck_request_path": str(paths.phase4_postcheck_request_path),
+        "stdout": completed_stdout,
+        "stderr": completed_stderr,
     }

@@ -22,7 +22,7 @@ from .breadth_stage import run_research_breadth
 from .clean_stage import run_clean_workspace
 from .depth_stage import run_research_depth
 from .elicit_stage import run_elicit_vision_start
-from .ingest_stage import run_ingest
+from .ingest_stage import run_ingest, run_ingest_precheck
 from .init_stage import run_meta_init
 from .review_stage import run_review
 from .seed_tracker import check_and_update_seeds
@@ -156,6 +156,17 @@ def run_all(
         scope="all",
     )
     _log_step("1a-ingest-prep", ingest_prep, log)
+
+    # --- Ingest preflight: write precheck request for the orchestrator ---
+    # The CLI does mechanical readiness checks; the orchestrator agent does
+    # the semantic seed-coverage judgment outside run-all.
+    if seeds:
+        ingest_precheck = run_ingest_precheck(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+            scope="all",
+        )
+        _log_step("1a-ingest-precheck", ingest_precheck, log)
 
     # --- Stage 1A: Breadth Research ---
     breadth_result = run_research_breadth(

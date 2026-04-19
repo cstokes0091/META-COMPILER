@@ -342,3 +342,351 @@ def validate_all_findings(artifacts_root: Path) -> dict[str, Any]:
         "total_issues": total_issues,
         "per_file": results,
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase A: ingest preflight + postflight (prompt-as-conductor bookends)
+#
+# The CLI does the mechanical preflight/postflight bookkeeping; the
+# `ingest-orchestrator` agent's `mode=preflight` / `mode=postflight` modes
+# do the semantic judgment. Mirrors the Stage 2 hardening pattern.
+# ---------------------------------------------------------------------------
+
+
+def _check(name: str, result: str, evidence: str = "", remediation: str = "") -> dict[str, Any]:
+    entry: dict[str, Any] = {"name": name, "result": result}
+    if evidence:
+        entry["evidence"] = evidence
+    if remediation:
+        entry["remediation"] = remediation
+    return entry
+
+
+def _ingest_preflight_checks(
+    paths: ArtifactPaths,
+    workspace_root: Path,
+    scope: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Mechanical preflight checks for ingest. Returns (checks, blocking_reasons)."""
+    checks: list[dict[str, Any]] = []
+    blocking: list[str] = []
+
+    seeds = list_seed_files(paths)
+    if not seeds:
+        checks.append(
+            _check(
+                "seeds_present",
+                "FAIL",
+                evidence=f"no files in {paths.seeds_dir.relative_to(paths.root).as_posix()}",
+                remediation=(
+                    "Add seed documents to workspace-artifacts/seeds/ before "
+                    "running the ingest-orchestrator."
+                ),
+            )
+        )
+        blocking.append("no seeds present")
+    else:
+        checks.append(
+            _check(
+                "seeds_present",
+                "PASS",
+                evidence=f"{len(seeds)} seed(s) tracked",
+            )
+        )
+
+    pdf_script = workspace_root / "scripts" / "pdf_to_text.py"
+    doc_script = workspace_root / "scripts" / "read_document.py"
+    binary_seeds = [s for s in seeds if s.suffix.lower() in BINARY_EXTENSIONS]
+    needs_pdf = any(s.suffix.lower() == ".pdf" for s in binary_seeds)
+    needs_doc = any(s.suffix.lower() in {".docx", ".xlsx", ".pptx"} for s in binary_seeds)
+
+    if needs_pdf and not pdf_script.exists():
+        checks.append(
+            _check(
+                "pdf_to_text_script_present",
+                "FAIL",
+                evidence=f"missing {pdf_script}",
+                remediation="Restore scripts/pdf_to_text.py before ingesting PDF seeds.",
+            )
+        )
+        blocking.append("pdf_to_text.py missing but PDF seeds present")
+    elif needs_pdf:
+        checks.append(_check("pdf_to_text_script_present", "PASS"))
+
+    if needs_doc and not doc_script.exists():
+        checks.append(
+            _check(
+                "read_document_script_present",
+                "FAIL",
+                evidence=f"missing {doc_script}",
+                remediation="Restore scripts/read_document.py before ingesting DOCX/XLSX/PPTX seeds.",
+            )
+        )
+        blocking.append("read_document.py missing but binary seeds present")
+    elif needs_doc:
+        checks.append(_check("read_document_script_present", "PASS"))
+
+    work_plan_path = paths.ingest_runtime_dir / "work_plan.yaml"
+    if not work_plan_path.exists():
+        checks.append(
+            _check(
+                "work_plan_present",
+                "FAIL",
+                evidence=f"missing {work_plan_path.relative_to(paths.root).as_posix()}",
+                remediation=(
+                    f"Run `meta-compiler ingest --scope {scope}` to write the work plan first."
+                ),
+            )
+        )
+        blocking.append("work_plan.yaml missing — run `meta-compiler ingest` first")
+    else:
+        plan = load_yaml(work_plan_path) or {}
+        body = plan.get("work_plan") or {}
+        work_items = body.get("work_items") or []
+        preextract_failures = body.get("preextract_failures") or []
+        plan_scope = body.get("scope")
+        if plan_scope != scope:
+            checks.append(
+                _check(
+                    "work_plan_scope_matches",
+                    "FAIL",
+                    evidence=f"work plan scope is {plan_scope!r}, requested {scope!r}",
+                    remediation=f"Re-run `meta-compiler ingest --scope {scope}`.",
+                )
+            )
+            blocking.append("work plan scope mismatch")
+        else:
+            checks.append(
+                _check(
+                    "work_plan_scope_matches",
+                    "PASS",
+                    evidence=f"scope={plan_scope}, work_items={len(work_items)}",
+                )
+            )
+        if preextract_failures:
+            checks.append(
+                _check(
+                    "preextract_clean",
+                    "FAIL",
+                    evidence=f"{len(preextract_failures)} pre-extraction failure(s)",
+                    remediation=(
+                        "Inspect work_plan.yaml→preextract_failures and fix the seed "
+                        "or its extraction script before fan-out."
+                    ),
+                )
+            )
+            blocking.append(f"{len(preextract_failures)} pre-extraction failures recorded")
+        else:
+            checks.append(_check("preextract_clean", "PASS"))
+
+    return checks, blocking
+
+
+def run_ingest_precheck(
+    artifacts_root: Path,
+    workspace_root: Path,
+    scope: str = "new",
+) -> dict[str, Any]:
+    """Stage 1A ingest Step 2 — write the precheck request for the orchestrator.
+
+    Mechanical only. The agent reads the request and renders a semantic
+    PROCEED|BLOCK verdict in `precheck_verdict.yaml`. Aborts on any FAIL
+    so the orchestrator never fans out against a broken work plan.
+    """
+    if scope not in {"all", "new"}:
+        raise ValueError(f"scope must be 'all' or 'new', got {scope!r}")
+
+    paths = build_paths(artifacts_root)
+    ensure_layout(paths)
+
+    checks, blocking = _ingest_preflight_checks(paths, workspace_root, scope)
+    generated_at = iso_now()
+
+    payload = {
+        "ingest_precheck_request": {
+            "generated_at": generated_at,
+            "scope": scope,
+            "inputs": {
+                "work_plan": str(
+                    (paths.ingest_runtime_dir / "work_plan.yaml")
+                    .relative_to(paths.root)
+                    .as_posix()
+                ),
+                "seeds_dir": str(paths.seeds_dir.relative_to(paths.root).as_posix()),
+                "findings_index": str(
+                    paths.findings_index_path.relative_to(paths.root).as_posix()
+                ),
+                "problem_statement": str(
+                    (workspace_root / "PROBLEM_STATEMENT.md").as_posix()
+                ),
+            },
+            "mechanical_checks": checks,
+            "verdict_output_path": str(
+                paths.ingest_precheck_verdict_path.relative_to(paths.root).as_posix()
+            ),
+        }
+    }
+    dump_yaml(paths.ingest_precheck_request_path, payload)
+
+    if blocking:
+        blocking_lines = "\n".join(f"  - {reason}" for reason in blocking)
+        raise RuntimeError(
+            "Ingest preflight blocked. Failing checks:\n"
+            f"{blocking_lines}\n"
+            f"See {paths.ingest_precheck_request_path.relative_to(paths.root).as_posix()} "
+            "for full evidence."
+        )
+
+    return {
+        "status": "ready_for_orchestrator",
+        "scope": scope,
+        "precheck_request_path": str(
+            paths.ingest_precheck_request_path.relative_to(paths.root).as_posix()
+        ),
+        "verdict_output_path": str(
+            paths.ingest_precheck_verdict_path.relative_to(paths.root).as_posix()
+        ),
+        "checks": checks,
+        "instruction": (
+            "Invoke @ingest-orchestrator mode=preflight next; it writes "
+            f"{paths.ingest_precheck_verdict_path.name} with verdict PROCEED|BLOCK."
+        ),
+    }
+
+
+def _ingest_postflight_checks(
+    paths: ArtifactPaths,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Mechanical postflight checks. Returns (checks, blocking_reasons)."""
+    checks: list[dict[str, Any]] = []
+    blocking: list[str] = []
+
+    if not paths.ingest_report_path.exists():
+        checks.append(
+            _check(
+                "ingest_report_present",
+                "FAIL",
+                evidence=f"missing {paths.ingest_report_path.relative_to(paths.root).as_posix()}",
+                remediation=(
+                    "ingest-orchestrator must write ingest_report.yaml before "
+                    "postflight. Re-run the orchestrator if it stopped early."
+                ),
+            )
+        )
+        blocking.append("ingest_report.yaml missing — orchestrator did not finish")
+    else:
+        checks.append(_check("ingest_report_present", "PASS"))
+
+    findings = sorted(paths.findings_dir.glob("*.json"))
+    checks.append(
+        _check(
+            "findings_files_present",
+            "PASS" if findings else "FAIL",
+            evidence=f"{len(findings)} findings JSON file(s) on disk",
+            remediation=(
+                "No findings on disk — the orchestrator never persisted any output."
+                if not findings
+                else ""
+            ),
+        )
+    )
+    if not findings:
+        blocking.append("no findings JSON files on disk")
+
+    findings_validation = validate_all_findings(paths.root)
+    if findings_validation["total_issues"] > 0:
+        checks.append(
+            _check(
+                "findings_schema_valid",
+                "FAIL",
+                evidence=(
+                    f"{findings_validation['total_issues']} schema issue(s) across "
+                    f"{findings_validation['findings_scanned']} file(s)"
+                ),
+                remediation=(
+                    "Re-run failing seed-readers; or run "
+                    "`meta-compiler ingest-validate` for the per-file detail."
+                ),
+            )
+        )
+        blocking.append(f"{findings_validation['total_issues']} findings schema issues")
+    else:
+        checks.append(
+            _check(
+                "findings_schema_valid",
+                "PASS",
+                evidence=f"all {findings_validation['findings_scanned']} files schema-valid",
+            )
+        )
+
+    return checks, blocking
+
+
+def run_ingest_postcheck(
+    artifacts_root: Path,
+    workspace_root: Path,
+) -> dict[str, Any]:
+    """Stage 1A ingest Step 5 — write the postcheck request for the orchestrator.
+
+    Mechanical only. The agent reads the request, spot-verifies a sample of
+    quotes against pre-extracted text, and writes
+    `postcheck_verdict.yaml` with `verdict: PROCEED | REVISE`. Aborts on any
+    mechanical FAIL so the postflight semantic audit never runs against a
+    broken set of findings.
+    """
+    paths = build_paths(artifacts_root)
+    ensure_layout(paths)
+
+    checks, blocking = _ingest_postflight_checks(paths)
+    generated_at = iso_now()
+
+    payload = {
+        "ingest_postcheck_request": {
+            "generated_at": generated_at,
+            "inputs": {
+                "ingest_report": str(
+                    paths.ingest_report_path.relative_to(paths.root).as_posix()
+                ),
+                "findings_dir": str(
+                    paths.findings_dir.relative_to(paths.root).as_posix()
+                ),
+                "findings_index": str(
+                    paths.findings_index_path.relative_to(paths.root).as_posix()
+                ),
+                "work_plan": str(
+                    (paths.ingest_runtime_dir / "work_plan.yaml")
+                    .relative_to(paths.root)
+                    .as_posix()
+                ),
+            },
+            "mechanical_checks": checks,
+            "verdict_output_path": str(
+                paths.ingest_postcheck_verdict_path.relative_to(paths.root).as_posix()
+            ),
+        }
+    }
+    dump_yaml(paths.ingest_postcheck_request_path, payload)
+
+    if blocking:
+        blocking_lines = "\n".join(f"  - {reason}" for reason in blocking)
+        raise RuntimeError(
+            "Ingest postflight blocked. Failing checks:\n"
+            f"{blocking_lines}\n"
+            f"See {paths.ingest_postcheck_request_path.relative_to(paths.root).as_posix()} "
+            "for full evidence."
+        )
+
+    return {
+        "status": "ready_for_orchestrator",
+        "postcheck_request_path": str(
+            paths.ingest_postcheck_request_path.relative_to(paths.root).as_posix()
+        ),
+        "verdict_output_path": str(
+            paths.ingest_postcheck_verdict_path.relative_to(paths.root).as_posix()
+        ),
+        "checks": checks,
+        "instruction": (
+            "Invoke @ingest-orchestrator mode=postflight next; it writes "
+            f"{paths.ingest_postcheck_verdict_path.name} with verdict PROCEED|REVISE."
+        ),
+    }

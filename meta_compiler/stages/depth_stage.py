@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Any
 
+from .. import wiki_edit_manifest
 from ..artifacts import (
     build_paths,
     compute_seed_version,
@@ -312,16 +314,81 @@ def _write_debate_transcript(
     return transcript
 
 
-def _copy_v1_to_v2(paths) -> int:
-    paths.wiki_v2_pages_dir.mkdir(parents=True, exist_ok=True)
-    for existing in paths.wiki_v2_pages_dir.glob("*.md"):
-        existing.unlink()
+def _sync_v1_to_v2(paths, force_regenerate: bool = False) -> dict[str, Any]:
+    """Sync v1 baseline pages into v2, preserving user/enrichment edits.
 
-    count = 0
-    for page in sorted(paths.wiki_v1_pages_dir.glob("*.md")):
-        shutil.copy2(page, paths.wiki_v2_pages_dir / page.name)
-        count += 1
-    return count
+    A v2 page is overwritten only when it does not exist, or when its current
+    SHA matches the recorded `last_system_write_sha` in the edit manifest
+    (meaning the page is still exactly as the system last wrote it). When the
+    page has drifted from the recorded SHA, it is preserved.
+
+    `force_regenerate=True` reverts to the legacy wipe-and-copy behavior.
+
+    Returns counts: copied, overwritten, preserved, removed (force only),
+    and a list of preserved page filenames for reporting.
+    """
+    paths.wiki_v2_pages_dir.mkdir(parents=True, exist_ok=True)
+
+    if force_regenerate:
+        for existing in paths.wiki_v2_pages_dir.glob("*.md"):
+            existing.unlink()
+        copied = 0
+        writes: list[tuple[Path, str]] = []
+        for page in sorted(paths.wiki_v1_pages_dir.glob("*.md")):
+            target = paths.wiki_v2_pages_dir / page.name
+            shutil.copy2(page, target)
+            writes.append((target, "depth_baseline"))
+            copied += 1
+        wiki_edit_manifest.record_writes(paths, writes)
+        return {
+            "copied": copied,
+            "overwritten": 0,
+            "preserved": 0,
+            "preserved_pages": [],
+            "removed": 0,
+            "force_regenerate": True,
+        }
+
+    copied = 0
+    overwritten = 0
+    preserved_pages: list[dict[str, str]] = []
+    writes: list[tuple[Path, str]] = []
+
+    for source in sorted(paths.wiki_v1_pages_dir.glob("*.md")):
+        target = paths.wiki_v2_pages_dir / source.name
+
+        if not target.exists():
+            shutil.copy2(source, target)
+            writes.append((target, "depth_baseline"))
+            copied += 1
+            continue
+
+        if wiki_edit_manifest.is_user_edited(paths, target):
+            entry = wiki_edit_manifest.entry_for(paths, target) or {}
+            preserved_pages.append(
+                {
+                    "page": source.name,
+                    "last_system_source": str(entry.get("source") or "unknown"),
+                    "last_system_write_at": str(entry.get("last_system_write_at") or ""),
+                }
+            )
+            continue
+
+        # Either no manifest entry (legacy) or SHA matches → safe to overwrite.
+        shutil.copy2(source, target)
+        writes.append((target, "depth_baseline"))
+        overwritten += 1
+
+    wiki_edit_manifest.record_writes(paths, writes)
+
+    return {
+        "copied": copied,
+        "overwritten": overwritten,
+        "preserved": len(preserved_pages),
+        "preserved_pages": preserved_pages,
+        "removed": 0,
+        "force_regenerate": False,
+    }
 
 
 def _append_gap_remediation_page(paths, merged_report: dict, timestamp: str) -> None:
@@ -374,6 +441,12 @@ def _append_gap_remediation_page(paths, merged_report: dict, timestamp: str) -> 
     )
 
     remediation_path = paths.wiki_v2_pages_dir / "gap-remediation-v2.md"
+
+    # Skip if the user has edited the gap remediation page since the last
+    # system write — the operator may have augmented it with notes.
+    if wiki_edit_manifest.is_user_edited(paths, remediation_path):
+        return
+
     page_text = "\n".join(lines)
     manifest = load_manifest(paths)
     wiki_name = ""
@@ -383,6 +456,7 @@ def _append_gap_remediation_page(paths, merged_report: dict, timestamp: str) -> 
     if frontmatter:
         page_text = "---\n" + render_frontmatter(frontmatter) + "\n---\n" + inject_wiki_nav(body, wiki_name).rstrip() + "\n"
     remediation_path.write_text(page_text, encoding="utf-8")
+    wiki_edit_manifest.record_write(paths, remediation_path, "gap_remediation")
 
 
 def _update_manifest(paths, stage: str, page_count: int) -> None:
@@ -408,7 +482,11 @@ def _update_manifest(paths, stage: str, page_count: int) -> None:
     save_manifest(paths, manifest)
 
 
-def run_research_depth(artifacts_root: Path, workspace_root: Path) -> dict:
+def run_research_depth(
+    artifacts_root: Path,
+    workspace_root: Path,
+    force_regenerate_v2: bool = False,
+) -> dict:
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
 
@@ -456,9 +534,32 @@ def run_research_depth(artifacts_root: Path, workspace_root: Path) -> dict:
     )
     dump_yaml(paths.reports_dir / "debate_transcript.yaml", transcript)
 
-    copied_pages = _copy_v1_to_v2(paths)
+    sync_result = _sync_v1_to_v2(paths, force_regenerate=force_regenerate_v2)
     _append_gap_remediation_page(paths, merged_report, timestamp)
+    wiki_edit_manifest.prune_missing(paths)
 
+    if sync_result["preserved"]:
+        depth_runtime_dir = paths.runtime_dir / "depth"
+        depth_runtime_dir.mkdir(parents=True, exist_ok=True)
+        dump_yaml(
+            depth_runtime_dir / "preserved_pages.yaml",
+            {
+                "preserved_pages_report": {
+                    "generated_at": timestamp,
+                    "force_regenerate": force_regenerate_v2,
+                    "preserved_count": sync_result["preserved"],
+                    "pages": sync_result["preserved_pages"],
+                    "note": (
+                        "These v2 pages were modified after the last system write "
+                        "(by enrichment, linker, relationship-mapper, or human edit) "
+                        "and were preserved during this Stage 1B re-run. Pass "
+                        "--force-regenerate-v2 to wipe them on the next run."
+                    ),
+                }
+            },
+        )
+
+    copied_pages = sync_result["copied"] + sync_result["overwritten"]
     v2_pages = sorted(paths.wiki_v2_pages_dir.glob("*.md"))
     write_index(
         pages_dir=paths.wiki_v2_pages_dir,
@@ -470,7 +571,10 @@ def run_research_depth(artifacts_root: Path, workspace_root: Path) -> dict:
         operation="depth",
         title="Stage 1B depth pass",
         details=[
-            f"pages_copied_from_v1: {copied_pages}",
+            f"pages_copied_from_v1: {sync_result['copied']}",
+            f"pages_overwritten_from_v1: {sync_result['overwritten']}",
+            f"pages_preserved_in_v2: {sync_result['preserved']}",
+            f"force_regenerate_v2: {force_regenerate_v2}",
             f"pages_in_v2: {len(v2_pages)}",
             f"merged_gap_count: {len(merged_report['gap_report']['gaps'])}",
             f"orphan_page_count: {len(health_metrics.get('orphan_pages', []))}",
@@ -488,4 +592,10 @@ def run_research_depth(artifacts_root: Path, workspace_root: Path) -> dict:
         "merged_gaps": len(merged_report["gap_report"]["gaps"]),
         "orphan_pages": len(health_metrics.get("orphan_pages", [])),
         "sparse_citation_pages": len(health_metrics.get("sparse_citation_pages", [])),
+        "v2_sync": {
+            "copied": sync_result["copied"],
+            "overwritten": sync_result["overwritten"],
+            "preserved": sync_result["preserved"],
+            "force_regenerate": force_regenerate_v2,
+        },
     }

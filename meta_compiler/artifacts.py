@@ -43,6 +43,21 @@ class ArtifactPaths:
     stage2_precheck_verdict_path: Path
     stage2_postcheck_request_path: Path
     stage2_postcheck_verdict_path: Path
+    # Ingest-orchestrator prompt-as-conductor runtime artifacts.
+    # Mirrors the Stage 2 hardening pattern; see Phase A of the
+    # missing-features plan.
+    ingest_runtime_dir: Path
+    ingest_precheck_request_path: Path
+    ingest_precheck_verdict_path: Path
+    ingest_postcheck_request_path: Path
+    ingest_postcheck_verdict_path: Path
+    ingest_report_path: Path
+    # Stage 4 prompt-as-conductor runtime artifacts.
+    phase4_runtime_dir: Path
+    phase4_execution_request_path: Path
+    phase4_preflight_verdict_path: Path
+    phase4_postcheck_request_path: Path
+    phase4_postcheck_verdict_path: Path
 
 
 def build_paths(root: Path) -> ArtifactPaths:
@@ -51,6 +66,8 @@ def build_paths(root: Path) -> ArtifactPaths:
     manifests_dir = resolved / "manifests"
     runtime_dir = resolved / "runtime"
     stage2_runtime_dir = runtime_dir / "stage2"
+    ingest_runtime_dir = runtime_dir / "ingest"
+    phase4_runtime_dir = runtime_dir / "phase4"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -81,6 +98,17 @@ def build_paths(root: Path) -> ArtifactPaths:
         stage2_precheck_verdict_path=stage2_runtime_dir / "precheck_verdict.yaml",
         stage2_postcheck_request_path=stage2_runtime_dir / "postcheck_request.yaml",
         stage2_postcheck_verdict_path=stage2_runtime_dir / "postcheck_verdict.yaml",
+        ingest_runtime_dir=ingest_runtime_dir,
+        ingest_precheck_request_path=ingest_runtime_dir / "precheck_request.yaml",
+        ingest_precheck_verdict_path=ingest_runtime_dir / "precheck_verdict.yaml",
+        ingest_postcheck_request_path=ingest_runtime_dir / "postcheck_request.yaml",
+        ingest_postcheck_verdict_path=ingest_runtime_dir / "postcheck_verdict.yaml",
+        ingest_report_path=wiki_dir / "reports" / "ingest_report.yaml",
+        phase4_runtime_dir=phase4_runtime_dir,
+        phase4_execution_request_path=phase4_runtime_dir / "execution_request.yaml",
+        phase4_preflight_verdict_path=phase4_runtime_dir / "preflight_verdict.yaml",
+        phase4_postcheck_request_path=phase4_runtime_dir / "postcheck_request.yaml",
+        phase4_postcheck_verdict_path=phase4_runtime_dir / "postcheck_verdict.yaml",
     )
 
 
@@ -103,6 +131,8 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.manifests_dir,
         paths.runtime_dir,
         paths.stage2_runtime_dir,
+        paths.ingest_runtime_dir,
+        paths.phase4_runtime_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

@@ -108,6 +108,9 @@ _HEADING_BLOCK_RE = re.compile(r"^### Decision:\s*(.+?)\s*$")
 _HEADING_AREA_RE = re.compile(r"^##\s+.+$")
 _FIELD_RE = re.compile(r"^-\s+([A-Za-z][A-Za-z \-]*?):\s*(.*)$")
 _SUBFIELD_RE = re.compile(r"^  -\s+([^:]+?):\s*(.*)$")
+_PROBE_LINE_RE = re.compile(r"^\s*-\s*Probe\s*:", re.IGNORECASE)
+
+PROBE_COVERAGE_FLOOR = 4
 
 
 def _collect_block_lines(lines: list[str], start_idx: int) -> tuple[list[str], int]:
@@ -295,6 +298,40 @@ def parse_decision_blocks(transcript_text: str) -> tuple[list[DecisionBlock], li
     return blocks, errors
 
 
+def count_probes_per_block(transcript_text: str) -> list[dict[str, Any]]:
+    """For each `### Decision:` block in the transcript, count `- Probe:`
+    annotation lines in the prose between the previous block heading (or area
+    heading) and this block's heading.
+
+    Probes attribute to the *next* decision block — that is, probes walked
+    before writing the block. Returns a list ordered by transcript position,
+    each entry: ``{"block_name", "probe_count", "source_line"}``.
+    """
+    if not transcript_text.strip():
+        return []
+    lines = transcript_text.splitlines()
+    results: list[dict[str, Any]] = []
+    probes_buffer = 0
+    for idx, line in enumerate(lines):
+        block_match = _HEADING_BLOCK_RE.match(line)
+        if block_match:
+            results.append(
+                {
+                    "block_name": block_match.group(1).strip(),
+                    "probe_count": probes_buffer,
+                    "source_line": idx + 1,
+                }
+            )
+            probes_buffer = 0
+            continue
+        if _HEADING_AREA_RE.match(line) and not line.startswith("### "):
+            probes_buffer = 0
+            continue
+        if _PROBE_LINE_RE.match(line):
+            probes_buffer += 1
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Decision Log compilation
 # ---------------------------------------------------------------------------
@@ -455,12 +492,15 @@ def mechanical_fidelity_checks(
     blocks: list[DecisionBlock],
     compiled: dict[str, Any],
     known_citation_ids: set[str],
+    transcript_text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run mechanical fidelity checks described in spec §5.2 and §8.3.
 
     Returns a list of check results. Each check is a dict with
-    `name`, `result` (PASS|FAIL), `evidence`, and (on FAIL) `remediation`.
-    The caller aggregates to produce a non-zero CLI exit if any FAILed.
+    `name`, `result` (PASS|FAIL|WARN), `evidence`, and (on non-PASS)
+    `remediation`. The caller aggregates to produce a non-zero CLI exit
+    if any check returns FAIL. WARN signals an anti-shallow heuristic
+    finding that the orchestrator semantic audit must judge.
     """
     checks: list[dict[str, Any]] = []
     root = compiled.get("decision_log", {})
@@ -549,6 +589,34 @@ def mechanical_fidelity_checks(
             ),
         }
     )
+
+    if transcript_text is not None:
+        per_block = count_probes_per_block(transcript_text)
+        shallow = [
+            row for row in per_block if row["probe_count"] < PROBE_COVERAGE_FLOOR
+        ]
+        checks.append(
+            {
+                "name": "probe_coverage",
+                "result": "PASS" if not shallow else "WARN",
+                "evidence": (
+                    f"all {len(per_block)} blocks meet the {PROBE_COVERAGE_FLOOR}-probe floor"
+                    if not shallow
+                    else "; ".join(
+                        f"{row['block_name']}@L{row['source_line']}={row['probe_count']}"
+                        for row in shallow[:8]
+                    )
+                ),
+                "remediation": (
+                    f"Walk at least {PROBE_COVERAGE_FLOOR} probes from "
+                    ".github/docs/stage-2-probes.md per decision block; annotate each "
+                    "with `- Probe: <name> — <how addressed>` in the prose above the block."
+                    if shallow
+                    else ""
+                ),
+                "details": per_block,
+            }
+        )
 
     return checks
 
@@ -1410,6 +1478,7 @@ def run_elicit_vision_finalize(
         blocks=blocks,
         compiled=compiled,
         known_citation_ids=known_citation_ids,
+        transcript_text=transcript_text,
     )
     failures = [c for c in checks if c["result"] == "FAIL"]
 

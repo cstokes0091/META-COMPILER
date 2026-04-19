@@ -54,7 +54,7 @@ runs. `seed-reader` exists specifically for strict full-read extraction.
 
 ## Orchestration Protocol
 
-### 1. Plan the Work
+### 1. Plan the Work (CLI)
 
 1. Run `meta-compiler ingest --scope {all|new}`.
 2. Read `workspace-artifacts/runtime/ingest/work_plan.yaml`.
@@ -65,7 +65,36 @@ runs. `seed-reader` exists specifically for strict full-read extraction.
   subagent. PDFs were pre-extracted with `python scripts/pdf_to_text.py`;
   DOCX/XLSX/PPTX were pre-extracted with `python scripts/read_document.py`.
 
-### 2. Fan Out Reader Subagents
+### 2. Preflight (CLI + Orchestrator agent)
+
+Run:
+
+```bash
+meta-compiler ingest-precheck --scope {all|new}
+```
+
+This writes `workspace-artifacts/runtime/ingest/precheck_request.yaml` with
+mechanical checks (seeds present, scripts present, work plan present and scope-
+matched, no pre-extraction failures). It exits nonzero on any FAIL — fix the
+flagged issue and re-run.
+
+Then invoke:
+
+```
+@ingest-orchestrator mode=preflight
+```
+
+The agent reads the request, judges seed coverage of the problem statement,
+spots citation collisions, and writes
+`workspace-artifacts/runtime/ingest/precheck_verdict.yaml` with
+`verdict: PROCEED | BLOCK`. On `BLOCK`, present the blocking checks to the
+human and offer two paths: add seeds / fix the work plan, or override and
+proceed (record the override in the next decision-log run).
+
+Do not enter Step 3 without a `PROCEED` verdict (or a documented human
+override).
+
+### 3. Fan Out Reader Subagents
 
 For each work item, spawn one `seed-reader` subagent. Run up to **4 in
 parallel** (concurrency cap — tune later). Each subagent receives a prompt with:
@@ -85,7 +114,7 @@ parallel** (concurrency cap — tune later). Each subagent receives a prompt wit
     sequentially and merge findings before returning. Record chunking in
     `extraction_stats.chunks_used`.
 
-### 3. Validate Each Return
+### 4. Validate Each Return
 
 For each subagent return:
 
@@ -99,7 +128,7 @@ For each subagent return:
 4. On repeated failure (2 retries), mark the seed as `completeness: "partial"`
    with `partial_reason` explaining the failure, and continue.
 
-### 4. Persist
+### 5. Persist
 
 For each validated findings object:
 
@@ -108,7 +137,7 @@ For each validated findings object:
 - If the seed is not yet in the citation index, register it there using the
   same policy as `wiki-update` (preserve file_hash linkage).
 
-### 5. Emit the Ingest Report
+### 6. Emit the Ingest Report
 
 Write `workspace-artifacts/wiki/reports/ingest_report.yaml`:
 
@@ -133,7 +162,35 @@ ingest_report:
       reason: string
 ```
 
-### 6. Hand Off
+### 7. Postflight (CLI + Orchestrator agent)
+
+Run:
+
+```bash
+meta-compiler ingest-postcheck
+```
+
+This writes `workspace-artifacts/runtime/ingest/postcheck_request.yaml` with
+mechanical checks (ingest_report.yaml present, findings files on disk,
+findings schema valid). It exits nonzero on any FAIL — re-run failing readers
+or `meta-compiler ingest-validate` for per-file detail before retrying.
+
+Then invoke:
+
+```
+@ingest-orchestrator mode=postflight
+```
+
+The agent reads the request, samples 3–5 quotes per findings file, greps each
+against the pre-extracted text, and writes
+`workspace-artifacts/runtime/ingest/postcheck_verdict.yaml` with
+`verdict: PROCEED | REVISE`.
+
+On `REVISE`: re-run the failing seed-readers (their citation IDs are listed in
+the verdict). After the next fanout, re-run `ingest-postcheck` and
+`@ingest-orchestrator mode=postflight` until `PROCEED`.
+
+### 8. Hand Off
 
 Print a one-line summary:
 
@@ -309,14 +366,14 @@ Begin reading now. Return the JSON when complete.
 
 ## Validation Follow-Up
 
-After writing findings, run:
+After the postflight verdict is `PROCEED`, run:
 
 ```bash
 meta-compiler ingest-validate
 ```
 
-Fix any schema issues before handing findings to `research-breadth` or
-`wiki-update`.
+This is the final mechanical gate. Fix any schema issues before handing
+findings to `research-breadth` or `wiki-update`.
 
 ## Guiding Principles
 
