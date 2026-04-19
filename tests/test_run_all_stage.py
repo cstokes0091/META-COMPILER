@@ -17,6 +17,10 @@ def _patch_run_all_dependencies(monkeypatch, seed_status: dict[str, object]) -> 
         calls.append(f"ingest:{kwargs['scope']}")
         return {"scope": kwargs["scope"]}
 
+    def ingest_precheck_stub(*args, **kwargs):
+        calls.append(f"ingest-precheck:{kwargs['scope']}")
+        return {"status": "ready_for_orchestrator", "scope": kwargs["scope"]}
+
     def validate_stub(paths, stage: str):
         calls.append(f"validate:{stage}")
         return []
@@ -26,6 +30,10 @@ def _patch_run_all_dependencies(monkeypatch, seed_status: dict[str, object]) -> 
         _record("init", {"status": "initialized"}),
     )
     monkeypatch.setattr("meta_compiler.stages.run_all_stage.run_ingest", ingest_stub)
+    monkeypatch.setattr(
+        "meta_compiler.stages.run_all_stage.run_ingest_precheck",
+        ingest_precheck_stub,
+    )
     monkeypatch.setattr(
         "meta_compiler.stages.run_all_stage.run_research_breadth",
         _record("breadth", {"status": "breadth"}),
@@ -96,6 +104,7 @@ def test_run_all_stops_at_stage2_handoff(tmp_path: Path, monkeypatch):
         "init",
         "validate:0",
         "ingest:all",
+        "ingest-precheck:all",
         "breadth",
         "validate:1a",
         "depth",

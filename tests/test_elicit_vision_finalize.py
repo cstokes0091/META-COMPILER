@@ -162,6 +162,7 @@ def test_finalize_with_minimal_transcript_writes_decision_log(tmp_path):
         "citation_ids_resolve",
         "req_ids_sequential",
         "schema_validates",
+        "probe_coverage",
     }
 
 

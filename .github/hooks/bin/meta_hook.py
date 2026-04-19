@@ -753,6 +753,106 @@ def require_ingest_report(payload):
     )
 
 
+@register("gate_ingest_precheck")
+def gate_ingest_precheck(payload):
+    return _presence_check(
+        payload, "gate_ingest_precheck",
+        "workspace-artifacts/runtime/ingest/precheck_request.yaml",
+        "PreToolUse",
+        "ingest precheck_request.yaml is missing.",
+        "Run `meta-compiler ingest-precheck --scope {all|new}` before invoking @ingest-orchestrator mode=preflight.",
+    )
+
+
+@register("gate_ingest_postcheck")
+def gate_ingest_postcheck(payload):
+    return _presence_check(
+        payload, "gate_ingest_postcheck",
+        "workspace-artifacts/runtime/ingest/postcheck_request.yaml",
+        "PreToolUse",
+        "ingest postcheck_request.yaml is missing.",
+        "Run `meta-compiler ingest-postcheck` after the orchestrator fan-out completes.",
+    )
+
+
+@register("require_ingest_precheck_verdict")
+def require_ingest_precheck_verdict(payload):
+    return _presence_check(
+        payload, "require_ingest_precheck_verdict",
+        "workspace-artifacts/runtime/ingest/precheck_verdict.yaml",
+        "SubagentStop",
+        "ingest precheck_verdict.yaml was not written.",
+        "Preflight must write its verdict before stopping.",
+        require_field="verdict",
+        deny_mode="block",
+    )
+
+
+@register("require_ingest_postcheck_verdict")
+def require_ingest_postcheck_verdict(payload):
+    return _presence_check(
+        payload, "require_ingest_postcheck_verdict",
+        "workspace-artifacts/runtime/ingest/postcheck_verdict.yaml",
+        "SubagentStop",
+        "ingest postcheck_verdict.yaml was not written.",
+        "Postflight must write its verdict before stopping.",
+        require_field="verdict",
+        deny_mode="block",
+    )
+
+
+@register("gate_phase4_finalize")
+def gate_phase4_finalize(payload):
+    """Block phase4-finalize --finalize unless dispatch_plan exists and the
+    work_dir holds at least one file. Lets --start through unconditionally
+    (it's the prep step that creates the dispatch plan)."""
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str) or "phase4-finalize" not in cmd:
+        return {"permissionDecision": "allow"}
+    if "--start" in cmd:
+        return {"permissionDecision": "allow"}
+    # Look for any executions/v*/dispatch_plan.yaml; if none, block.
+    executions_dir = ws / "workspace-artifacts" / "executions"
+    if not executions_dir.exists():
+        return {
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "phase4-finalize --finalize blocked: no executions/ directory. "
+                "Run `meta-compiler phase4-finalize --start` first to write the "
+                "dispatch plan, then conduct the LLM ralph loop per "
+                "stage-4-finalize.prompt.md."
+            ),
+        }
+    plans = list(executions_dir.glob("v*/dispatch_plan.yaml"))
+    if not plans:
+        return {
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "phase4-finalize --finalize blocked: no dispatch_plan.yaml in "
+                "executions/. Run `meta-compiler phase4-finalize --start` first."
+            ),
+        }
+    # Confirm at least one plan's work/ directory has content.
+    populated = False
+    for plan in plans:
+        work_dir = plan.parent / "work"
+        if work_dir.exists() and any(work_dir.rglob("*")):
+            populated = True
+            break
+    if not populated:
+        return {
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "phase4-finalize --finalize blocked: every executions/v*/work/ "
+                "directory is empty. Conduct the Stage 4 ralph loop "
+                "(stage-4-finalize.prompt.md Steps 2-3) so implementer agents "
+                "populate work_dir before compiling the final manifest."
+            ),
+        }
+    return {"permissionDecision": "allow"}
+
+
 @register("require_handoff")
 def require_handoff(payload):
     return _presence_check(

@@ -46,6 +46,11 @@
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_reentry_request",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_phase4_finalize",
+            "timeout": 10
           }
         ]
       },

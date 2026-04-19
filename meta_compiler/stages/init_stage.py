@@ -14,7 +14,14 @@ from ..utils import iso_now
 
 
 def _source_prompts_dir() -> Path:
-    return Path(__file__).resolve().parents[2] / "prompts"
+    """Canonical prompt source: .github/prompts/.
+
+    The root prompts/ directory is no longer the source of truth — it is a
+    generated mirror provisioned for non-Copilot LLM runtimes. Provisioning
+    reads from .github/prompts/ and writes to BOTH .github/prompts/ and
+    prompts/ in the target workspace.
+    """
+    return Path(__file__).resolve().parents[2] / ".github" / "prompts"
 
 
 def _source_customizations_dir() -> Path:
@@ -22,6 +29,11 @@ def _source_customizations_dir() -> Path:
 
 
 def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]:
+    """Copy canonical prompts to BOTH workspace prompts/ and .github/prompts/.
+
+    Source is .github/prompts/. The root mirror exists for non-Copilot
+    runtimes that read from `prompts/`.
+    """
     source_dir = _source_prompts_dir()
     if not source_dir.exists():
         raise RuntimeError(f"Prompt templates directory not found: {source_dir}")
@@ -30,16 +42,18 @@ def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]
     if not prompt_templates:
         raise RuntimeError(f"No prompt templates found in: {source_dir}")
 
-    target_dir = workspace_root / "prompts"
-    target_dir.mkdir(parents=True, exist_ok=True)
-
     copied: list[str] = []
-    for source in prompt_templates:
-        target = target_dir / source.name
-        if not force and target.exists():
-            continue
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-        copied.append(str(target))
+    for target_dir_name in ("prompts", ".github/prompts"):
+        target_dir = workspace_root / target_dir_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for source in prompt_templates:
+            target = target_dir / source.name
+            if source.resolve() == target.resolve():
+                continue
+            if not force and target.exists():
+                continue
+            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            copied.append(str(target))
     return copied
 
 
