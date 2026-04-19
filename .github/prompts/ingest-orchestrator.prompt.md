@@ -1,6 +1,6 @@
 ---
 name: ingest-orchestrator
-description: "Orchestrate per-seed full-fidelity extraction into findings JSON. Usable in Stage 1A (--scope all) and in wiki-update (--scope new)."
+description: "Orchestrate per-seed full-fidelity extraction into findings JSON. Usable in Stage 1A (--scope all) and for incremental re-ingest (--scope new)."
 argument-hint: "Scope (all|new). Default: new"
 agent: ingest-orchestrator
 ---
@@ -34,8 +34,10 @@ Two invocation contexts, same orchestrator:
 1. **Stage 1A (Breadth).** Called with `--scope all`. Every seed in
    `workspace-artifacts/seeds/` gets a findings file. Runs before Stage 1A wiki
    enrichment, which then consumes the findings.
-2. **wiki-update.** Called with `--scope new`. Only seeds whose SHA-256 is
-   absent from `workspace-artifacts/wiki/findings/index.yaml` are processed.
+2. **Incremental re-ingest.** Called with `--scope new`. Only seeds whose
+   SHA-256 is absent from `workspace-artifacts/wiki/findings/index.yaml` are
+   processed. This is the handoff path after `track-seeds` reports new seeds;
+   semantic wiki enrichment (`wiki-reconcile-concepts` etc.) runs after.
 
 The deterministic prep step is already available:
 
@@ -48,24 +50,9 @@ This prompt consumes that work plan and performs the LLM fan-out.
 
 ## Critical Rule: Do Not Use the Explore Subagent
 
-Reader subagents **must** be `seed-reader` (for `doc` work items) or
-`code-reader` (for `code` work items), never `explore`. Explore samples and
+Reader subagents **must** be `seed-reader`, never `explore`. Explore samples and
 skims, which has produced hallucinated quotes and invented equations in past
-runs. The dedicated readers exist specifically for strict full-read extraction.
-
-## Seed Kinds
-
-Every work item carries a `seed_kind` discriminator:
-
-- `doc` — document seed (PDF / DOCX / XLSX / PPTX / MD / TXT / etc.). Pre-extracted
-  to `runtime/ingest/<citation_id>.md` when binary. Consumed by `seed-reader`.
-- `code` — source file belonging to a registered code repo under
-  `workspace-artifacts/seeds/code/<name>/`. No pre-extraction. Consumed by
-  `code-reader`. Work items carry extra fields: `repo_name`, `repo_citation_id`,
-  `repo_root`, `repo_relative_path`.
-
-When `work_plan.repo_map_items` is non-empty, a repo-mapping pass runs first
-(Pass 1 below). Per-file fan-out (Pass 2) then dispatches by `seed_kind`.
+runs. `seed-reader` exists specifically for strict full-read extraction.
 
 ## Orchestration Protocol
 
@@ -109,88 +96,50 @@ proceed (record the override in the next decision-log run).
 Do not enter Step 3 without a `PROCEED` verdict (or a documented human
 override).
 
-### 3. Pass 1 — Repo Mapping (code seeds only)
+### 3. Fan Out Reader Subagents
 
-If `work_plan.repo_map_items` is non-empty, run this pass before any per-file
-fan-out. Without the RepoMap, `code-reader` subagents miss module context.
+For each work item, spawn one `seed-reader` subagent. Run up to **4 in
+parallel** (concurrency cap — tune later). Each subagent receives a prompt with:
 
-For each `repo_map_items[]` entry:
-
-1. Spawn one `repo-mapper` subagent (concurrency cap **2**). Pass:
-   - `repo_root` (relative path under seeds/code/)
-   - `repo_name`
-   - `repo_citation_id` (e.g., `src-repo-<name>`)
-   - `commit_sha` (the pinned SHA; the mapper verifies HEAD matches)
-   - `map_output_path` (e.g., `runtime/ingest/repo_map/<name>.yaml`)
-2. Validate the returned `RepoMap` JSON against the schema below (required
-   fields, non-empty `priority_files[]`, every listed path exists under the
-   repo root). Reject and retry once on validation failure.
-3. Persist the mapper's YAML at `map_output_path`. The `validate_repo_map_schema`
-   hook gates this write.
-
-Do not advance to Pass 2 for a repo until its RepoMap YAML exists on disk.
-
-### 4. Pass 2 — Fan Out Reader Subagents
-
-Partition `work_items` by `seed_kind`. Spawn `seed-reader` for `doc` items and
-`code-reader` for `code` items. Up to **4 in parallel** (concurrency cap — tune
-later). Each subagent receives a prompt with:
-
-- The exact path to the source (pre-extracted markdown for binary docs, the
-  original path otherwise).
+- The exact path to the extracted text (or the original if plaintext).
 - The `citation_id` to stamp in the output.
-- A verbatim copy of the appropriate Findings Schema (doc or code).
-- For `code-reader` only: the full `RepoMap` YAML for its `repo_name` so it has
-  module and dependency context, plus the `repo_citation_id` so `file_metadata`
-  links back to the repo-overview page.
+- A verbatim copy of the Findings Schema (see below).
 - Strict instructions:
-  - Read the **entire** document/file from first line to last. No skipping, no
+  - Read the **entire** document from first line to last. No skipping, no
     sampling, no "based on the abstract".
   - Return the Findings JSON only — no commentary, no summary in chat.
-  - Doc: every `quote.text` must be a verbatim substring of the source; every
-    `locator` must cite page/section.
-  - Code: every `symbols[].locator` must include `file`, `line_start`, `line_end`;
-    every `claims[].locator` and `quotes[].locator` must include `file` and
-    `line_start`.
-  - Empty lists are valid when a category is absent. Never invent content.
-  - If the source exceeds your context, chunk it (by page/section for docs, by
-    ~500-line windows for code) and merge before returning. Record in
+  - Every `quote.text` must be a verbatim substring of the source.
+  - Every `locator` must cite a concrete page/section/line from the source.
+  - If a field has no content for this document (e.g., no equations), return an
+    empty list, never a hallucinated placeholder.
+  - If the document exceeds your context, chunk it: process pages/sections
+    sequentially and merge findings before returning. Record chunking in
     `extraction_stats.chunks_used`.
 
-### 5. Validate Each Return
+### 4. Validate Each Return
 
 For each subagent return:
 
 1. Parse as JSON. If parsing fails, retry the subagent **once** with the raw
    return included as "previous attempt — reformat as valid JSON".
-2. Check Findings Schema conformance:
-   - **Doc:** required fields, types, locator presence on every `quote`, `claim`,
-     `equation` (each locator must include page or section).
-   - **Code:** required fields including `file_metadata`, `symbols[]`,
-     `dependencies[]`, `call_edges[]`. Every `symbols[].locator` must include
-     `file`, `line_start`, and `line_end`. Every `claims[]` / `quotes[]` locator
-     must include `file` and `line_start`.
-3. Spot-verify:
-   - **Doc:** pick 2 random `quotes[].text` values and grep them against the
-     source. Reject and retry on mismatch (cite the failing quote as evidence).
-   - **Code:** pick 2 random `quotes[].text` values AND 2 random `symbols[].name`
-     values. Grep quotes as substrings; grep symbols via language-appropriate
-     definition patterns (`def <name>` / `class <name>` / `function <name>` /
-     `func <name>` / `fn <name>` / `pub fn <name>` / `struct <name>`).
-     Zero matches on either check → reject and retry once.
+2. Check Findings Schema conformance (required fields, types, locator presence
+   on every `quote`, `claim`, `equation`).
+3. Spot-verify: pick 2 random quotes and grep them against the source text. If
+   a quote is not found verbatim, reject the findings and retry with the
+   failing quote cited as evidence of hallucination.
 4. On repeated failure (2 retries), mark the seed as `completeness: "partial"`
    with `partial_reason` explaining the failure, and continue.
 
-### 6. Persist
+### 5. Persist
 
 For each validated findings object:
 
 - Write to `workspace-artifacts/wiki/findings/<citation_id>.json` (pretty-printed, 2-space indent).
-- Update `workspace-artifacts/wiki/findings/index.yaml` with a new `processed_seeds` entry. For code findings include `source_type: code` and `repo_citation_id: src-repo-<name>`. For doc findings include `source_type: doc` (optional for backward-compat — absence is also accepted).
-- If the seed is not yet in the citation index, register it there using the
-  same policy as `wiki-update` (preserve file_hash linkage).
+- Update `workspace-artifacts/wiki/findings/index.yaml` with a new `processed_seeds` entry.
+- If the seed is not yet in the citation index, register it there
+  preserving the file_hash linkage.
 
-### 7. Emit the Ingest Report
+### 6. Emit the Ingest Report
 
 Write `workspace-artifacts/wiki/reports/ingest_report.yaml`:
 
@@ -203,17 +152,11 @@ ingest_report:
   seeds_skipped_already_processed: int
   seeds_failed: int
   partial_extractions: int
-  doc_findings_written: int
-  code_findings_written: int
-  repo_maps_written: int
-  code_partial: int
   findings_written:
     - citation_id: src-...
-      source_type: doc | code
       seed_path: ...
       quote_count: int
-      equation_count: int      # doc only (omitted for code)
-      symbol_count: int        # code only (omitted for doc)
+      equation_count: int
       claim_count: int
       completeness: full | partial
   failures:
@@ -221,7 +164,7 @@ ingest_report:
       reason: string
 ```
 
-### 8. Postflight (CLI + Orchestrator agent)
+### 7. Postflight (CLI + Orchestrator agent)
 
 Run:
 
@@ -249,7 +192,7 @@ On `REVISE`: re-run the failing seed-readers (their citation IDs are listed in
 the verdict). After the next fanout, re-run `ingest-postcheck` and
 `@ingest-orchestrator mode=postflight` until `PROCEED`.
 
-### 9. Hand Off
+### 8. Hand Off
 
 Print a one-line summary:
 
@@ -373,7 +316,6 @@ findings_index:
   last_updated: ISO-8601
   processed_seeds:
     - citation_id: src-smith2024-psf
-      source_type: doc              # "doc" or "code" (default: doc)
       file_hash: sha256:abc123...
       seed_path: workspace-artifacts/seeds/smith2024_psf_modeling.pdf
       findings_path: workspace-artifacts/wiki/findings/src-smith2024-psf.json
@@ -382,163 +324,10 @@ findings_index:
       quote_count: 42
       equation_count: 12
       used_in_wiki: false
-    - citation_id: src-widget-lib-src-core-compile-py
-      source_type: code
-      repo_citation_id: src-repo-widget-lib
-      file_hash: sha256:def456...
-      seed_path: workspace-artifacts/seeds/code/widget-lib/src/core/compile.py
-      findings_path: workspace-artifacts/wiki/findings/src-widget-lib-src-core-compile-py.json
-      extracted_at: 2026-04-16T12:01:00Z
-      completeness: full
-      symbol_count: 7
-      used_in_wiki: false
 ```
 
 The `used_in_wiki` flag is set by the enrichment pass (not this orchestrator)
 once wiki pages reference the findings.
-
-## Code Findings Schema
-
-Every code `<citation_id>.json` must conform:
-
-```json
-{
-  "schema_version": 1,
-  "source_type": "code",
-  "citation_id": "src-widget-lib-src-core-compile-py",
-  "seed_path": "workspace-artifacts/seeds/code/widget-lib/src/widget_lib/core/compile.py",
-  "file_hash": "sha256:...",
-  "extracted_at": "2026-04-16T12:00:00Z",
-  "extractor": {
-    "agent_type": "code-reader",
-    "model": "claude-opus-4-7",
-    "pass_type": "full-read"
-  },
-  "file_metadata": {
-    "language": "python",
-    "loc": 412,
-    "module_path": "widget_lib.core.compile",
-    "repo_citation_id": "src-repo-widget-lib"
-  },
-  "concepts": [
-    {"name": "Binary search", "definition": "logarithmic lookup over sorted input"}
-  ],
-  "symbols": [
-    {
-      "kind": "function",
-      "name": "compile",
-      "signature": "def compile(graph: Graph, *, strict: bool = False) -> Artifact",
-      "locator": {"file": "src/widget_lib/core/compile.py", "line_start": 42, "line_end": 118},
-      "docstring": "Compile a Graph into a deployable Artifact.",
-      "visibility": "public",
-      "complexity_notes": "single branch on strict; delegates to _lower()"
-    }
-  ],
-  "claims": [
-    {
-      "statement": "compile() raises CompileError on cycle",
-      "support": "code",
-      "evidence": "guard at line 58; tests/test_compile.py::test_cycle_raises",
-      "locator": {
-        "file": "src/widget_lib/core/compile.py",
-        "line_start": 58,
-        "line_end": 61,
-        "symbol": "compile"
-      }
-    }
-  ],
-  "quotes": [
-    {
-      "text": "raise CompileError(\"cycle detected\")",
-      "locator": {"file": "src/widget_lib/core/compile.py", "line_start": 60, "line_end": 60},
-      "topic": "cycle detection"
-    }
-  ],
-  "dependencies": [
-    {"kind": "import", "target": "widget_lib.core.graph",
-     "locator": {"file": "src/widget_lib/core/compile.py", "line_start": 3, "line_end": 3}}
-  ],
-  "call_edges": [
-    {"from_symbol": "compile", "to_symbol": "_lower",
-     "locator": {"file": "src/widget_lib/core/compile.py", "line_start": 102, "line_end": 102}}
-  ],
-  "tests_referenced": ["tests/test_compile.py::test_cycle_raises"],
-  "relationships": [
-    {"from": "binary-search", "to": "sorted-input", "type": "depends_on",
-     "evidence_locator": {"file": "...", "line_start": 52}}
-  ],
-  "open_questions": ["Strict mode semantics undocumented"],
-  "extraction_stats": {
-    "lines_read": 412,
-    "total_lines": 412,
-    "symbol_count": 7,
-    "completeness": "full",
-    "partial_reason": null,
-    "chunks_used": 1
-  }
-}
-```
-
-### Code Schema Rules
-
-- `source_type` MUST equal `"code"` (it is the polymorphic discriminator for
-  the CLI validator; absence of `file_metadata` falls through to doc validation).
-- Every `symbols[].locator` must include `file`, integer `line_start`, integer
-  `line_end >= line_start`.
-- Every `claims[].locator` and `quotes[].locator` must include `file` and
-  integer `line_start`.
-- `symbols[].locator.file` should end with the repo-relative seed path basename
-  (enforced loosely by the CLI validator).
-- `concepts[]` shape is shared with document findings so the concept aggregator
-  merges doc-derived and code-derived concepts into a single concept page.
-- `relationships[].type` values match the document schema:
-  `prerequisite_for | depends_on | contradicts | extends`.
-
-## RepoMap Schema
-
-The repo-mapper subagent writes one YAML file per repo to
-`workspace-artifacts/runtime/ingest/repo_map/<repo_name>.yaml`:
-
-```yaml
-schema_version: 1
-repo_name: widget-lib
-repo_citation_id: src-repo-widget-lib
-remote: https://github.com/org/widget-lib
-commit_sha: abc123...
-cloned_at: 2026-04-16T12:00:00Z
-languages:
-  - name: python
-    file_count: 42
-    total_lines: 7823
-package_manifests:
-  - path: pyproject.toml
-    type: pyproject
-    dependencies_summary: ["numpy", "pydantic"]
-entry_points:
-  - path: src/widget_lib/__main__.py
-    role: cli
-modules:
-  - path: src/widget_lib/core/
-    role: public-api
-    file_count: 8
-    public_api: ["compile", "Graph", "Node"]
-test_dirs: ["tests/", "integration/"]
-priority_files:
-  - path: src/widget_lib/core/compile.py
-    rank: 1
-    reason: top-level compile() entry point
-skipped:
-  - path: vendor/
-    reason: vendored third-party code
-```
-
-### RepoMap Rules
-
-- `commit_sha` must equal the pinned SHA from `source_bindings.yaml` code_bindings.
-- Every `priority_files[].path` must exist under `repo_root`; the
-  `validate_repo_map_schema` hook rejects phantom paths.
-- Language detection is extension-based; unknown extensions bucket to `"other"`.
-- No file contents appear in this document — it is an atlas, not an extraction.
 
 ## Reader Subagent Prompt Template
 
@@ -570,13 +359,9 @@ Begin reading now. Return the JSON when complete.
 
 ## Constraints
 
-- Do **not** use the Explore subagent for reading. `seed-reader` for doc items,
-  `code-reader` for code items, `repo-mapper` for code repos.
-- Do **not** modify seed files. Code seeds are additionally immutable at the
-  commit-SHA boundary — `git checkout`, `git pull`, and `git commit` inside a
-  `seeds/code/<name>/` tree are violations of the immutable-seeds policy.
-- Do **not** write wiki pages from this orchestrator. Findings only (plus the
-  RepoMap YAML per repo).
+- Do **not** use the Explore subagent for reading. `seed-reader` only.
+- Do **not** modify seed files (seeds are immutable).
+- Do **not** write wiki pages from this orchestrator. Findings only.
 - Do **not** re-extract a seed whose file_hash is already in the findings index
   when `--scope new` is in effect.
 - Do **not** invent content to fill schema fields. Empty lists are valid.
@@ -590,7 +375,8 @@ meta-compiler ingest-validate
 ```
 
 This is the final mechanical gate. Fix any schema issues before handing
-findings to `research-breadth` or `wiki-update`.
+findings to `research-breadth` (Stage 1A) or the semantic wiki enrichment
+pipeline (`wiki-reconcile-concepts`).
 
 ## Guiding Principles
 

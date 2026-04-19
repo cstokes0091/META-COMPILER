@@ -82,7 +82,7 @@ The command runs these stages automatically:
 | **1A: Breadth** | Builds wiki v1 and enriches it from findings when present | Wiki v1 with concepts, claims, citations |
 | **1B: Depth** | Evaluates wiki from multiple perspectives | Wiki v2 with filled gaps, debate transcript |
 | **1C: Review** | Fresh-eyes review of wiki completeness | Review verdicts (proceed/iterate) |
-| **Seed Check** | Detects any new seeds added during research | Auto wiki-update if new seeds found |
+| **Seed Check** | Detects any new seeds added during research | Handoff to `ingest --scope new` + `research-breadth` if new seeds found |
 | **2: Vision** | Generates decision log from wiki + problem statement | Decision Log with architecture, requirements |
 | **2: Audit** | Computes baseline requirements coverage | `requirements_audit.yaml` |
 

@@ -62,6 +62,14 @@ class ArtifactPaths:
     phase4_preflight_verdict_path: Path
     phase4_postcheck_request_path: Path
     phase4_postcheck_verdict_path: Path
+    # Semantic wiki enrichment runtime artifacts.
+    # Phase A reconciles concept aliases across findings; Phase B synthesizes
+    # cross-source definitions for canonical concept pages.
+    wiki_reconcile_runtime_dir: Path
+    wiki_reconcile_work_plan_path: Path
+    wiki_reconcile_request_path: Path
+    wiki_cross_source_runtime_dir: Path
+    wiki_cross_source_work_plan_path: Path
 
 
 def build_paths(root: Path) -> ArtifactPaths:
@@ -72,6 +80,8 @@ def build_paths(root: Path) -> ArtifactPaths:
     stage2_runtime_dir = runtime_dir / "stage2"
     ingest_runtime_dir = runtime_dir / "ingest"
     phase4_runtime_dir = runtime_dir / "phase4"
+    wiki_reconcile_runtime_dir = runtime_dir / "wiki_reconcile"
+    wiki_cross_source_runtime_dir = runtime_dir / "wiki_cross_source"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -115,6 +125,11 @@ def build_paths(root: Path) -> ArtifactPaths:
         phase4_preflight_verdict_path=phase4_runtime_dir / "preflight_verdict.yaml",
         phase4_postcheck_request_path=phase4_runtime_dir / "postcheck_request.yaml",
         phase4_postcheck_verdict_path=phase4_runtime_dir / "postcheck_verdict.yaml",
+        wiki_reconcile_runtime_dir=wiki_reconcile_runtime_dir,
+        wiki_reconcile_work_plan_path=wiki_reconcile_runtime_dir / "work_plan.yaml",
+        wiki_reconcile_request_path=wiki_reconcile_runtime_dir / "reconcile_request.yaml",
+        wiki_cross_source_runtime_dir=wiki_cross_source_runtime_dir,
+        wiki_cross_source_work_plan_path=wiki_cross_source_runtime_dir / "work_plan.yaml",
     )
 
 
@@ -141,6 +156,8 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.ingest_runtime_dir,
         paths.runtime_repo_map_dir,
         paths.phase4_runtime_dir,
+        paths.wiki_reconcile_runtime_dir,
+        paths.wiki_cross_source_runtime_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

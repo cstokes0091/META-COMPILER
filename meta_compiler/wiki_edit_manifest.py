@@ -14,7 +14,8 @@ shape:
       pages:
         <page_filename>:
           last_system_write_sha: <hex>
-          source: depth_baseline | enrichment | wiki_linker | relationship_mapper | gap_remediation
+          source: depth_baseline | enrichment | wiki_linker | relationship_mapper
+                | gap_remediation | concept_reconciliation | cross_source_synthesis
           last_system_write_at: <iso>
 
 Use `record_write` after writing a page; use `is_user_edited` before
@@ -36,6 +37,8 @@ VALID_SOURCES = {
     "wiki_linker",
     "relationship_mapper",
     "gap_remediation",
+    "concept_reconciliation",
+    "cross_source_synthesis",
 }
 
 

@@ -225,6 +225,10 @@ def validate_wiki_page(markdown_path: Path) -> list[str]:
     text = read_text_safe(markdown_path)
     frontmatter, body = parse_frontmatter(text)
 
+    if str(frontmatter.get("type") or "") == "alias":
+        # Alias redirect stubs follow a narrower schema.
+        return validate_alias_page(markdown_path)
+
     required_frontmatter = ["id", "type", "created", "sources", "related", "status"]
     if not frontmatter:
         issues.append(f"{markdown_path.name}: missing frontmatter")
@@ -241,6 +245,91 @@ def validate_wiki_page(markdown_path: Path) -> list[str]:
     for section in required_sections:
         if section not in body:
             issues.append(f"{markdown_path.name}: missing section '{section}'")
+
+    return issues
+
+
+def validate_alias_page(markdown_path: Path) -> list[str]:
+    """Alias redirect stubs: must point at an existing canonical page and
+    carry only the minimal frontmatter + a short body."""
+    issues: list[str] = []
+    text = read_text_safe(markdown_path)
+    frontmatter, body = parse_frontmatter(text)
+    name = markdown_path.name
+
+    if not frontmatter:
+        return [f"{name}: alias page missing frontmatter"]
+
+    required = ["id", "type", "canonical", "created", "sources", "related", "status"]
+    _require_fields(frontmatter, required, name, issues)
+
+    if str(frontmatter.get("type") or "") != "alias":
+        issues.append(f"{name}: alias page type must be 'alias'")
+
+    canonical = str(frontmatter.get("canonical") or "").strip()
+    if canonical:
+        target = markdown_path.parent / f"{canonical}.md"
+        if not target.exists():
+            issues.append(
+                f"{name}: canonical target '{canonical}' does not exist at {target.name}"
+            )
+
+    body_lines = [line for line in body.strip().splitlines() if line.strip()]
+    # Permit: title, Definition heading, one-line redirect body. Anything
+    # longer than ~6 non-empty lines likely means the stub wasn't actually
+    # rewritten.
+    if len(body_lines) > 8:
+        issues.append(f"{name}: alias page body is longer than expected")
+
+    return issues
+
+
+def validate_concept_reconciliation_proposal(payload: dict[str, Any]) -> list[str]:
+    """Validate the YAML payload written by the wiki-concept-reconciliation
+    orchestrator before `meta-compiler wiki-apply-reconciliation` consumes it."""
+    issues: list[str] = []
+    root = payload.get("concept_reconciliation_proposal")
+    if not isinstance(root, dict):
+        return ["concept_reconciliation_proposal: missing root object"]
+
+    _require_fields(
+        root,
+        ["generated_at", "version", "alias_groups"],
+        "concept_reconciliation_proposal",
+        issues,
+    )
+
+    alias_groups = root.get("alias_groups")
+    if not isinstance(alias_groups, list):
+        issues.append("concept_reconciliation_proposal.alias_groups: must be a list")
+        return issues
+
+    for idx, group in enumerate(alias_groups):
+        prefix = f"concept_reconciliation_proposal.alias_groups[{idx}]"
+        if not isinstance(group, dict):
+            issues.append(f"{prefix}: must be an object")
+            continue
+        _require_fields(group, ["canonical_name", "members", "justification"], prefix, issues)
+
+        members = group.get("members")
+        if not isinstance(members, list) or not members:
+            issues.append(f"{prefix}.members: must be a non-empty list")
+            continue
+
+        for m_idx, member in enumerate(members):
+            m_prefix = f"{prefix}.members[{m_idx}]"
+            if not isinstance(member, dict):
+                issues.append(f"{m_prefix}: must be an object")
+                continue
+            _require_fields(
+                member,
+                ["name", "source_citation_id", "evidence_locator", "definition_excerpt"],
+                m_prefix,
+                issues,
+            )
+            locator = member.get("evidence_locator")
+            if locator is not None and not isinstance(locator, dict):
+                issues.append(f"{m_prefix}.evidence_locator: must be an object")
 
     return issues
 

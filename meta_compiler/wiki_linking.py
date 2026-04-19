@@ -52,7 +52,12 @@ def _load_concept_index(paths: ArtifactPaths) -> list[_ConceptEntry]:
     for page in sorted(paths.wiki_v2_pages_dir.glob("*.md")):
         text = read_text_safe(page)
         frontmatter, body = parse_frontmatter(text)
-        if frontmatter.get("type") and str(frontmatter["type"]) != "concept":
+        page_type = str(frontmatter.get("type") or "")
+        if page_type == "alias":
+            # Alias stubs never participate in linking; their aliases flow
+            # through the canonical page's `aliases:` frontmatter instead.
+            continue
+        if page_type and page_type != "concept":
             continue
         page_id = str(frontmatter.get("id") or page.stem)
         display = page_id
@@ -63,6 +68,22 @@ def _load_concept_index(paths: ArtifactPaths) -> list[_ConceptEntry]:
         entries.append(
             _ConceptEntry(page_id=page_id, file=page.name, display_name=display)
         )
+        # Secondary entries for every alias declared on the canonical page.
+        aliases = frontmatter.get("aliases")
+        if isinstance(aliases, list):
+            for alias in aliases:
+                if not isinstance(alias, str):
+                    continue
+                alias_display = alias.strip()
+                if not alias_display or alias_display == display:
+                    continue
+                entries.append(
+                    _ConceptEntry(
+                        page_id=page_id,
+                        file=page.name,
+                        display_name=alias_display,
+                    )
+                )
     return entries
 
 

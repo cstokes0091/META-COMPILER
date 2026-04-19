@@ -60,7 +60,9 @@ meta-compiler elicit-vision --finalize
 meta-compiler audit-requirements
 meta-compiler scaffold
 meta-compiler phase4-finalize
-meta-compiler wiki-update
+meta-compiler wiki-reconcile-concepts
+meta-compiler wiki-apply-reconciliation
+meta-compiler wiki-cross-source-synthesize
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -315,27 +317,46 @@ Stage 4 should:
 - emit `workspace-artifacts/pitches/pitch_v{N}.md`
 - emit a real `workspace-artifacts/pitches/pitch_v{N}.pptx`
 
-### Post-Scaffold: Wiki Update
+### Post-Scaffold: Semantic Wiki Enrichment
 
-When new seed documents arrive after scaffolding:
+When new seed documents arrive after scaffolding, the old `wiki-update`
+command is replaced by a two-phase semantic enrichment pipeline. First
+re-ingest the new seeds, then reconcile concepts across sources:
 
 ```bash
-meta-compiler wiki-update
+# 1. Extract the new seeds into findings JSON
+meta-compiler ingest --scope new
+meta-compiler research-breadth
+
+# 2. Phase A — cluster alias candidates across findings
+meta-compiler wiki-reconcile-concepts
+# (LLM invokes .github/prompts/wiki-concept-reconciliation.prompt.md, which
+#  fans out concept-reconciler subagents and writes
+#  workspace-artifacts/wiki/reports/concept_reconciliation_v{N}.yaml)
+meta-compiler wiki-apply-reconciliation
+
+# 3. Phase B — cross-source definition synthesis
+meta-compiler wiki-cross-source-synthesize
+# (LLM invokes .github/prompts/wiki-cross-source-synthesis.prompt.md)
+
+# 4. Alias-aware lexical linker refresh
+meta-compiler wiki-link
 ```
 
-Detects new seeds, ingests them, produces impact report. If new seeds substantially
-change the problem space, recommend Stage 2 re-entry.
+If new seeds substantially change the problem space, recommend Stage 2
+re-entry before re-scaffolding.
 
-### Post-Scaffold: Automatic Seed Tracking
+### Post-Scaffold: Seed Detection
 
-New seeds are automatically detected and ingested:
+Detect seed files that haven't been ingested yet:
 
 ```bash
 meta-compiler track-seeds
 ```
 
-This checks for seed files not yet in the citation index, runs wiki-update if any
-are found, and saves a tracking report and inventory snapshot.
+This checks for seed files not yet in the citation index and reports the
+handoff (`ingest --scope new` + `research-breadth` + the semantic
+enrichment commands above). It no longer mutates the wiki directly.
 
 ### Post-Scaffold: Reset Workspace
 

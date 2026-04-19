@@ -855,6 +855,75 @@ def gate_phase4_finalize(payload):
     return {"permissionDecision": "allow"}
 
 
+@register("gate_reconcile_request")
+def gate_reconcile_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """Block `meta-compiler wiki-apply-reconciliation` unless the preflight
+    request and an orchestrator-written proposal both exist.
+
+    The workflow is:
+      1. `wiki-reconcile-concepts` (writes reconcile_request.yaml + work_plan)
+      2. `wiki-concept-reconciliation` prompt fan-out (writes the proposal)
+      3. `wiki-apply-reconciliation` (mutates v2 pages) — the step this gates.
+
+    Preventing #3 from running without #1 or #2 catches the common failure
+    of an LLM skipping straight to the apply step and silently mutating
+    pages against a stale or missing proposal.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    if "wiki-apply-reconciliation" not in cmd or not cmd.strip().startswith(
+        "meta-compiler"
+    ):
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_reconcile_request", ws)
+    if disabled:
+        audit(ws, "gate_reconcile_request", "PreToolUse", "allow_override",
+              reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": f"gate_reconcile_request disabled by override: {ov_reason}",
+        }
+
+    request_path = ws / "workspace-artifacts" / "runtime" / "wiki_reconcile" / "reconcile_request.yaml"
+    if not request_path.exists():
+        line = audit(ws, "gate_reconcile_request", "PreToolUse", "deny",
+                     reason="reconcile_request.yaml missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "reconcile_request.yaml is missing — preflight did not run.",
+            "remediation": (
+                "Run `meta-compiler wiki-reconcile-concepts --version 2` first, "
+                "then invoke the wiki-concept-reconciliation prompt, then retry this CLI."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    reports_dir = ws / "workspace-artifacts" / "wiki" / "reports"
+    proposals = sorted(reports_dir.glob("concept_reconciliation_v*.yaml")) if reports_dir.exists() else []
+    if not proposals:
+        line = audit(ws, "gate_reconcile_request", "PreToolUse", "deny",
+                     reason="no concept_reconciliation_v*.yaml proposal",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "No concept_reconciliation_v*.yaml proposal was written by the orchestrator.",
+            "remediation": (
+                "Invoke the `wiki-concept-reconciliation` prompt (it writes the "
+                "proposal to workspace-artifacts/wiki/reports/) before running "
+                "`meta-compiler wiki-apply-reconciliation`."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_reconcile_request", "PreToolUse", "allow",
+          extra={"command": cmd, "proposal_count": len(proposals)})
+    return {"permissionDecision": "allow"}
+
+
 @register("require_handoff")
 def require_handoff(payload):
     return _presence_check(

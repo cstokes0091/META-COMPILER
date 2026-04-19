@@ -53,7 +53,9 @@ Stage 4: Execute + Pitch (agent, fresh context)
 ─────────────────────────────────────────────────────────────
 Post-Scaffold Commands (human-triggered, fresh context each):
 ─────────────────────────────────────────────────────────────
-     wiki-update: Incremental wiki expansion from new seeds
+     wiki-reconcile-concepts: Cluster concept aliases across findings
+     wiki-apply-reconciliation: Merge alias groups into canonical pages
+     wiki-cross-source-synthesize: Surface inter-source agreement/divergence
      stage2-reentry: Revise Decision Log for changed scope
 ```
 
@@ -472,82 +474,31 @@ meta-compiler validate-stage --stage 4
 
 These commands allow workspace evolution after initial scaffolding. Each operates in fresh context with explicit artifact inputs.
 
-### wiki-update Command
+### Semantic Wiki Enrichment (replaces `wiki-update`)
 
-**Purpose:** Incrementally expand the wiki when new seed documents are added, without full re-processing.
+**Purpose:** Reconcile concept aliases across sources and synthesize cross-source definitions after new findings arrive.
 
-**Actor:** Wiki Update agent
+**Trigger:** Human runs `ingest --scope new` + `research-breadth` after adding documents to `/seeds/`, then invokes the reconciliation pipeline.
 
-**Trigger:** Human adds new documents to `/seeds/` and invokes command
+**Phase A — Concept Reconciliation.**
 
-**Input:**
-- Existing Wiki v2
-- Existing citation index
-- New seed documents (delta)
-- Problem statement (unchanged)
+1. `meta-compiler wiki-reconcile-concepts` flattens every `concepts[].name` across findings JSON, buckets by normalized stem, writes `runtime/wiki_reconcile/work_plan.yaml` + `reconcile_request.yaml`.
+2. The `wiki-concept-reconciliation` orchestrator prompt fans out `concept-reconciler` subagents (≤4 parallel). Each bucket returns an `alias_groups[]` proposal; the orchestrator writes `wiki/reports/concept_reconciliation_v{N}.yaml`.
+3. `meta-compiler wiki-apply-reconciliation` promotes one canonical page per group, merges `sources:`, appends member definitions under `### Alias Sources`, adds `aliases:` frontmatter, rewrites losing pages as `type: alias` redirect stubs. Every write is stamped with `source: concept_reconciliation`.
 
-#### Behavior
+**Phase B — Cross-Source Synthesis.**
 
-1. **Diff Detection:**
-   - Identify new files in `/seeds/` not present in citation index
-   - Log: "Found N new seed documents for integration"
+1. `meta-compiler wiki-cross-source-synthesize` writes a per-page work plan for every canonical concept backed by ≥2 sources with findings coverage ≥2 citations.
+2. The `wiki-cross-source-synthesis` orchestrator prompt fans out `cross-source-synthesizer` subagents that rewrite Definition / Key Claims / Open Questions to explicitly surface inter-source agreement and divergence (citing `[citation_id, locator]` inline). Stamped with `source: cross_source_synthesis`.
 
-2. **Incremental Ingestion:**
-   - For each new document:
-     - Extract content → create/update wiki pages
-     - Register citations in index
-     - Cross-link to existing concepts
-     - Flag new open questions
-   - Do NOT re-process existing seeds
+**Downstream.** The existing lexical linker (`wiki_linking.py`) indexes `aliases:` frontmatter, so a mention of any alias anywhere in the wiki links to the canonical page. Run `meta-compiler wiki-link --version 2` after reconciliation to pick them up.
 
-3. **Impact Analysis:**
-   - Identify existing wiki pages that reference concepts now expanded
-   - Flag pages that may need relationship updates
-   - Produce impact report
+**Hooks.** `gate_reconcile_request` blocks `wiki-apply-reconciliation` unless both `reconcile_request.yaml` and a `concept_reconciliation_v*.yaml` proposal exist.
 
-4. **Light Validation:**
-   - Schema Auditor runs on new/modified pages only
-   - Produces targeted gap report
-
-**Output:**
-- Wiki v2.1 (incremented version)
-- Updated citation index
-- Impact report: pages affected, new cross-links, new gaps
-- Updated `workspace_manifest.yaml`
-
-#### Wiki Update Output Schema
-
-```yaml
-wiki_update_report:
-  timestamp: ISO-8601
-  previous_version: sha256
-  new_version: sha256
-  
-  documents_added:
-    - path: /seeds/new_document.pdf
-      citation_id: src-newauthor2024-topic
-      pages_created: [concept-ids]
-      pages_modified: [concept-ids]
-      
-  impact_analysis:
-    cross_links_added: int
-    relationships_updated: [concept-ids]
-    gaps_surfaced:
-      - description: string
-        affected_concepts: [concept-ids]
-        
-  validation:
-    schema_errors: [...]
-    recommendations: [...]
-    
-  status: complete | needs_review
-```
-
-#### Constraints
-
-- Never modifies original Wiki v2 in place — creates versioned copy
-- If new seeds contradict existing wiki content → flag for human review, do not auto-resolve
-- If new seeds substantially change problem scope → recommend Stage 2 re-entry
+**Constraints.**
+- Structured `wiki/findings/*.json` is the authoritative signal source; neither pass reads page prose.
+- User edits are preserved via the edit manifest. Pages marked `user_edited: true` are skipped.
+- New-seed arrival is handled by re-running `ingest` + `research-breadth` — not by this pipeline.
 
 ---
 
@@ -717,7 +668,7 @@ Each agent gets a dedicated prompt template. Prompts should:
 6. **Stage 1B prompts** — the three evaluators + synthesizer
 7. **Stage 1C prompts** — simpler, just evaluation
 8. **Stage 3 prompt** — mechanical given good Decision Log
-9. **wiki-update command** — incremental processing logic
+9. **Semantic wiki enrichment** — concept reconciliation + cross-source synthesis
 10. **stage2-reentry command** — versioning and cascade analysis
 
 ---

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,7 +8,20 @@ from typing import Any
 
 from .artifacts import ArtifactPaths
 from .io import load_yaml, parse_frontmatter
-from .utils import read_text_safe
+from .utils import read_text_safe, slugify
+
+
+def _slugify_name(name: str) -> str:
+    slug = slugify(name)
+    if not slug:
+        return ""
+    if slug.startswith("concept-"):
+        return slug[len("concept-") :]
+    return slug
+
+
+def _json_load(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @dataclass(frozen=True)
@@ -238,11 +252,20 @@ class WikiQueryInterface:
         orphan_pages: list[str] = []
         sparse_citation_pages: list[str] = []
         weak_relationship_pages: list[str] = []
+        alias_pages: list[str] = []
+        canonical_concept_pages: list[str] = []
 
         for page in pages:
             related = page.frontmatter.get("related", [])
             related_count = len(related) if isinstance(related, list) else 0
             source_count = len(page.frontmatter.get("sources", [])) if isinstance(page.frontmatter.get("sources", []), list) else 0
+
+            page_type = page.page_type
+            if page_type == "alias":
+                alias_pages.append(page.page_id)
+            aliases = page.frontmatter.get("aliases")
+            if isinstance(aliases, list) and any(isinstance(a, str) and a.strip() for a in aliases):
+                canonical_concept_pages.append(page.page_id)
 
             if inbound_counts.get(page.page_id, 0) == 0 and related_count == 0:
                 orphan_pages.append(page.page_id)
@@ -251,12 +274,87 @@ class WikiQueryInterface:
             if related_count == 0:
                 weak_relationship_pages.append(page.page_id)
 
+        # Concepts whose name appears in findings under ≥2 citation_ids but
+        # which haven't been captured in any page's `aliases:` yet.
+        known_alias_slugs: set[str] = {_slugify_name(page_id) for page_id in alias_pages}
+        for page in pages:
+            aliases = page.frontmatter.get("aliases")
+            if isinstance(aliases, list):
+                for alias in aliases:
+                    if isinstance(alias, str) and alias.strip():
+                        known_alias_slugs.add(_slugify_name(alias))
+                known_alias_slugs.add(_slugify_name(page.page_id))
+
+        findings_dir = self.paths.findings_dir
+        concept_source_map: dict[str, set[str]] = {}
+        concept_display: dict[str, str] = {}
+        if findings_dir.exists():
+            for findings_path in sorted(findings_dir.glob("*.json")):
+                try:
+                    payload = _json_load(findings_path)
+                except Exception:  # pragma: no cover - malformed file
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                citation_id = str(payload.get("citation_id") or "")
+                for concept in payload.get("concepts", []) or []:
+                    if not isinstance(concept, dict):
+                        continue
+                    name = str(concept.get("name") or "").strip()
+                    if not name:
+                        continue
+                    slug = _slugify_name(name)
+                    concept_source_map.setdefault(slug, set()).add(citation_id)
+                    concept_display.setdefault(slug, name)
+
+        unreconciled_concept_candidates: list[dict[str, Any]] = []
+        for slug, sources in concept_source_map.items():
+            if slug in known_alias_slugs:
+                continue
+            if len(sources) < 2:
+                continue
+            unreconciled_concept_candidates.append(
+                {
+                    "name": concept_display.get(slug, slug),
+                    "sources": sorted(sources),
+                }
+            )
+        unreconciled_concept_candidates.sort(key=lambda row: row["name"].lower())
+
+        # Canonical pages backed by ≥2 citation_ids whose Definition hasn't
+        # been stamped with `source: cross_source_synthesis`.
+        edit_manifest_path = self.paths.wiki_v2_dir / "edit_manifest.yaml"
+        edit_manifest = load_yaml(edit_manifest_path) or {}
+        edit_pages = (
+            edit_manifest.get("wiki_v2_edit_manifest", {}).get("pages", {})
+            if isinstance(edit_manifest, dict)
+            else {}
+        )
+        if not isinstance(edit_pages, dict):
+            edit_pages = {}
+
+        concepts_with_multiple_sources_but_no_synthesis: list[str] = []
+        for page in pages:
+            if page.page_type != "concept":
+                continue
+            sources = page.frontmatter.get("sources") or []
+            citation_count = len({str(s) for s in sources if isinstance(s, str) and s.strip()})
+            if citation_count < 2:
+                continue
+            entry = edit_pages.get(page.path.name)
+            if not isinstance(entry, dict) or entry.get("source") != "cross_source_synthesis":
+                concepts_with_multiple_sources_but_no_synthesis.append(page.page_id)
+
         open_questions = self.get_open_questions()
         return {
             "page_count": len(pages),
             "orphan_pages": orphan_pages,
             "sparse_citation_pages": sparse_citation_pages,
             "weak_relationship_pages": weak_relationship_pages,
+            "alias_groups_count": len(alias_pages),
+            "canonical_concept_pages": canonical_concept_pages,
+            "unreconciled_concept_candidates": unreconciled_concept_candidates,
+            "concepts_with_multiple_sources_but_no_synthesis": concepts_with_multiple_sources_but_no_synthesis,
             "open_question_count": len(open_questions),
             "open_questions": open_questions,
         }

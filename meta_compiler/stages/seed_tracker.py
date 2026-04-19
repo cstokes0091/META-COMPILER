@@ -1,27 +1,25 @@
-"""Seed file tracker: Detects new seed files and triggers wiki-update automatically.
+"""Seed file tracker: detect new seed files and report for ingest handoff.
 
-This module provides objective tracking of seed files and their references in the
-wiki, with automatic wiki-update when a new seed file is found. It is called
-by the run-all pipeline and can also be invoked standalone.
+Hashes every seed under `workspace-artifacts/seeds/` against the file-hash
+set recorded in `citations/index.yaml` and reports any not-yet-ingested
+seeds. No wiki mutation happens here — new seeds are handed off to
+`meta-compiler ingest --scope new` for full-fidelity extraction, then
+`research-breadth` to render new pages from the resulting findings.
+
+Used by `run-all` (it invokes this, then conditionally runs ingest) and
+can also be invoked directly via `meta-compiler track-seeds`.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from ..artifacts import (
-    build_paths,
-    compute_seed_version,
-    list_seed_files,
-    load_manifest,
-    save_manifest,
-)
+from ..artifacts import build_paths, list_seed_files
 from ..immutable_sources import snapshot_seed_inventory
 from ..io import dump_yaml, load_yaml
 from ..utils import iso_now, sha256_file
 
 
 def _load_tracked_hashes(paths) -> set[str]:
-    """Load the set of seed file hashes already tracked in the citation index."""
     existing_index = load_yaml(paths.citations_index_path) or {"citations": {}}
     citations = existing_index.get("citations", {})
     if not isinstance(citations, dict):
@@ -42,10 +40,13 @@ def check_and_update_seeds(
     artifacts_root: Path,
     workspace_root: Path,
 ) -> dict:
-    """Check for new seed files and trigger wiki-update if any are found.
+    """Detect new seed files and report whether ingest needs to run.
 
-    Returns a summary dict indicating whether new seeds were found and
-    what action was taken.
+    Returns a dict. When `new_seeds_found` is True, the caller should run
+    `meta-compiler ingest --scope new` followed by `research-breadth` to
+    produce findings + pages for the new seeds, then (optionally)
+    `wiki-reconcile-concepts` if any of the new concepts may alias
+    existing canonical pages.
     """
     paths = build_paths(artifacts_root)
     seeds = list_seed_files(paths)
@@ -72,31 +73,22 @@ def check_and_update_seeds(
             "message": "All seeds are already tracked in the wiki.",
         }
 
-    # New seeds detected — run wiki-update
-    from .wiki_update_stage import run_wiki_update
-
-    update_result = run_wiki_update(
-        artifacts_root=artifacts_root,
-        workspace_root=workspace_root,
-    )
-
-    # Write a seed tracking report
     tracking_report = {
         "seed_tracking_report": {
             "timestamp": iso_now(),
             "new_seeds_detected": new_seeds,
             "total_seeds": len(seeds),
-            "wiki_update_triggered": True,
-            "update_result": {
-                "documents_added": update_result.get("documents_added", 0),
-                "pages_created": update_result.get("pages_created", 0),
-            },
+            "next_steps": [
+                "meta-compiler ingest --scope new",
+                "meta-compiler research-breadth",
+                "meta-compiler wiki-reconcile-concepts --version 2 "
+                "(when new concepts may alias existing canonical pages)",
+            ],
         }
     }
     report_path = paths.reports_dir / "seed_tracking_report.yaml"
     dump_yaml(report_path, tracking_report)
 
-    # Save an inventory snapshot
     inventory = snapshot_seed_inventory(paths)
     dump_yaml(paths.manifests_dir / "seed_inventory.yaml", inventory)
 
@@ -104,11 +96,9 @@ def check_and_update_seeds(
         "new_seeds_found": True,
         "new_seed_paths": new_seeds,
         "total_seeds": len(seeds),
-        "documents_added": update_result.get("documents_added", 0),
-        "pages_created": update_result.get("pages_created", 0),
         "message": (
             f"Detected {len(new_seeds)} new seed(s). "
-            f"Wiki-update added {update_result.get('documents_added', 0)} documents "
-            f"and created {update_result.get('pages_created', 0)} pages."
+            "Run `meta-compiler ingest --scope new` followed by "
+            "`meta-compiler research-breadth` to extract and render them."
         ),
     }

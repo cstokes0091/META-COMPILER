@@ -88,9 +88,23 @@
       "problemMatcher": []
     },
     {
-      "label": "Wiki Update (incremental)",
+      "label": "Wiki Reconcile Concepts (preflight)",
       "type": "shell",
-      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-update; else python3 -m meta_compiler.cli wiki-update; fi",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-reconcile-concepts; else python3 -m meta_compiler.cli wiki-reconcile-concepts; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Wiki Apply Reconciliation",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-apply-reconciliation; else python3 -m meta_compiler.cli wiki-apply-reconciliation; fi",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Wiki Cross-Source Synthesize (preflight)",
+      "type": "shell",
+      "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-cross-source-synthesize; else python3 -m meta_compiler.cli wiki-cross-source-synthesize; fi",
       "group": "build",
       "problemMatcher": []
     },

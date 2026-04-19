@@ -28,6 +28,34 @@ def _source_customizations_dir() -> Path:
     return Path(__file__).resolve().parents[2] / ".github"
 
 
+_EXCLUDED_CUSTOMIZATION_DIR_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    "node_modules",
+}
+
+
+def iter_source_customization_files(source_dir: Path):
+    """Yield every non-transient file under `.github/` that should be
+    provisioned into a workspace. Skips bytecode caches and other
+    build/test artifacts that may be present on disk but are not part of
+    the workspace-customization template set."""
+    for path in source_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.startswith("."):
+            continue
+        try:
+            relative = path.relative_to(source_dir)
+        except ValueError:
+            continue
+        if any(part in _EXCLUDED_CUSTOMIZATION_DIR_NAMES for part in relative.parts):
+            continue
+        yield path
+
+
 def _provision_workspace_prompts(workspace_root: Path, force: bool) -> list[str]:
     """Copy canonical prompts to BOTH workspace prompts/ and .github/prompts/.
 
@@ -62,11 +90,7 @@ def _provision_workspace_customizations(workspace_root: Path, force: bool) -> li
     if not source_dir.exists():
         raise RuntimeError(f"Workspace customization templates directory not found: {source_dir}")
 
-    source_files = sorted(
-        path
-        for path in source_dir.rglob("*")
-        if path.is_file() and not path.name.startswith(".")
-    )
+    source_files = sorted(iter_source_customization_files(source_dir))
     if not source_files:
         raise RuntimeError(f"No workspace customization templates found in: {source_dir}")
 

@@ -67,7 +67,7 @@ Each stage operates in **fresh context**. Artifacts pass knowledge forward, not 
 - **Stage 3** (`scaffold_stage.py`) — consumes the Decision Log **only** (not the wiki, not seeds, not findings). Produces `.github/agents/*.agent.md`, `.github/skills/*/SKILL.md`, `.github/instructions/*.instructions.md`, an `EXECUTION_MANIFEST.yaml`, and an `orchestrator/run_stage4.py`.
 - **Stage 4** (`phase4_stage.py`) — executes the scaffold-generated orchestrator; emits final deliverables and a real `.pptx` pitch deck.
 
-Post-scaffold commands (`wiki_update_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`.
+Post-scaffold commands (`concept_reconciliation_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. The legacy `wiki-update` command was replaced by a two-phase semantic wiki enrichment pipeline (see CLAUDE.md §Semantic Wiki Enrichment).
 
 ### Hook-enforced determinism
 
@@ -138,7 +138,7 @@ Binary seed pre-extraction and final deliverable writing use dedicated scripts:
   3. `meta-compiler ingest-validate`
   4. `meta-compiler research-breadth`
 - Stage 3 consumes the Decision Log only. Do not pull raw wiki or seed content directly into scaffold output unless the Decision Log explicitly requires it.
-- Use `meta-compiler wiki-update` or `meta-compiler track-seeds` when new seeds arrive after Stage 3. Recommend Stage 2 re-entry when new evidence changes scope, architecture, or requirements.
+- When new seeds arrive after Stage 3, run `meta-compiler track-seeds` to report the handoff, then `ingest --scope new` → `research-breadth` → `wiki-reconcile-concepts` + `wiki-apply-reconciliation` + `wiki-cross-source-synthesize`. Recommend Stage 2 re-entry when new evidence changes scope, architecture, or requirements.
 
 ## Evidence Quality Rules
 

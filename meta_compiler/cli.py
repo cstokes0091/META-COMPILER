@@ -34,7 +34,11 @@ from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
 from .stages.seed_tracker import check_and_update_seeds
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
-from .stages.wiki_update_stage import run_wiki_update
+from .stages.concept_reconciliation_stage import (
+    run_wiki_apply_reconciliation,
+    run_wiki_cross_source_synthesize,
+    run_wiki_reconcile_concepts,
+)
 from .validation import validate_stage
 from .wiki_browser import run_wiki_browser
 
@@ -355,8 +359,44 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_common_paths(seed_track_parser)
 
-    wiki_update_parser = subparsers.add_parser("wiki-update", help="Incremental wiki expansion from new seeds")
-    _add_common_paths(wiki_update_parser)
+    reconcile_parser = subparsers.add_parser(
+        "wiki-reconcile-concepts",
+        help="Phase A preflight: write work plan + reconcile_request.yaml for concept reconciliation",
+    )
+    _add_common_paths(reconcile_parser)
+    reconcile_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version to reconcile. Only 2 is supported.",
+    )
+
+    apply_reconcile_parser = subparsers.add_parser(
+        "wiki-apply-reconciliation",
+        help="Phase A postflight: merge reconciler proposal into v2 pages (canonicals + alias stubs)",
+    )
+    _add_common_paths(apply_reconcile_parser)
+    apply_reconcile_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version. Only 2 is supported.",
+    )
+
+    cross_source_parser = subparsers.add_parser(
+        "wiki-cross-source-synthesize",
+        help="Phase B preflight: write work plan for cross-source definition synthesis",
+    )
+    _add_common_paths(cross_source_parser)
+    cross_source_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version. Only 2 is supported.",
+    )
 
     wiki_browser_parser = subparsers.add_parser("wiki-browse", help="Open the local wiki browser")
     _add_common_paths(wiki_browser_parser)
@@ -556,8 +596,24 @@ def main(argv: list[str] | None = None) -> int:
                     workspace_root=workspace_root,
                     decision_log_version=args.decision_log_version,
                 )
-        elif args.command == "wiki-update":
-            result = run_wiki_update(artifacts_root=artifacts_root, workspace_root=workspace_root)
+        elif args.command == "wiki-reconcile-concepts":
+            result = run_wiki_reconcile_concepts(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
+        elif args.command == "wiki-apply-reconciliation":
+            result = run_wiki_apply_reconciliation(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
+        elif args.command == "wiki-cross-source-synthesize":
+            result = run_wiki_cross_source_synthesize(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
         elif args.command == "run-all":
             result = run_all(
                 workspace_root=workspace_root,

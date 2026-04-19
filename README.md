@@ -49,7 +49,11 @@ meta-compiler scaffold
 meta-compiler phase4-finalize
 
 # Post-scaffold
-meta-compiler wiki-update
+meta-compiler wiki-reconcile-concepts        # Phase A preflight: cluster alias candidates
+# (LLM runs wiki-concept-reconciliation.prompt.md → writes the proposal)
+meta-compiler wiki-apply-reconciliation      # Phase A postflight: merge aliases into canonical pages
+meta-compiler wiki-cross-source-synthesize   # Phase B preflight: cross-source definition work plan
+# (LLM runs wiki-cross-source-synthesis.prompt.md → rewrites Definition/Key Claims)
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -209,10 +213,15 @@ meta-compiler validate-stage --stage all
 ## Post-Scaffold Operations
 
 ```bash
-# When new seed documents arrive
-meta-compiler wiki-update
+# When new seed documents arrive, re-run ingest → research-breadth, then:
+meta-compiler wiki-reconcile-concepts         # cluster any new alias candidates
+# (LLM runs wiki-concept-reconciliation.prompt.md)
+meta-compiler wiki-apply-reconciliation       # merge into canonical pages
+meta-compiler wiki-cross-source-synthesize    # surface inter-source divergence
+# (LLM runs wiki-cross-source-synthesis.prompt.md)
+meta-compiler wiki-link                       # alias-aware link pass
 
-# Auto-detect and ingest new seeds (checks + updates in one step)
+# Detect new seeds and report the handoff
 meta-compiler track-seeds
 
 # When scope or requirements change

@@ -1,6 +1,11 @@
 from pathlib import Path
 
-from meta_compiler.stages.init_stage import _source_customizations_dir, _source_prompts_dir, run_meta_init
+from meta_compiler.stages.init_stage import (
+    _source_customizations_dir,
+    _source_prompts_dir,
+    iter_source_customization_files,
+    run_meta_init,
+)
 
 
 def _template_prompt_names() -> list[str]:
@@ -9,7 +14,10 @@ def _template_prompt_names() -> list[str]:
 
 def _template_customization_paths() -> list[str]:
     source_dir = _source_customizations_dir()
-    return sorted(str(path.relative_to(source_dir)) for path in source_dir.rglob("*") if path.is_file())
+    return sorted(
+        str(path.relative_to(source_dir))
+        for path in iter_source_customization_files(source_dir)
+    )
 
 
 def test_meta_init_provisions_prompt_templates(tmp_path: Path):

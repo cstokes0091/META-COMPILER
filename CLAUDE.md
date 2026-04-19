@@ -59,7 +59,18 @@ Each stage operates in **fresh context**. Artifacts pass knowledge forward, not 
 - **Stage 3** (`scaffold_stage.py`) — consumes the Decision Log **only** (not the wiki, not seeds, not findings). Produces `.github/agents/*.agent.md`, `.github/skills/*/SKILL.md`, `.github/instructions/*.instructions.md`, an `EXECUTION_MANIFEST.yaml`, and an `orchestrator/run_stage4.py`.
 - **Stage 4** (`phase4_stage.py`) — executes the scaffold-generated orchestrator; emits final deliverables and a real `.pptx` pitch deck.
 
-Post-scaffold commands (`wiki_update_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`.
+Post-scaffold commands (`stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. Semantic wiki enrichment replaces the legacy `wiki-update` command — see `concept_reconciliation_stage.py` and the §Semantic Wiki Enrichment section below.
+
+### Semantic Wiki Enrichment
+
+After the Stage 1A baseline produces per-source concept pages, two dedicated passes reconcile concepts across sources. Both consume structured `wiki/findings/*.json`; neither reads page prose.
+
+1. **Concept Reconciliation** (`wiki-reconcile-concepts` → `wiki-concept-reconciliation` prompt → `wiki-apply-reconciliation`). The preflight CLI flattens every `concepts[].name` across findings, buckets by normalized stem, and writes `runtime/wiki_reconcile/work_plan.yaml` plus `reconcile_request.yaml`. The orchestrator fans out `concept-reconciler` subagents (≤4 parallel) that cluster bucket candidates into alias groups with evidence locators. The postflight CLI promotes one canonical page per group, merges `sources:` lists, appends member definitions under `### Alias Sources` in `## Source Notes`, adds `aliases:` frontmatter, and rewrites losing pages as `type: alias` redirect stubs. Every write is stamped with `source: concept_reconciliation` in the edit manifest.
+2. **Cross-Source Synthesis** (`wiki-cross-source-synthesize` → `wiki-cross-source-synthesis` prompt). For every canonical page backed by ≥2 sources AND covered by findings under ≥2 of those citations, a per-page work item bundles every findings record touching the canonical name or its aliases. The orchestrator's `cross-source-synthesizer` subagents rewrite Definition / Key Claims / Open Questions to explicitly surface inter-source agreement and divergence, citing each claim with `[citation_id, locator]`. Writes land with `source: cross_source_synthesis`.
+
+The `wiki_linking.py` linker indexes every canonical page's `aliases:` list as secondary display names, so a mention of "Johnson noise" anywhere in the wiki now links to `concept-thermal.md`. Run `meta-compiler wiki-link --version 2` after reconciliation to pick up the new aliases. Hook `gate_reconcile_request` blocks `wiki-apply-reconciliation` unless both the preflight request and at least one `concept_reconciliation_v*.yaml` proposal exist.
+
+Backwards compatibility with the old `wiki-update` command is intentionally dropped. New-seed arrival is handled by re-running `ingest --scope new` + `research-breadth`; `track-seeds` now reports the handoff instead of mutating the wiki itself.
 
 ### Hook-enforced determinism
 

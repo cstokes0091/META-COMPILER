@@ -1,6 +1,6 @@
 ---
 name: ingest-orchestrator
-description: "Orchestrate full-fidelity extraction of seed documents into findings JSON. Three modes: preflight (verify readiness before fan-out), fanout (default — drive seed-readers), postflight (spot-verify findings fidelity). Usable in Stage 1A (scope=all) and wiki-update (scope=new). Fans out seed-reader subagents; never uses explore."
+description: "Orchestrate full-fidelity extraction of seed documents into findings JSON. Three modes: preflight (verify readiness before fan-out), fanout (default — drive seed-readers), postflight (spot-verify findings fidelity). Usable in Stage 1A (scope=all) and for incremental re-ingest (scope=new). Fans out seed-reader subagents; never uses explore."
 tools: [read, search, edit, execute, agent, todo]
 agents: [seed-reader]
 user-invocable: true
@@ -45,7 +45,7 @@ The CLI writes the request file for each non-fanout mode (`ingest-precheck`, `in
 
 - DO NOT use `explore` or `research` subagents for reading seeds. Explore hallucinates on long documents; that is the exact failure this orchestrator exists to prevent.
 - DO NOT read seed contents yourself in fanout mode. Delegate every seed to a `seed-reader` subagent.
-- DO NOT write or modify wiki pages. That belongs to the Stage 1A / wiki-update enrichment pass.
+- DO NOT write or modify wiki pages. That belongs to the Stage 1A enrichment pass and the downstream semantic wiki enrichment (`wiki-reconcile-concepts` / `wiki-cross-source-synthesize`).
 - DO NOT invent findings or locators. Empty lists are valid when a document lacks that category.
 - DO NOT re-extract a seed whose `file_hash` is already recorded in `workspace-artifacts/wiki/findings/index.yaml` when scope is `new`.
 - DO NOT exceed 4 concurrent `seed-reader` subagents.
