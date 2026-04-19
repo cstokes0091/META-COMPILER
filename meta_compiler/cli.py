@@ -10,13 +10,24 @@ from .stages.audit_stage import run_audit_requirements
 from .stages.breadth_stage import run_research_breadth
 from .stages.clean_stage import run_clean_workspace
 from .stages.depth_stage import run_research_depth
+from .stages.enrichment_stage import run_enrich_wiki
+from .stages.relationship_stage import (
+    run_apply_relationships,
+    run_propose_relationships,
+)
+from .wiki_linking import run_wiki_link
 from .stages.elicit_stage import (
     run_elicit_vision_finalize,
     run_elicit_vision_start,
 )
-from .stages.ingest_stage import run_ingest, validate_all_findings
+from .stages.ingest_stage import (
+    run_ingest,
+    run_ingest_postcheck,
+    run_ingest_precheck,
+    validate_all_findings,
+)
 from .stages.init_stage import run_meta_init
-from .stages.phase4_stage import run_phase4_finalize
+from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
@@ -83,6 +94,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seed scope to prepare for the ingest orchestrator",
     )
 
+    ingest_precheck_parser = subparsers.add_parser(
+        "ingest-precheck",
+        help="Write the ingest preflight request for the orchestrator (Step 2)",
+    )
+    _add_common_paths(ingest_precheck_parser)
+    ingest_precheck_parser.add_argument(
+        "--scope",
+        default="new",
+        choices=["all", "new"],
+        help="Scope the preflight checks should validate against",
+    )
+
+    ingest_postcheck_parser = subparsers.add_parser(
+        "ingest-postcheck",
+        help="Write the ingest postflight request for the orchestrator (Step 5)",
+    )
+    _add_common_paths(ingest_postcheck_parser)
+
     ingest_validate_parser = subparsers.add_parser(
         "ingest-validate",
         help="Validate findings JSON files produced by ingest orchestration",
@@ -91,9 +120,62 @@ def _build_parser() -> argparse.ArgumentParser:
 
     depth_parser = subparsers.add_parser("research-depth", help="Run Stage 1B depth pass")
     _add_common_paths(depth_parser)
+    depth_parser.add_argument(
+        "--force-regenerate-v2",
+        action="store_true",
+        help=(
+            "Wipe v2 pages and re-copy from v1, discarding any enrichment or "
+            "manual edits. Default: preserve edits via the v2 edit manifest."
+        ),
+    )
 
     review_parser = subparsers.add_parser("review", help="Run Stage 1C review panel")
     _add_common_paths(review_parser)
+
+    enrich_parser = subparsers.add_parser(
+        "enrich-wiki",
+        help="Prepare a work plan for the wiki-synthesizer agent (v2 only)",
+    )
+    _add_common_paths(enrich_parser)
+    enrich_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version to enrich. Only 2 is supported (v1 stays templated).",
+    )
+
+    wiki_link_parser = subparsers.add_parser(
+        "wiki-link",
+        help="Insert inline links between v2 concept pages (deterministic, idempotent)",
+    )
+    _add_common_paths(wiki_link_parser)
+    wiki_link_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version to link. Only 2 is supported.",
+    )
+
+    propose_rel_parser = subparsers.add_parser(
+        "propose-relationships",
+        help="Prepare a request for the relationship-mapper agent (v2 only)",
+    )
+    _add_common_paths(propose_rel_parser)
+
+    apply_rel_parser = subparsers.add_parser(
+        "apply-relationships",
+        help="Merge accepted relationship-mapper proposals into v2 pages",
+    )
+    _add_common_paths(apply_rel_parser)
+    apply_rel_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version. Only 2 is supported.",
+    )
 
     audit_parser = subparsers.add_parser(
         "audit-requirements",
@@ -145,7 +227,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     phase4_parser = subparsers.add_parser(
         "phase4-finalize",
-        help="Run Stage 4 execution and pitch generation",
+        help="Run Stage 4 execution and pitch generation (prompt-as-conductor)",
     )
     _add_common_paths(phase4_parser)
     phase4_parser.add_argument(
@@ -153,6 +235,22 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Decision log version to finalize (default: latest scaffold/decision log)",
+    )
+    # Prompt-as-conductor bookends. --start prepares the dispatch plan + execution
+    # request and stops; the LLM ralph loop populates executions/v{N}/work/.
+    # --finalize compiles FINAL_OUTPUT_MANIFEST.yaml from work/ and emits the
+    # pitch deck. If neither flag is passed, falls back to the legacy
+    # subprocess-based execution.
+    phase4_mode_group = phase4_parser.add_mutually_exclusive_group()
+    phase4_mode_group.add_argument(
+        "--start",
+        action="store_true",
+        help="Stage 4 preflight: write dispatch_plan.yaml + execution_request.yaml",
+    )
+    phase4_mode_group.add_argument(
+        "--finalize",
+        action="store_true",
+        help="Stage 4 finalize: compile FINAL_OUTPUT_MANIFEST + pitch deck from work/",
     )
 
     run_all_parser = subparsers.add_parser(
@@ -304,6 +402,17 @@ def main(argv: list[str] | None = None) -> int:
                 workspace_root=workspace_root,
                 scope=args.scope,
             )
+        elif args.command == "ingest-precheck":
+            result = run_ingest_precheck(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                scope=args.scope,
+            )
+        elif args.command == "ingest-postcheck":
+            result = run_ingest_postcheck(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+            )
         elif args.command == "ingest-validate":
             result = validate_all_findings(artifacts_root=artifacts_root)
             if result["total_issues"]:
@@ -312,9 +421,36 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "research-breadth":
             result = run_research_breadth(artifacts_root=artifacts_root, workspace_root=workspace_root)
         elif args.command == "research-depth":
-            result = run_research_depth(artifacts_root=artifacts_root, workspace_root=workspace_root)
+            result = run_research_depth(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                force_regenerate_v2=args.force_regenerate_v2,
+            )
         elif args.command == "review":
             result = run_review(artifacts_root=artifacts_root)
+        elif args.command == "enrich-wiki":
+            result = run_enrich_wiki(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
+        elif args.command == "wiki-link":
+            result = run_wiki_link(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
+        elif args.command == "propose-relationships":
+            result = run_propose_relationships(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+            )
+        elif args.command == "apply-relationships":
+            result = run_apply_relationships(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
         elif args.command == "audit-requirements":
             result = run_audit_requirements(
                 artifacts_root=artifacts_root,
@@ -339,11 +475,19 @@ def main(argv: list[str] | None = None) -> int:
                 decision_log_version=args.decision_log_version,
             )
         elif args.command == "phase4-finalize":
-            result = run_phase4_finalize(
-                artifacts_root=artifacts_root,
-                workspace_root=workspace_root,
-                decision_log_version=args.decision_log_version,
-            )
+            if args.start:
+                result = run_phase4_start(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    decision_log_version=args.decision_log_version,
+                )
+            else:
+                # --finalize or neither (legacy fallback inside run_phase4_finalize).
+                result = run_phase4_finalize(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    decision_log_version=args.decision_log_version,
+                )
         elif args.command == "wiki-update":
             result = run_wiki_update(artifacts_root=artifacts_root, workspace_root=workspace_root)
         elif args.command == "run-all":

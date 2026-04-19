@@ -54,6 +54,7 @@ Both modes read only. You never write to `decision_log_v{N}.yaml`, never modify 
 - **Fidelity, decision by decision.** For each decision block in the transcript, find its corresponding YAML entry. Compare the block's `Choice`/`Approach`/`Description` against the YAML `choice`/`approach`/`description`. Flag any paraphrase that changes meaning, drops a constraint, or loses a qualifier.
 - **Rationale preservation.** The block's `Rationale` maps to the YAML `rationale` (for conventions/architecture/requirements) or lives in adjacent prose. Flag missing or truncated rationales.
 - **Alternatives preservation.** For architecture blocks with `Alternatives rejected`, every alternative in the transcript must appear in the YAML. Flag any alternative lost in compile.
+- **Probe coverage (anti-shallow check).** For each decision block, scan the transcript prose between the previous block (or the area heading) and this block. Confirm at least **4 probes** from the section's probe library at `.github/docs/stage-2-probes.md` were addressed. The CLI's `probe_coverage` mechanical check counts `- Probe:` annotation lines per block; you do the semantic check — does the prose actually reflect engagement with the probe (asking the human, surfacing wiki context, or noting "not applicable" with a reason)? Decorative `- Probe:` lines that don't match transcript engagement count as drift; flag the block REVISE with `transcript_anchor` pointing to the block name.
 - **Cascade contradictions.** Read the full compiled Decision Log. Do any decisions contradict each other? (e.g., a convention that conflicts with an architecture decision; an in-scope item with no corresponding requirement; an out-of-scope item referenced by an in-scope requirement.) Flag internal contradictions as REVISE.
 - **Re-entry consistency.** If `meta.parent_version` is non-null, read the prior Decision Log. Decisions carried forward from the prior version should remain semantically consistent unless the revision explicitly changed them. Flag carried-forward decisions whose meaning has drifted.
 
@@ -61,6 +62,7 @@ Both modes read only. You never write to `decision_log_v{N}.yaml`, never modify 
 
 - Any semantic drift that changes the meaning of a decision → `verdict: REVISE`.
 - Any internal contradiction → `verdict: REVISE`.
+- Any decision block with fewer than 4 substantively addressed probes → `verdict: REVISE` (use the `probe_coverage` check name for traceability).
 - Otherwise → `verdict: PROCEED`.
 
 ## Verdict schema (both modes)

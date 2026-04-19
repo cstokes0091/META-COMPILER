@@ -821,17 +821,18 @@ Each step should be a separate commit. The system should remain runnable end-to-
 
 **Migration for existing Decision Logs (v1, v2, etc. already on disk).** No migration needed. The Decision Log YAML schema is unchanged — only the authoring path changes. Existing Decision Logs continue to work with Stage 3 scaffold generation.
 
-**Re-entry.** `stage2-reentry` currently produces a partial YAML template with `_prior_*` sections. Under the new flow, re-entry produces a transcript seeded with carried-forward decision blocks (marked as `from_version: v<N>`), and the human+LLM converse only about the sections flagged for revision. The same `--finalize` code path handles v2+. Details TBD in implementation step 9.
+**Re-entry.** `stage2-reentry` currently produces a partial YAML template with `_prior_*` sections. Under the new flow, re-entry produces a transcript seeded with carried-forward decision blocks (marked as `from_version: v<N>`), and the human+LLM converse only about the sections flagged for revision. The same `--finalize` code path handles v2+. The implementation lives in `meta_compiler/stages/stage2_reentry.py` and is exercised by `tests/test_stage2_reentry*.py`; the conductor prompt is `.github/prompts/stage2-reentry.prompt.md`.
 
 ---
 
 ## 14. Relation to the other roadmap items
 
-This spec is the template for:
+This spec was the template; the pattern is now extracted into
+`.github/docs/prompt-as-conductor.md`. Status of the four roadmap items:
 
-- **Ingest-orchestrator prompt-as-conductor.** Same pattern: `meta-compiler ingest --scope all` is Step 1 (mechanical work-plan + pre-extraction). `@ingest-orchestrator` invocation is Step 3 (semantic fan-out to `seed-reader` subagents). `meta-compiler ingest-validate` is Step 4 (mechanical fidelity). Missing today: Step 2 (pre-ingest readiness check) and Step 5 (post-ingest fidelity audit). The Stage 2 design generalizes directly.
-- **Stage 1A2 orchestration.** Already uses a prompt-as-conductor shape (`stage-1a2-orchestration.prompt.md` + `stage-1a2-orchestrator.agent.md`). The `suggested_sources` collection pipeline is essentially what Step 1 here does for gaps. Worth revisiting once Stage 2 is stable.
-- **Ralph-loop implementers (Stage 4 runtime).** The scaffold-generated `execution-orchestrator.agent.md` already describes the ralph loop, but the CLI does not drive it. Applying the prompt-as-conductor pattern there: a Stage 4 prompt would sequence mechanical dispatch-plan writes → agent implementer invocations → mechanical reviewer invocations → mechanical compile of results.
-- **Runtime fan-out.** Once the conductor pattern is solid, "fan-out" is a matter of the prompt invoking N agents in parallel at Step 3 rather than one. No architectural change.
+- **Ingest-orchestrator prompt-as-conductor — implemented.** `meta-compiler ingest-precheck` (Step 2) and `meta-compiler ingest-postcheck` (Step 5) are wired; `ingest-orchestrator` runs in `mode=preflight | fanout | postflight`. Hooks: `gate_ingest_precheck`, `gate_ingest_postcheck`, `require_ingest_precheck_verdict`, `require_ingest_postcheck_verdict`.
+- **Ralph-loop implementers (Stage 4 runtime) — implemented.** `phase4-finalize` is split into `--start` (writes `dispatch_plan.yaml` + `execution_request.yaml`) and `--finalize` (compiles `FINAL_OUTPUT_MANIFEST.yaml` from LLM-populated `executions/v{N}/work/`, writes pitch deck + postcheck request). Hook: `gate_phase4_finalize`. Conductor prompt: `.github/prompts/stage-4-finalize.prompt.md`.
+- **Stage 1A2 orchestration — remaining.** Still uses an older shape (`stage-1a2-orchestration.prompt.md` + `stage-1a2-orchestrator.agent.md`). Apply the conductor pattern in a follow-up; nothing about Stage 1A2 makes it special, it just hasn't been migrated yet.
+- **Runtime fan-out — implemented at the prompt layer.** All three conductor prompts (stage-2-dialog, ingest-orchestrator, stage-4-finalize) instruct the LLM to fan out subagents in parallel at Step 3.
 
-The pattern is extractable into `.github/docs/prompt-as-conductor.md` after Stage 2 and one more roadmap item (ingest-orchestrator is the natural second) have both been implemented against it.
+Future stages should consult `.github/docs/prompt-as-conductor.md` rather than re-derive the pattern.

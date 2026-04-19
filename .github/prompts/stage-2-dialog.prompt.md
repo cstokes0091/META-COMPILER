@@ -66,6 +66,46 @@ Your dialog is asymmetric:
   > "The wiki shows approaches A (citing `src-smith2024-psf §3.2`) and B (citing `src-jones2023-orbital eq.14`). A optimizes for X; B optimizes for Y. Which fits your constraint that Z?"
 - Avoid yes/no ladders. Avoid forms. Avoid schema-shaped questions. "What are your conventions?" is a form; "the wiki has no committed notation for this concept — does your existing code use <A> or <B>?" is a conversation.
 
+### Walking the probe library before each decision block
+
+Before you write a decision block, walk the section's probe library at
+`.github/docs/stage-2-probes.md`. Each section (`conventions`, `architecture`,
+`requirements`, `scope-in`/`scope-out`, `open_items`, `agents_needed`) has
+6–10 probes; the floor is **at least 4 probes addressed** before the block
+lands. Shallow blocks with fewer than 4 probes will be flagged `REVISE` by
+the postflight.
+
+Walking a probe means doing one of:
+
+- Asking the human a focused narrowing question that maps to the probe.
+- Stating an answer drawn from the wiki and asking the human to confirm or
+  amend it.
+- Explicitly noting "not applicable, because <one-sentence reason>".
+
+As you walk, annotate the transcript prose so the postflight can see your
+work. Use this exact line format above the decision block:
+
+```
+- Probe: <probe name> — <one-line summary of how it was addressed>
+```
+
+Example for an `architecture` block:
+
+```
+- Probe: alternatives_rejected — discussed sliding-window vs CRDT vs OT; CRDT rejected for cost.
+- Probe: invariants — committed to monotonic causal order via Lamport clocks.
+- Probe: failure_modes — accepted eventual consistency; rejected quorum loss.
+- Probe: measurable_success — convergence time < 250ms p95 on 10-node mesh.
+
+### Decision: collaborative-edit-engine
+- Section: architecture
+…
+```
+
+The postflight (`probe_coverage` check in `mechanical_fidelity_checks` plus
+the `stage2-orchestrator` semantic audit) counts these `- Probe:` lines per
+block. Below 4 → `REVISE`.
+
 ### Writing to the transcript
 
 Append turn-by-turn prose to `transcript.md` under the appropriate `## Decision Area:` heading. Prose captures thinking; decision blocks capture commitments.
