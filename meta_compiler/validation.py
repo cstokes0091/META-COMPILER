@@ -383,6 +383,28 @@ def validate_source_bindings(bindings_payload: dict[str, Any]) -> list[str]:
             f"source bindings.{relative_path}",
             issues,
         )
+
+    code_bindings = bindings_payload.get("code_bindings")
+    if code_bindings is None:
+        return issues
+    if not isinstance(code_bindings, dict):
+        issues.append("source bindings.code_bindings: must be an object when present")
+        return issues
+
+    for relative_path, row in code_bindings.items():
+        if not isinstance(row, dict):
+            issues.append(f"source bindings.code_bindings.{relative_path}: must be an object")
+            continue
+        _require_fields(
+            row,
+            ["type", "remote", "ref", "commit_sha", "cloned_at", "citation_id"],
+            f"source bindings.code_bindings.{relative_path}",
+            issues,
+        )
+        if row.get("type") != "code-repo":
+            issues.append(
+                f"source bindings.code_bindings.{relative_path}.type: must be 'code-repo'"
+            )
     return issues
 
 

@@ -28,13 +28,20 @@ VSCode Copilot hooks intercept lifecycle events (SessionStart, UserPromptSubmit,
 | `require_verdict_{preflight,postflight}` | Agent SubagentStop | Block agent stop without verdict. |
 | `gate_ingest_workplan` | Agent PreToolUse | Deny ingest-orchestrator fan-out without work_plan.yaml. |
 | `require_ingest_report` / `require_handoff` | Agent SubagentStop | Block stop without output artifact. |
-| `validate_findings_schema` | Agent PostToolUse (Write) | Deny malformed findings JSON at write time. |
+| `validate_findings_schema` | Agent PostToolUse (Write) | Deny malformed findings JSON at write time. Polymorphic on `source_type` — accepts doc findings (`citation_id` + `concepts`), code findings (`file_metadata` + line-anchored `symbols[]`), or legacy `{source_id, findings[]}` shape. |
+| `validate_repo_map_schema` | Agent PostToolUse (Write) | Deny malformed RepoMap YAML under `runtime/ingest/repo_map/` at write time. Requires `repo_name`, `commit_sha`, `languages[]`, and non-empty `priority_files[{path,rank,reason}]`. Wired from `repo-mapper.agent.md` frontmatter. |
 
 ## Override mechanisms
 
 ### Per-call env flag
 
-Set `META_COMPILER_SKIP_HOOK=1` in the tool call env. Honored by `gate_cli`, `gate_artifact_writes`, and the auto-fire chain runner's child invocations. **Not honored by** `gate_reentry_request`, `gate_orchestrator_mode_*`, `require_verdict_*`, or `validate_findings_schema`.
+Set `META_COMPILER_SKIP_HOOK=1` in the tool call env. Honored by `gate_cli`, `gate_artifact_writes`, and the auto-fire chain runner's child invocations. **Not honored by** `gate_reentry_request`, `gate_orchestrator_mode_*`, `require_verdict_*`, `validate_findings_schema`, or `validate_repo_map_schema`.
+
+### Code ingestion interaction
+
+- `add-code-seed` and `bind-code-seed` pass `gate_cli` from any post-init stage (`0`/`1a`/`1b`/`1c`/`2`).
+- `git clone` inside `add-code-seed` runs via `subprocess.run` (not the VSCode Write tool), so `gate_artifact_writes` never sees it — the clone populates `seeds/code/<name>/` without tripping the seeds-immutability gate.
+- Per-file `code-reader` subagents inherit the same `validate_findings_schema` hook as `seed-reader`; the polymorphic dispatcher applies code-specific checks when `source_type: "code"` or `file_metadata` is present.
 
 ### Config file
 

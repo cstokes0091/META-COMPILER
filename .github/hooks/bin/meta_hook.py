@@ -303,6 +303,8 @@ STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
     "meta-init": {"allowed_prior": ["(none)"], "sets": "0"},
     "ingest": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
     "ingest-validate": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
+    "add-code-seed": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
+    "bind-code-seed": {"allowed_prior": ["0", "1a", "1b", "1c", "2"], "sets": None},
     "research-breadth": {"allowed_prior": ["0"], "sets": None},
     "research-depth": {"allowed_prior": ["1a"], "sets": None},
     "review": {"allowed_prior": ["1b"], "sets": None},
@@ -869,6 +871,32 @@ def require_handoff(payload):
 FINDINGS_SCHEMA_REQUIRED: list[str] = ["source_id", "findings"]
 FINDINGS_ITEM_REQUIRED: list[str] = ["claim", "quote", "location"]
 
+CODE_FINDINGS_REQUIRED: list[str] = [
+    "citation_id",
+    "seed_path",
+    "file_hash",
+    "file_metadata",
+    "symbols",
+    "claims",
+    "quotes",
+    "dependencies",
+]
+
+DOC_FINDINGS_REQUIRED: list[str] = [
+    "citation_id",
+    "seed_path",
+    "file_hash",
+    "concepts",
+    "quotes",
+    "claims",
+]
+
+
+def _is_code_payload(data: dict[str, Any]) -> bool:
+    if data.get("source_type") == "code":
+        return True
+    return isinstance(data.get("file_metadata"), dict)
+
 
 @register("validate_findings_schema")
 def validate_findings_schema(payload: dict[str, Any]) -> dict[str, Any]:
@@ -903,6 +931,36 @@ def validate_findings_schema(payload: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(data, dict):
         return _deny(f"{fp.name} top-level is not an object.")
+
+    # Polymorphic dispatch. Code payloads use {file_metadata, symbols, ...};
+    # modern doc payloads use {citation_id, concepts, ...}; legacy payloads
+    # still carrying {source_id, findings[]} stay permitted for back-compat.
+    if _is_code_payload(data):
+        for field in CODE_FINDINGS_REQUIRED:
+            if field not in data:
+                return _deny(f"{fp.name} (code) missing required field '{field}'.")
+        symbols = data.get("symbols")
+        if not isinstance(symbols, list):
+            return _deny(f"{fp.name} (code): 'symbols' must be a list.")
+        for i, sym in enumerate(symbols):
+            if not isinstance(sym, dict):
+                return _deny(f"{fp.name} (code): symbols[{i}] is not an object.")
+            loc = sym.get("locator")
+            if not isinstance(loc, dict) or not loc.get("file") or not isinstance(loc.get("line_start"), int):
+                return _deny(
+                    f"{fp.name} (code): symbols[{i}].locator must include file + integer line_start."
+                )
+        return {"permissionDecision": "allow"}
+
+    if "citation_id" in data and "concepts" in data:
+        for field in DOC_FINDINGS_REQUIRED:
+            if field not in data:
+                return _deny(f"{fp.name} (doc) missing required field '{field}'.")
+        return {"permissionDecision": "allow"}
+
+    # Legacy shape — kept for back-compat with existing callers that haven't
+    # migrated. Future doc writers should use the {citation_id, concepts, ...}
+    # shape above.
     for field in FINDINGS_SCHEMA_REQUIRED:
         if field not in data:
             return _deny(f"{fp.name} missing required field '{field}'.")
@@ -915,6 +973,75 @@ def validate_findings_schema(payload: dict[str, Any]) -> dict[str, Any]:
         for field in FINDINGS_ITEM_REQUIRED:
             if field not in item:
                 return _deny(f"{fp.name}: findings[{i}] missing '{field}'.")
+    return {"permissionDecision": "allow"}
+
+
+REPO_MAP_REQUIRED: list[str] = [
+    "repo_name",
+    "commit_sha",
+    "languages",
+    "priority_files",
+]
+
+
+@register("validate_repo_map_schema")
+def validate_repo_map_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    ws = resolve_workspace_root(payload)
+    fp_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not fp_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(fp_str).resolve()
+        rel = fp.relative_to(ws).as_posix()
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+    if not rel.startswith("workspace-artifacts/runtime/ingest/repo_map/") or not rel.endswith(".yaml"):
+        return {"permissionDecision": "allow"}
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "validate_repo_map_schema", "PostToolUse", "deny",
+                     reason=msg, extra={"file_path": rel})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": (
+                "Repair the RepoMap YAML before the file is persisted. "
+                "See .github/prompts/ingest-orchestrator.prompt.md § RepoMap Schema."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    try:
+        text = fp.read_text(encoding="utf-8")
+    except OSError as e:
+        return _deny(f"{fp.name}: unreadable ({e})")
+
+    try:
+        data = _parse_yaml_subset(text)
+    except ValueError as e:
+        return _deny(f"{fp.name}: unparseable YAML ({e})")
+
+    if not isinstance(data, dict):
+        return _deny(f"{fp.name}: top-level must be a mapping.")
+
+    for field in REPO_MAP_REQUIRED:
+        if field not in data:
+            return _deny(f"{fp.name}: missing required field '{field}'.")
+
+    priority = data.get("priority_files")
+    if not isinstance(priority, list) or not priority:
+        return _deny(f"{fp.name}: priority_files must be a non-empty list.")
+    for i, entry in enumerate(priority):
+        if not isinstance(entry, dict):
+            return _deny(f"{fp.name}: priority_files[{i}] is not an object.")
+        for needed in ("path", "rank", "reason"):
+            if needed not in entry:
+                return _deny(f"{fp.name}: priority_files[{i}] missing '{needed}'.")
+
+    languages = data.get("languages")
+    if not isinstance(languages, list):
+        return _deny(f"{fp.name}: languages must be a list.")
+
     return {"permissionDecision": "allow"}
 
 

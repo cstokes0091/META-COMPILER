@@ -72,11 +72,12 @@ The artifact tree under `workspace-artifacts/` is the source of truth. All paths
 ```
 workspace-artifacts/
   seeds/                    # Immutable once tracked
+    code/<repo-name>/       # Git-pinned code seed (immutable at commit SHA)
   wiki/
-    v1/pages/               # Stage 1A output
+    v1/pages/               # Stage 1A output (type: source|concept|code|code-repo)
     v2/pages/               # Stage 1B output
     citations/index.yaml    # Every claim traces to an ID here
-    findings/               # Findings JSON from ingest-orchestrator
+    findings/               # Findings JSON from ingest-orchestrator (doc + code)
     reports/                # Gap reports, impact reports, seed tracking
     reviews/search/         # Reviewer-scoped external search artifacts
     provenance/what_i_built.md  # Refreshed at Stage 3 and Stage 4
@@ -85,10 +86,25 @@ workspace-artifacts/
   executions/v{N}/          # Stage 4 final outputs
   pitches/                  # Markdown + PPTX decks
   manifests/workspace_manifest.yaml
+  manifests/source_bindings.yaml  # bindings (per-file) + code_bindings (per-repo commit SHA)
   runtime/                  # Ephemeral work plans (e.g., ingest/work_plan.yaml)
+    ingest/repo_map/<name>.yaml   # Per-repo RepoMap written by the repo-mapper subagent
 ```
 
 When modifying any stage, verify `validation.py` still enforces the invariants for the affected artifacts (`validate-stage --stage <N>`).
+
+### Code Ingestion
+
+Code seeds are registered by `meta-compiler add-code-seed --repo <url> --ref <sha|tag> --name <slug>` (clones into `seeds/code/<slug>/` and pins HEAD) or `meta-compiler bind-code-seed --path <rel>` (records an existing clone's HEAD). Both write a `code_bindings` entry to `source_bindings.yaml`; `validate_seed_immutability` enforces commit-SHA drift for those prefixes instead of per-file SHA.
+
+`meta-compiler ingest` classifies every seed as `seed_kind: doc` or `seed_kind: code` (based on whether its path lives under a registered code_bindings prefix plus an extension check), mints `src-<repo>-<path-slug>` citation IDs for code, and emits a `repo_map_items[]` block in the work plan. The `ingest-orchestrator` runs a two-pass protocol:
+
+- **Pass 1 (repo-mapping).** For each `repo_map_items[]` entry, spawn a `repo-mapper` subagent (≤2 parallel). It walks the pinned tree via `git ls-files`, detects languages / entry points / modules / manifests, and writes `runtime/ingest/repo_map/<name>.yaml`. The `validate_repo_map_schema` hook gates that write.
+- **Pass 2 (per-file fan-out).** Partition `work_items` by `seed_kind`; spawn `seed-reader` for doc items and `code-reader` for code items (≤4 parallel across both). Each `code-reader` receives the RepoMap YAML for its repo as additional context and emits a code findings JSON with `source_type: "code"` and `{file, line_start, line_end}` locators.
+
+Both finding kinds share `wiki/findings/`. `validate_findings_file` dispatches on `source_type`/`file_metadata`; hook `validate_findings_schema` is correspondingly polymorphic.
+
+In the wiki, code findings render `type: code` pages (per file), and each registered repo gets a `type: code-repo` overview page rendered from its RepoMap. Concept aggregation (`breadth_stage.py:_aggregate_concepts_from_findings`) is unchanged — concepts from doc and code findings merge into the same concept page, giving doc↔code cross-references for free.
 
 ### Provisioned `.github/` Assets
 

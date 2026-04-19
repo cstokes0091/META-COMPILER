@@ -10,6 +10,7 @@ from ..artifacts import (
     compute_seed_version,
     compute_wiki_version,
     ensure_layout,
+    list_code_repos,
     list_seed_files,
     load_manifest,
     save_manifest,
@@ -148,6 +149,21 @@ def _ordered_unique(values: list[str]) -> list[str]:
 def _format_locator(locator: Any) -> str:
     if not isinstance(locator, dict):
         return ""
+
+    if locator.get("file"):
+        file_marker = str(locator["file"])
+        line_start = locator.get("line_start")
+        line_end = locator.get("line_end")
+        line_piece = ""
+        if isinstance(line_start, int):
+            line_piece = f":{line_start}"
+            if isinstance(line_end, int) and line_end != line_start:
+                line_piece += f"-{line_end}"
+        parts = [f"{file_marker}{line_piece}"]
+        symbol = locator.get("symbol")
+        if symbol:
+            parts.append(f"in {symbol}")
+        return f" ({', '.join(parts)})"
 
     parts: list[str] = []
     if locator.get("page") is not None:
@@ -314,6 +330,310 @@ def _render_source_page_from_findings(payload: dict[str, Any], wiki_name: str) -
                 lines.append(f"- Quote{_format_locator(quote.get('locator'))}: {text}")
     elif not abstract:
         lines.append("- No verbatim quotes extracted from findings.")
+
+    return inject_wiki_nav("\n".join(lines) + "\n", wiki_name)
+
+
+def _is_code_finding_payload(payload: dict[str, Any]) -> bool:
+    if payload.get("source_type") == "code":
+        return True
+    return isinstance(payload.get("file_metadata"), dict)
+
+
+def _code_page_id_from_findings(payload: dict[str, Any]) -> str:
+    citation_id = str(payload.get("citation_id") or "")
+    if citation_id:
+        return slugify(citation_id)[:96] or "code"
+    seed_path = str(payload.get("seed_path") or "source")
+    return slugify(seed_path)[:96] or "code"
+
+
+def _render_code_page_from_findings(payload: dict[str, Any], wiki_name: str) -> str:
+    citation_id = str(payload.get("citation_id") or "src-unknown")
+    seed_path = str(payload.get("seed_path") or "unknown-seed")
+    created = str(payload.get("extracted_at") or iso_now())
+    metadata = payload.get("file_metadata") if isinstance(payload.get("file_metadata"), dict) else {}
+    language = str(metadata.get("language") or "").strip() or "unknown"
+    loc = metadata.get("loc")
+    module_path = str(metadata.get("module_path") or "").strip()
+    repo_citation_id = str(metadata.get("repo_citation_id") or "").strip()
+    completeness = str((payload.get("extraction_stats") or {}).get("completeness") or "raw")
+
+    concept_page_ids = [
+        _normalize_relationship_page_id(str(concept.get("name") or ""))
+        for concept in payload.get("concepts", [])
+        if isinstance(concept, dict)
+    ]
+    concept_page_ids = _ordered_unique([page_id for page_id in concept_page_ids if page_id])
+
+    symbols = [row for row in payload.get("symbols", []) if isinstance(row, dict)]
+    claims = [row for row in payload.get("claims", []) if isinstance(row, dict)]
+    quotes = [row for row in payload.get("quotes", []) if isinstance(row, dict)]
+    dependencies = [row for row in payload.get("dependencies", []) if isinstance(row, dict)]
+    relationships = [row for row in payload.get("relationships", []) if isinstance(row, dict)]
+    open_questions = _ordered_unique(
+        [str(item) for item in payload.get("open_questions", []) if str(item).strip()]
+    )
+
+    related_pages = list(concept_page_ids)
+    if repo_citation_id:
+        repo_page_id = slugify(repo_citation_id)[:64]
+        if repo_page_id and repo_page_id not in related_pages:
+            related_pages.append(repo_page_id)
+
+    frontmatter = {
+        "id": _code_page_id_from_findings(payload),
+        "type": "code",
+        "language": language,
+        "created": created,
+        "sources": [citation_id],
+        "related": related_pages,
+        "status": "reviewed" if completeness == "full" else "raw",
+    }
+    if repo_citation_id:
+        frontmatter["repo"] = repo_citation_id
+
+    relationship_buckets = _relationship_buckets(relationships)
+
+    title = Path(seed_path).name or frontmatter["id"]
+    lines = [
+        "---",
+        render_frontmatter(frontmatter),
+        "---",
+        f"# {title}",
+        "",
+        "## Definition",
+        f"Code extraction summary for `{seed_path}`.",
+        "",
+        "## File Overview",
+        f"- Language: {language}",
+    ]
+    if isinstance(loc, int):
+        lines.append(f"- Lines of code: {loc}")
+    if module_path:
+        lines.append(f"- Module: `{module_path}`")
+    if repo_citation_id:
+        lines.append(f"- Repo: {citation_markdown_link(repo_citation_id)}")
+
+    lines.extend(["", "## Symbols"])
+    if symbols:
+        for symbol in symbols:
+            kind = str(symbol.get("kind") or "symbol")
+            name = str(symbol.get("name") or "").strip() or "(unnamed)"
+            signature = str(symbol.get("signature") or "").strip()
+            visibility = str(symbol.get("visibility") or "").strip()
+            suffix_parts: list[str] = []
+            if visibility:
+                suffix_parts.append(visibility)
+            suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+            sig_piece = f" `{signature}`" if signature else ""
+            lines.append(
+                f"- [{kind}] {name}{sig_piece}{_format_locator(symbol.get('locator'))}{suffix}"
+            )
+    else:
+        lines.append("- No symbols extracted from findings.")
+
+    lines.extend(["", "## Dependencies"])
+    if dependencies:
+        for dep in dependencies:
+            kind = str(dep.get("kind") or "import")
+            target = str(dep.get("target") or "").strip() or "(unknown)"
+            lines.append(f"- {kind}: `{target}`{_format_locator(dep.get('locator'))}")
+    else:
+        lines.append("- No external dependencies recorded.")
+
+    lines.extend(["", "## Key Claims"])
+    if claims:
+        for claim in claims:
+            statement = str(claim.get("statement") or "").strip()
+            if not statement:
+                continue
+            evidence = str(claim.get("evidence") or "").strip()
+            lines.append(
+                f"- {statement}{_format_locator(claim.get('locator'))} {citation_markdown_link(citation_id)}"
+                + (f" — {evidence}" if evidence else "")
+            )
+    else:
+        lines.append(f"- Extraction recorded for this file {citation_markdown_link(citation_id)}")
+
+    lines.extend(["", *_render_relationship_lines(relationship_buckets), "", "## Open Questions"])
+    if open_questions:
+        lines.extend([f"- {question}" for question in open_questions])
+    else:
+        partial_reason = str((payload.get("extraction_stats") or {}).get("partial_reason") or "").strip()
+        if partial_reason:
+            lines.append(f"- Extraction was partial: {partial_reason}")
+        else:
+            lines.append("- No open questions recorded in findings.")
+
+    lines.extend(["", "## Source Notes"])
+    if quotes:
+        for quote in quotes[:6]:
+            text = str(quote.get("text") or "").strip()
+            if not text:
+                continue
+            locator_line = _format_locator(quote.get("locator"))
+            lines.append(f"- Quote{locator_line}:")
+            lines.append("")
+            lines.append(f"```{language if language != 'unknown' else ''}".rstrip())
+            lines.append(text)
+            lines.append("```")
+    else:
+        lines.append("- No verbatim snippets extracted from findings.")
+
+    return inject_wiki_nav("\n".join(lines) + "\n", wiki_name)
+
+
+def _render_repo_overview_page(
+    repo_map: dict[str, Any],
+    wiki_name: str,
+    repo_file_pages: list[dict[str, str]],
+) -> str:
+    """Render a per-repo landing page from a repo-mapper YAML payload."""
+    repo_name = str(repo_map.get("repo_name") or "repo")
+    repo_citation_id = str(repo_map.get("repo_citation_id") or "")
+    remote = str(repo_map.get("remote") or "").strip()
+    commit_sha = str(repo_map.get("commit_sha") or "").strip()
+    cloned_at = str(repo_map.get("cloned_at") or "").strip()
+    languages = repo_map.get("languages") if isinstance(repo_map.get("languages"), list) else []
+    entry_points = repo_map.get("entry_points") if isinstance(repo_map.get("entry_points"), list) else []
+    modules = repo_map.get("modules") if isinstance(repo_map.get("modules"), list) else []
+    priority_files = (
+        repo_map.get("priority_files") if isinstance(repo_map.get("priority_files"), list) else []
+    )
+    test_dirs = repo_map.get("test_dirs") if isinstance(repo_map.get("test_dirs"), list) else []
+
+    page_id = slugify(repo_citation_id)[:64] if repo_citation_id else slugify(f"repo-{repo_name}")[:64]
+    frontmatter = {
+        "id": page_id or "code-repo",
+        "type": "code-repo",
+        "created": cloned_at or iso_now(),
+        "sources": [repo_citation_id] if repo_citation_id else [],
+        "related": [row.get("page_id") for row in repo_file_pages if row.get("page_id")],
+        "status": "reviewed" if languages and priority_files else "raw",
+    }
+
+    lines = [
+        "---",
+        render_frontmatter(frontmatter),
+        "---",
+        f"# {repo_name}",
+        "",
+        "## Definition",
+        f"Repository atlas for code seed `{repo_name}`.",
+        "",
+        "## Overview",
+    ]
+    if remote:
+        lines.append(f"- Remote: `{remote}`")
+    if commit_sha:
+        lines.append(f"- Commit: `{commit_sha}`")
+    if cloned_at:
+        lines.append(f"- Cloned at: {cloned_at}")
+
+    lines.extend(["", "## Languages"])
+    if languages:
+        for lang in languages:
+            if not isinstance(lang, dict):
+                continue
+            name = str(lang.get("name") or "").strip() or "unknown"
+            file_count = lang.get("file_count")
+            total_lines = lang.get("total_lines")
+            suffix_parts: list[str] = []
+            if isinstance(file_count, int):
+                suffix_parts.append(f"{file_count} files")
+            if isinstance(total_lines, int):
+                suffix_parts.append(f"{total_lines} lines")
+            detail = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+            lines.append(f"- {name}{detail}")
+    else:
+        lines.append("- Languages not yet enumerated.")
+
+    lines.extend(["", "## Entry Points"])
+    if entry_points:
+        for entry in entry_points:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path") or "").strip()
+            role = str(entry.get("role") or "").strip()
+            role_piece = f" — {role}" if role else ""
+            if path:
+                lines.append(f"- `{path}`{role_piece}")
+    else:
+        lines.append("- No entry points recorded.")
+
+    lines.extend(["", "## Modules"])
+    if modules:
+        for module in modules:
+            if not isinstance(module, dict):
+                continue
+            path = str(module.get("path") or "").strip()
+            role = str(module.get("role") or "").strip()
+            api = module.get("public_api") if isinstance(module.get("public_api"), list) else []
+            api_piece = ""
+            if api:
+                api_piece = f" — public API: {', '.join(str(item) for item in api[:6])}"
+            role_piece = f" [{role}]" if role else ""
+            if path:
+                lines.append(f"- `{path}`{role_piece}{api_piece}")
+    else:
+        lines.append("- No modules recorded.")
+
+    lines.extend(["", "## Priority Files"])
+    if priority_files:
+        for entry in priority_files[:25]:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path") or "").strip()
+            rank = entry.get("rank")
+            reason = str(entry.get("reason") or "").strip()
+            rank_piece = f"[{rank}] " if rank is not None else ""
+            reason_piece = f" — {reason}" if reason else ""
+            if path:
+                lines.append(f"- {rank_piece}`{path}`{reason_piece}")
+    else:
+        lines.append("- Priority files pending; repo-mapper has not been invoked yet.")
+
+    if test_dirs:
+        lines.extend(["", "## Tests"])
+        for test_dir in test_dirs:
+            if test_dir:
+                lines.append(f"- `{test_dir}`")
+
+    lines.extend(["", "## File Atlas"])
+    if repo_file_pages:
+        for row in repo_file_pages:
+            title = row.get("title") or row.get("page_id")
+            page_ref = row.get("page_id")
+            if page_ref and title:
+                lines.append(f"- [{title}]({page_ref}.md)")
+    else:
+        lines.append("- No per-file code pages rendered yet.")
+
+    lines.extend(
+        [
+            "",
+            "## Key Claims",
+            "- Repository anchor page" + (
+                f" {citation_markdown_link(repo_citation_id)}" if repo_citation_id else ""
+            ),
+            "",
+            "## Relationships",
+            "- prerequisite_for: []",
+            "- depends_on: []",
+            "- contradicts: []",
+            "- extends: []",
+            "",
+            "## Open Questions",
+            "- Track remaining files the orchestrator should ingest at higher fan-out.",
+        ]
+    )
+
+    lines.extend(["", "## Source Notes"])
+    if repo_citation_id:
+        lines.append(f"- Repo citation: {citation_markdown_link(repo_citation_id)}")
+    else:
+        lines.append("- Repo citation pending Stage 1A registration.")
 
     return inject_wiki_nav("\n".join(lines) + "\n", wiki_name)
 
@@ -491,19 +811,52 @@ def _enrich_from_findings(paths: ArtifactPaths, wiki_name: str) -> dict[str, int
             findings_payloads.append(payload)
 
     source_pages_enriched = 0
+    code_pages_enriched = 0
     concept_pages_enriched = 0
+    repo_pages_enriched = 0
     used_citation_ids: set[str] = set()
+    repo_file_pages: dict[str, list[dict[str, str]]] = {}
 
     for payload in findings_payloads:
-        page_id = _source_page_id_from_findings(payload)
-        source_page_path = paths.wiki_v1_pages_dir / f"{page_id}.md"
-        if _should_enrich_page(source_page_path, ["Auto-ingested source page", "Binary seed detected; text extraction deferred."]):
-            source_page_path.write_text(
-                _render_source_page_from_findings(payload, wiki_name=wiki_name),
-                encoding="utf-8",
-            )
-            source_pages_enriched += 1
-            used_citation_ids.add(str(payload.get("citation_id") or ""))
+        citation_id = str(payload.get("citation_id") or "")
+        if _is_code_finding_payload(payload):
+            page_id = _code_page_id_from_findings(payload)
+            page_path = paths.wiki_v1_pages_dir / f"{page_id}.md"
+            if _should_enrich_page(
+                page_path,
+                [
+                    "Code extraction summary for",
+                    "Auto-ingested source page",
+                ],
+            ):
+                page_path.write_text(
+                    _render_code_page_from_findings(payload, wiki_name=wiki_name),
+                    encoding="utf-8",
+                )
+                code_pages_enriched += 1
+                used_citation_ids.add(citation_id)
+            metadata = payload.get("file_metadata") if isinstance(payload.get("file_metadata"), dict) else {}
+            repo_citation_id = str(metadata.get("repo_citation_id") or "")
+            if repo_citation_id:
+                repo_file_pages.setdefault(repo_citation_id, []).append(
+                    {
+                        "page_id": page_id,
+                        "title": Path(str(payload.get("seed_path") or "")).name or page_id,
+                    }
+                )
+        else:
+            page_id = _source_page_id_from_findings(payload)
+            source_page_path = paths.wiki_v1_pages_dir / f"{page_id}.md"
+            if _should_enrich_page(
+                source_page_path,
+                ["Auto-ingested source page", "Binary seed detected; text extraction deferred."],
+            ):
+                source_page_path.write_text(
+                    _render_source_page_from_findings(payload, wiki_name=wiki_name),
+                    encoding="utf-8",
+                )
+                source_pages_enriched += 1
+                used_citation_ids.add(citation_id)
 
     for page_id, aggregate in _aggregate_concepts_from_findings(findings_payloads).items():
         concept_page_path = paths.wiki_v1_pages_dir / f"{page_id}.md"
@@ -521,10 +874,46 @@ def _enrich_from_findings(paths: ArtifactPaths, wiki_name: str) -> dict[str, int
             concept_pages_enriched += 1
             used_citation_ids.update(_ordered_unique([str(item) for item in aggregate.get("citations", [])]))
 
+    # Per-repo overview pages, rendered from runtime/ingest/repo_map/*.yaml.
+    if paths.runtime_repo_map_dir.exists():
+        for repo_map_path in sorted(paths.runtime_repo_map_dir.glob("*.yaml")):
+            repo_map = load_yaml(repo_map_path) or {}
+            if not isinstance(repo_map, dict) or not repo_map:
+                continue
+            repo_citation_id = str(repo_map.get("repo_citation_id") or "")
+            files_for_repo = repo_file_pages.get(repo_citation_id, [])
+            page_id = (
+                slugify(repo_citation_id)[:64] if repo_citation_id
+                else slugify(f"repo-{repo_map.get('repo_name') or 'repo'}")[:64]
+            )
+            if not page_id:
+                continue
+            page_path = paths.wiki_v1_pages_dir / f"{page_id}.md"
+            if _should_enrich_page(
+                page_path,
+                [
+                    "Repository atlas for code seed",
+                    "Auto-ingested source page",
+                ],
+            ):
+                page_path.write_text(
+                    _render_repo_overview_page(
+                        repo_map,
+                        wiki_name=wiki_name,
+                        repo_file_pages=files_for_repo,
+                    ),
+                    encoding="utf-8",
+                )
+                repo_pages_enriched += 1
+                if repo_citation_id:
+                    used_citation_ids.add(repo_citation_id)
+
     return {
         "findings_count": len(findings_payloads),
         "invalid_findings": invalid_findings,
         "source_pages_enriched": source_pages_enriched,
+        "code_pages_enriched": code_pages_enriched,
+        "repo_pages_enriched": repo_pages_enriched,
         "concept_pages_enriched": concept_pages_enriched,
         "findings_marked_used": _mark_findings_used(paths, used_citation_ids),
     }
@@ -589,9 +978,70 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
     if manifest:
         wiki_name = str(manifest.get("workspace_manifest", {}).get("wiki", {}).get("name") or "")
 
+    code_repos = list_code_repos(paths)
+    code_prefixes = [
+        str(row.get("relative_path") or "").rstrip("/") + "/" for row in code_repos
+    ]
+    code_prefixes = [prefix for prefix in code_prefixes if prefix and prefix != "/"]
+
+    # Per-repo placeholder pages — one per registered code seed. These get
+    # replaced by _enrich_from_findings when a RepoMap YAML exists.
+    for row in code_repos:
+        repo_citation_id = str(row.get("citation_id") or "")
+        repo_name = str(row.get("name") or "")
+        if not repo_citation_id or not repo_name:
+            continue
+        if repo_citation_id not in citations:
+            citations[repo_citation_id] = {
+                "human": f"{repo_name} (code repo)",
+                "source": {
+                    "type": "code-repo",
+                    "path": f"/{str(row.get('relative_path') or '').rstrip('/')}/",
+                    "page": None,
+                    "section": None,
+                    "url": row.get("remote"),
+                    "accessed": None,
+                },
+                "metadata": {
+                    "authors": [],
+                    "title": repo_name,
+                    "year": None,
+                    "venue": "code-repo",
+                    "doi": None,
+                    "file_hash": row.get("commit_sha"),
+                    "commit_sha": row.get("commit_sha"),
+                    "ref": row.get("ref"),
+                },
+                "status": "raw",
+                "notes": "Registered by add-code-seed / bind-code-seed.",
+            }
+            existing_ids.add(repo_citation_id)
+        repo_page_id = slugify(repo_citation_id)[:64] or "code-repo"
+        repo_page_path = paths.wiki_v1_pages_dir / f"{repo_page_id}.md"
+        if not repo_page_path.exists():
+            placeholder = {
+                "repo_name": repo_name,
+                "repo_citation_id": repo_citation_id,
+                "remote": row.get("remote"),
+                "commit_sha": row.get("commit_sha"),
+                "cloned_at": created,
+                "languages": [],
+                "entry_points": [],
+                "modules": [],
+                "priority_files": [],
+                "test_dirs": [],
+            }
+            repo_page_path.write_text(
+                _render_repo_overview_page(placeholder, wiki_name=wiki_name, repo_file_pages=[]),
+                encoding="utf-8",
+            )
+            created_pages.append(repo_page_id)
+
     for seed in seeds:
         file_hash = sha256_file(seed)
         relative_path = seed.relative_to(paths.root)
+        relative_posix = relative_path.as_posix()
+        is_code_seed = any(relative_posix.startswith(prefix) for prefix in code_prefixes)
 
         if file_hash in hash_to_id:
             citation_id = hash_to_id[file_hash]
@@ -603,8 +1053,8 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
             citations[citation_id] = {
                 "human": f"{seed.stem} (seed)",
                 "source": {
-                    "type": "seed",
-                    "path": f"/{relative_path.as_posix()}",
+                    "type": "code" if is_code_seed else "seed",
+                    "path": f"/{relative_posix}",
                     "page": None,
                     "section": None,
                     "url": None,
@@ -614,13 +1064,25 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
                     "authors": [],
                     "title": seed.stem,
                     "year": None,
-                    "venue": "seed",
+                    "venue": "code" if is_code_seed else "seed",
                     "doi": None,
                     "file_hash": file_hash,
                 },
                 "status": "raw",
                 "notes": "Auto-ingested in Stage 1A.",
             }
+
+        register_source_binding(
+            paths=paths,
+            seed_path=seed,
+            citation_id=citation_id,
+            file_hash=file_hash,
+        )
+
+        if is_code_seed:
+            # Per-file code pages are rendered only from findings — skip the
+            # filename-derived baseline that would blow up for large repos.
+            continue
 
         source_page_id = slugify(seed.stem)[:64] or "source"
         source_page_path = paths.wiki_v1_pages_dir / f"{source_page_id}.md"
@@ -634,13 +1096,6 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
                 wiki_name=wiki_name,
             ),
             encoding="utf-8",
-        )
-
-        register_source_binding(
-            paths=paths,
-            seed_path=seed,
-            citation_id=citation_id,
-            file_hash=file_hash,
         )
         created_pages.append(source_page_id)
 
@@ -681,6 +1136,8 @@ def run_research_breadth(artifacts_root: Path, workspace_root: Path) -> dict:
             f"citations_total: {len(citations)}",
             f"findings_count: {enrichment_result['findings_count']}",
             f"source_pages_enriched: {enrichment_result['source_pages_enriched']}",
+            f"code_pages_enriched: {enrichment_result.get('code_pages_enriched', 0)}",
+            f"repo_pages_enriched: {enrichment_result.get('repo_pages_enriched', 0)}",
             f"concept_pages_enriched: {enrichment_result['concept_pages_enriched']}",
             f"invalid_findings: {enrichment_result['invalid_findings']}",
             f"ingest_completed_at: {created}",

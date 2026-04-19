@@ -54,6 +54,10 @@ meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
 
+# Code ingestion (pin a git repo as a seed and fan out over its files)
+meta-compiler add-code-seed --repo https://github.com/org/widget-lib --ref v1.2.0 --name widget-lib
+meta-compiler bind-code-seed --path seeds/code/already-cloned
+
 # Utility commands
 meta-compiler track-seeds                        # Auto-detect and ingest new seeds
 meta-compiler clean-workspace --target-stage 0   # Reset to any stage
@@ -66,6 +70,36 @@ python scripts/pdf_to_text.py <file.pdf>        # Extract text from PDFs for ing
 python scripts/read_document.py <file.pdf>       # Extract text from PDF/DOCX/XLSX/PPTX
 python scripts/write_document.py <output.docx>   # Write text to documents
 ```
+
+## Code Ingestion
+
+META-COMPILER ingests code through the same fan-out architecture as documents,
+with two key differences:
+
+1. **Seeds are git repos** pinned to a specific commit SHA, placed under
+   `workspace-artifacts/seeds/code/<name>/`. Immutability is enforced at the
+   commit boundary (not per-file). `meta-compiler add-code-seed --repo <url> --ref <sha|tag> --name <slug>`
+   clones the repo and records a `code_bindings` entry in
+   `workspace-artifacts/manifests/source_bindings.yaml`. If you already have the
+   repo checked out under `seeds/code/`, `bind-code-seed --path <rel>` records
+   the current HEAD.
+2. **Ingest is two-pass.** When `meta-compiler ingest` sees a registered code
+   repo it emits `repo_map_items[]` (one per repo) into the work plan alongside
+   per-file `work_items` with `seed_kind: code`. The `ingest-orchestrator` first
+   spawns `repo-mapper` subagents that walk each repo and emit a RepoMap YAML
+   to `runtime/ingest/repo_map/<name>.yaml`. It then fans out `code-reader`
+   subagents (≤4 in parallel) that full-read each priority file and emit code
+   findings JSON with line-anchored locators.
+
+The wiki stays a single tree. Code findings render per-file `type: code` pages
+(one per source file), plus a `type: code-repo` overview page per seed. Concept
+aggregation naturally merges document concepts with code concepts — so when a
+concept appears in both a paper and a source file, the concept page carries
+both citations automatically.
+
+Full schemas (RepoMap + Code Findings) live in
+`.github/prompts/ingest-orchestrator.prompt.md`. Agent specs are at
+`.github/agents/repo-mapper.agent.md` and `.github/agents/code-reader.agent.md`.
 
 ## Hooks and Determinism
 

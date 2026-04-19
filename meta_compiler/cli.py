@@ -20,6 +20,7 @@ from .stages.elicit_stage import (
     run_elicit_vision_finalize,
     run_elicit_vision_start,
 )
+from .stages.code_seed_stage import run_add_code_seed, run_bind_code_seed
 from .stages.ingest_stage import (
     run_ingest,
     run_ingest_postcheck,
@@ -117,6 +118,55 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validate findings JSON files produced by ingest orchestration",
     )
     _add_common_paths(ingest_validate_parser)
+
+    add_code_seed_parser = subparsers.add_parser(
+        "add-code-seed",
+        help="Clone a git repo under seeds/code/<name>/ and pin it by commit SHA",
+    )
+    _add_common_paths(add_code_seed_parser)
+    add_code_seed_parser.add_argument("--repo", required=True, help="Git remote URL to clone")
+    add_code_seed_parser.add_argument(
+        "--ref",
+        required=True,
+        help="Git ref to pin (tag, branch, or full commit SHA)",
+    )
+    add_code_seed_parser.add_argument(
+        "--name",
+        required=True,
+        help="Slug for the seed directory (seeds/code/<name>/)",
+    )
+    add_code_seed_parser.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="Optional shallow-clone depth",
+    )
+    add_code_seed_parser.add_argument(
+        "--submodules",
+        action="store_true",
+        help="Recursively initialise submodules after checkout",
+    )
+
+    bind_code_seed_parser = subparsers.add_parser(
+        "bind-code-seed",
+        help="Record the current HEAD of an existing clone under seeds/code/<name>/",
+    )
+    _add_common_paths(bind_code_seed_parser)
+    bind_code_seed_parser.add_argument(
+        "--path",
+        required=True,
+        help="Workspace-relative path to the existing repo under seeds/code/",
+    )
+    bind_code_seed_parser.add_argument(
+        "--name",
+        default=None,
+        help="Override the seed name (defaults to the directory name)",
+    )
+    bind_code_seed_parser.add_argument(
+        "--ref",
+        default=None,
+        help="Symbolic ref to record (defaults to the resolved commit SHA)",
+    )
 
     depth_parser = subparsers.add_parser("research-depth", help="Run Stage 1B depth pass")
     _add_common_paths(depth_parser)
@@ -418,6 +468,24 @@ def main(argv: list[str] | None = None) -> int:
             if result["total_issues"]:
                 print(json.dumps(result, indent=2))
                 return 2
+        elif args.command == "add-code-seed":
+            result = run_add_code_seed(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                repo=args.repo,
+                ref=args.ref,
+                name=args.name,
+                depth=args.depth,
+                submodules=args.submodules,
+            )
+        elif args.command == "bind-code-seed":
+            result = run_bind_code_seed(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                path=args.path,
+                name=args.name,
+                ref=args.ref,
+            )
         elif args.command == "research-breadth":
             result = run_research_breadth(artifacts_root=artifacts_root, workspace_root=workspace_root)
         elif args.command == "research-depth":

@@ -14,6 +14,7 @@ MANIFEST_NAME = "workspace_manifest.yaml"
 class ArtifactPaths:
     root: Path
     seeds_dir: Path
+    seeds_code_dir: Path
     wiki_dir: Path
     wiki_v1_dir: Path
     wiki_v1_pages_dir: Path
@@ -52,6 +53,9 @@ class ArtifactPaths:
     ingest_postcheck_request_path: Path
     ingest_postcheck_verdict_path: Path
     ingest_report_path: Path
+    # Code ingestion: two-pass orchestration persists repo-mapper outputs here
+    # before per-file code-reader fan-out consumes them.
+    runtime_repo_map_dir: Path
     # Stage 4 prompt-as-conductor runtime artifacts.
     phase4_runtime_dir: Path
     phase4_execution_request_path: Path
@@ -71,6 +75,7 @@ def build_paths(root: Path) -> ArtifactPaths:
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
+        seeds_code_dir=resolved / "seeds" / "code",
         wiki_dir=wiki_dir,
         wiki_v1_dir=wiki_dir / "v1",
         wiki_v1_pages_dir=wiki_dir / "v1" / "pages",
@@ -104,6 +109,7 @@ def build_paths(root: Path) -> ArtifactPaths:
         ingest_postcheck_request_path=ingest_runtime_dir / "postcheck_request.yaml",
         ingest_postcheck_verdict_path=ingest_runtime_dir / "postcheck_verdict.yaml",
         ingest_report_path=wiki_dir / "reports" / "ingest_report.yaml",
+        runtime_repo_map_dir=ingest_runtime_dir / "repo_map",
         phase4_runtime_dir=phase4_runtime_dir,
         phase4_execution_request_path=phase4_runtime_dir / "execution_request.yaml",
         phase4_preflight_verdict_path=phase4_runtime_dir / "preflight_verdict.yaml",
@@ -116,6 +122,7 @@ def ensure_layout(paths: ArtifactPaths) -> None:
     for directory in [
         paths.root,
         paths.seeds_dir,
+        paths.seeds_code_dir,
         paths.wiki_v1_pages_dir,
         paths.wiki_v2_pages_dir,
         paths.wiki_provenance_dir,
@@ -132,20 +139,163 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.runtime_dir,
         paths.stage2_runtime_dir,
         paths.ingest_runtime_dir,
+        paths.runtime_repo_map_dir,
         paths.phase4_runtime_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 
 
+# Directories that should never surface as ingestable seeds even when they
+# live under seeds/code/<repo>/. These are build output, dependency caches,
+# or VCS metadata — never source material.
+_SEED_EXCLUDED_DIR_NAMES = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    "target",
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+    ".next",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    ".ruff_cache",
+    ".idea",
+    ".vscode",
+}
+
+
+def _is_excluded_seed_path(seed: Path, seeds_dir: Path) -> bool:
+    try:
+        relative = seed.relative_to(seeds_dir)
+    except ValueError:
+        return False
+    for part in relative.parts[:-1]:
+        if part in _SEED_EXCLUDED_DIR_NAMES:
+            return True
+    return False
+
+
+def _git_tracked_files(repo_root: Path) -> list[Path] | None:
+    """Return files the repo considers source (cached + untracked, .gitignore-aware).
+
+    Returns None when git is unavailable or the directory is not a repo; callers
+    should fall back to glob+exclusion. Uses subprocess for stdlib-only portability.
+    """
+    import subprocess
+
+    if not (repo_root / ".git").exists():
+        return None
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    entries: list[Path] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        entries.append(repo_root / line)
+    return entries
+
+
+def _code_repo_roots(paths: ArtifactPaths) -> list[Path]:
+    if not paths.seeds_code_dir.exists():
+        return []
+    roots: list[Path] = []
+    for child in sorted(paths.seeds_code_dir.iterdir()):
+        if child.is_dir() and not child.name.startswith("."):
+            roots.append(child)
+    return roots
+
+
 def list_seed_files(paths: ArtifactPaths) -> list[Path]:
     if not paths.seeds_dir.exists():
         return []
-    files = [
-        path
-        for path in paths.seeds_dir.rglob("*")
-        if path.is_file() and not path.name.startswith(".")
-    ]
-    return sorted(files)
+
+    code_roots = _code_repo_roots(paths)
+    code_root_set = {root.resolve() for root in code_roots}
+    git_tracked: list[Path] = []
+    tracked_code_roots: set[Path] = set()
+    for root in code_roots:
+        tracked = _git_tracked_files(root)
+        if tracked is None:
+            continue
+        tracked_code_roots.add(root.resolve())
+        for entry in tracked:
+            if entry.is_file() and not _is_excluded_seed_path(entry, paths.seeds_dir):
+                git_tracked.append(entry)
+
+    files: list[Path] = []
+    for path in paths.seeds_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name.startswith("."):
+            continue
+        if _is_excluded_seed_path(path, paths.seeds_dir):
+            continue
+        # Skip paths under code roots that were walked via git; we already
+        # collected them above (respecting .gitignore).
+        resolved_parents = {parent.resolve() for parent in path.parents}
+        if resolved_parents & tracked_code_roots:
+            continue
+        files.append(path)
+    files.extend(git_tracked)
+
+    # Deduplicate by resolved path while preserving sort order.
+    seen: set[Path] = set()
+    deduped: list[Path] = []
+    for path in sorted(files):
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(path)
+
+    # Suppress the code_root_set variable warning — it is available for future
+    # callers that want to distinguish code vs doc paths.
+    _ = code_root_set
+    return deduped
+
+
+def list_code_repos(paths: ArtifactPaths) -> list[dict[str, str | None]]:
+    """Return registered code repos from source_bindings.yaml code_bindings."""
+    payload = load_yaml(paths.source_bindings_path) or {}
+    raw = payload.get("code_bindings") if isinstance(payload, dict) else None
+    if not isinstance(raw, dict):
+        return []
+    rows: list[dict[str, str | None]] = []
+    for relative, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        repo_root = (paths.root / relative).resolve()
+        rows.append(
+            {
+                "relative_path": str(relative).rstrip("/") + "/",
+                "absolute_path": str(repo_root),
+                "name": entry.get("name") or Path(relative).name,
+                "remote": entry.get("remote"),
+                "ref": entry.get("ref"),
+                "commit_sha": entry.get("commit_sha"),
+                "citation_id": entry.get("citation_id"),
+            }
+        )
+    return rows
 
 
 def seed_inventory(paths: ArtifactPaths) -> list[dict[str, str | int]]:

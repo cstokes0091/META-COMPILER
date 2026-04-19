@@ -149,6 +149,21 @@ python scripts/pdf_to_text.py workspace-artifacts/seeds/paper.pdf --output /tmp/
 python scripts/read_document.py workspace-artifacts/seeds/spec.docx --output /tmp/spec_text.md
 ```
 
+**Code seeds (two-pass fan-out).** To include a git-pinned code repo in Stage 1A:
+
+```bash
+meta-compiler add-code-seed --repo https://github.com/org/widget-lib --ref v1.2.0 --name widget-lib
+# or, for an already-cloned tree:
+meta-compiler bind-code-seed --path seeds/code/widget-lib
+```
+
+This clones (or records) the repo under `workspace-artifacts/seeds/code/<name>/` and writes a `code_bindings` entry to `source_bindings.yaml`. The subsequent `meta-compiler ingest` emits `repo_map_items[]` (one per repo) plus per-file work items with `seed_kind: code`. The `ingest-orchestrator` then runs two passes:
+
+1. **Repo-mapper pass** — spawns `.github/agents/repo-mapper.agent.md` subagents (≤2 in parallel) that walk each repo via `git ls-files` and emit `runtime/ingest/repo_map/<name>.yaml` (languages, entry points, modules, priority files).
+2. **Reader fan-out** — partitions `work_items` by `seed_kind` and spawns `seed-reader` for doc items and `.github/agents/code-reader.agent.md` for code items (≤4 parallel total). Each `code-reader` receives the RepoMap for its repo as additional context and emits a code findings JSON with `source_type: "code"` and line-anchored locators.
+
+`research-breadth` then renders `type: code` pages (per file) plus a `type: code-repo` overview page per repo. Concept aggregation is unchanged — concepts from document and code findings merge into the same concept page automatically, so a concept present in both a paper and a source file lists both citations on one page (doc ↔ code cross-references come for free).
+
 ### Stage 1A2: 1B ↔ 1C Orchestration Loop
 
 **Your job:** After Stage 1A completes, run the iterative Stage 1B/1C loop from a
