@@ -1,10 +1,21 @@
 {
   "version": "2.0.0",
+  "windows": {
+    "options": {
+      "shell": {
+        "executable": "cmd.exe",
+        "args": ["/d", "/c"]
+      }
+    }
+  },
   "tasks": [
     {
       "label": "Run Through Stage 2 Handoff",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\"; else python3 -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\"; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\") else (python -m meta_compiler.cli run-all --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\")"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -12,6 +23,9 @@
       "label": "Stage 0: Initialize Workspace",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && .venv/bin/python -m meta_compiler.cli validate-stage --stage 0; else python3 -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && python3 -m meta_compiler.cli validate-stage --stage 0; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 0) else (python -m meta_compiler.cli meta-init --project-name \"${input:projectName}\" --problem-domain \"${input:problemDomain}\" --project-type ${input:projectType} --problem-statement-file \"${input:problemStatementFile}\" && python -m meta_compiler.cli validate-stage --stage 0)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -19,6 +33,9 @@
       "label": "Stage 1A: Breadth Research",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli research-breadth && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1a; else python3 -m meta_compiler.cli research-breadth && python3 -m meta_compiler.cli validate-stage --stage 1a; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli research-breadth && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 1a) else (python -m meta_compiler.cli research-breadth && python -m meta_compiler.cli validate-stage --stage 1a)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -26,6 +43,9 @@
       "label": "Stage 1A: Ingest Prep (all seeds)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli ingest --scope all; else python3 -m meta_compiler.cli ingest --scope all; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli ingest --scope all) else (python -m meta_compiler.cli ingest --scope all)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -33,6 +53,9 @@
       "label": "Stage 1A: Validate Findings",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli ingest-validate; else python3 -m meta_compiler.cli ingest-validate; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli ingest-validate) else (python -m meta_compiler.cli ingest-validate)"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -40,6 +63,9 @@
       "label": "Stage 1B: Depth Pass",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli research-depth && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1b; else python3 -m meta_compiler.cli research-depth && python3 -m meta_compiler.cli validate-stage --stage 1b; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli research-depth && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 1b) else (python -m meta_compiler.cli research-depth && python -m meta_compiler.cli validate-stage --stage 1b)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -47,6 +73,9 @@
       "label": "Stage 1C: Review Panel",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli review && .venv/bin/python -m meta_compiler.cli validate-stage --stage 1c; else python3 -m meta_compiler.cli review && python3 -m meta_compiler.cli validate-stage --stage 1c; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli review && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 1c) else (python -m meta_compiler.cli review && python -m meta_compiler.cli validate-stage --stage 1c)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -54,6 +83,9 @@
       "label": "Stage 2: Preflight (--start)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --start; else python3 -m meta_compiler.cli elicit-vision --start; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli elicit-vision --start) else (python -m meta_compiler.cli elicit-vision --start)"
+      },
       "group": "build",
       "problemMatcher": [],
       "detail": "Writes workspace-artifacts/runtime/stage2/ brief + transcript skeleton + precheck_request.yaml. Then open .github/prompts/stage-2-dialog.prompt.md in your LLM runtime."
@@ -62,6 +94,9 @@
       "label": "Stage 2: Finalize (--finalize)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli elicit-vision --finalize && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli elicit-vision --finalize && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli elicit-vision --finalize && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 2) else (python -m meta_compiler.cli elicit-vision --finalize && python -m meta_compiler.cli validate-stage --stage 2)"
+      },
       "group": "build",
       "problemMatcher": [],
       "detail": "Parses decision blocks from transcript.md and compiles decision_log_v{N}.yaml. Run after the Stage 2 dialog is complete."
@@ -70,6 +105,9 @@
       "label": "Stage 2: Audit Requirements",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli audit-requirements; else python3 -m meta_compiler.cli audit-requirements; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli audit-requirements) else (python -m meta_compiler.cli audit-requirements)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -77,6 +115,9 @@
       "label": "Stage 3: Scaffold",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli scaffold && .venv/bin/python -m meta_compiler.cli validate-stage --stage 3; else python3 -m meta_compiler.cli scaffold && python3 -m meta_compiler.cli validate-stage --stage 3; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli scaffold && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 3) else (python -m meta_compiler.cli scaffold && python -m meta_compiler.cli validate-stage --stage 3)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -84,6 +125,9 @@
       "label": "Stage 4: Execute + Pitch",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli phase4-finalize && .venv/bin/python -m meta_compiler.cli validate-stage --stage 4; else python3 -m meta_compiler.cli phase4-finalize && python3 -m meta_compiler.cli validate-stage --stage 4; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli phase4-finalize && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 4) else (python -m meta_compiler.cli phase4-finalize && python -m meta_compiler.cli validate-stage --stage 4)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -91,6 +135,9 @@
       "label": "Wiki Reconcile Concepts (preflight)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-reconcile-concepts; else python3 -m meta_compiler.cli wiki-reconcile-concepts; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli wiki-reconcile-concepts) else (python -m meta_compiler.cli wiki-reconcile-concepts)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -98,6 +145,9 @@
       "label": "Wiki Apply Reconciliation",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-apply-reconciliation; else python3 -m meta_compiler.cli wiki-apply-reconciliation; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli wiki-apply-reconciliation) else (python -m meta_compiler.cli wiki-apply-reconciliation)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -105,6 +155,9 @@
       "label": "Wiki Cross-Source Synthesize (preflight)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-cross-source-synthesize; else python3 -m meta_compiler.cli wiki-cross-source-synthesize; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli wiki-cross-source-synthesize) else (python -m meta_compiler.cli wiki-cross-source-synthesize)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -112,6 +165,9 @@
       "label": "Open Wiki Browser",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli wiki-browse; else python3 -m meta_compiler.cli wiki-browse; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli wiki-browse) else (python -m meta_compiler.cli wiki-browse)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -119,6 +175,9 @@
       "label": "Stage 2 Re-entry",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"; else python3 -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\"; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\") else (python -m meta_compiler.cli stage2-reentry --reason \"${input:reentryReason}\" --sections \"${input:reentrySections}\")"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -126,6 +185,9 @@
       "label": "Finalize Re-entry",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli finalize-reentry && .venv/bin/python -m meta_compiler.cli validate-stage --stage 2; else python3 -m meta_compiler.cli finalize-reentry && python3 -m meta_compiler.cli validate-stage --stage 2; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli finalize-reentry && .venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage 2) else (python -m meta_compiler.cli finalize-reentry && python -m meta_compiler.cli validate-stage --stage 2)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -133,6 +195,9 @@
       "label": "Track Seeds (auto-detect)",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli track-seeds; else python3 -m meta_compiler.cli track-seeds; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli track-seeds) else (python -m meta_compiler.cli track-seeds)"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -140,6 +205,9 @@
       "label": "Clean Workspace",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli clean-workspace --target-stage ${input:cleanTargetStage}; else python3 -m meta_compiler.cli clean-workspace --target-stage ${input:cleanTargetStage}; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli clean-workspace --target-stage ${input:cleanTargetStage}) else (python -m meta_compiler.cli clean-workspace --target-stage ${input:cleanTargetStage})"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -147,6 +215,9 @@
       "label": "Validate All Stages",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m meta_compiler.cli validate-stage --stage all; else python3 -m meta_compiler.cli validate-stage --stage all; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m meta_compiler.cli validate-stage --stage all) else (python -m meta_compiler.cli validate-stage --stage all)"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -154,6 +225,9 @@
       "label": "Run Scaffold Self-Tests",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m pytest workspace-artifacts/scaffolds/v1/tests/ -v; else python3 -m pytest workspace-artifacts/scaffolds/v1/tests/ -v; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m pytest workspace-artifacts/scaffolds/v1/tests/ -v) else (python -m pytest workspace-artifacts/scaffolds/v1/tests/ -v)"
+      },
       "group": "test",
       "problemMatcher": []
     },
@@ -161,6 +235,9 @@
       "label": "Run Unit Tests",
       "type": "shell",
       "command": "if [[ -x .venv/bin/python ]]; then .venv/bin/python -m pytest tests/ -v; else python3 -m pytest tests/ -v; fi",
+      "windows": {
+        "command": "if exist .venv\\Scripts\\python.exe (.venv\\Scripts\\python.exe -m pytest tests/ -v) else (python -m pytest tests/ -v)"
+      },
       "group": "test",
       "problemMatcher": []
     }
