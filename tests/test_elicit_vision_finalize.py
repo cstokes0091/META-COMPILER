@@ -33,6 +33,25 @@ The human chose black-formatted Python after discussing 2-space vs 4-space.
 - Choice: black-formatted, 4-space indentation, type hints on public functions
 - Rationale: matches existing meta-compiler style; reduces review friction
 - Citations: src-test
+
+## Decision Area: Code Architecture
+
+### Decision: language-choice
+- Section: code-architecture
+- Aspect: language
+- Choice: Python 3.11
+- Rationale: matches workspace toolchain
+- Citations: src-test
+
+### Decision: libraries-choice
+- Section: code-architecture
+- Aspect: libraries
+- Choice: pyyaml + pytest
+- Libraries:
+  - pyyaml: serialization (>=6.0)
+  - pytest: tests (>=8.0)
+- Rationale: stable
+- Citations: src-test
 """
 
 
@@ -58,6 +77,25 @@ FULL_TRANSCRIPT_ALL_SECTIONS = """\
   - CLI-mediated dialog: too rigid
 - Constraints applied: fresh context, artifact-only handoff
 - Rationale: separates dialog from integrity
+- Citations: src-test
+
+## Decision Area: Code Architecture
+
+### Decision: language-choice
+- Section: code-architecture
+- Aspect: language
+- Choice: Python 3.11
+- Rationale: matches the workspace toolchain
+- Citations: src-test
+
+### Decision: libraries-choice
+- Section: code-architecture
+- Aspect: libraries
+- Choice: pyyaml + pytest
+- Libraries:
+  - pyyaml: config serialization (>=6.0)
+  - pytest: unit tests (>=8.0)
+- Rationale: stable and already vendored
 - Citations: src-test
 
 ## Decision Area: Scope (in)
@@ -104,8 +142,13 @@ FULL_TRANSCRIPT_ALL_SECTIONS = """\
 - Section: agents_needed
 - Role: stage2-orchestrator
 - Responsibility: preflight + postflight integrity audit
-- Reads: precheck_request, decision_log, transcript
-- Writes: precheck_verdict, postcheck_verdict
+- Inputs:
+  - precheck_request: document
+  - decision_log: document
+  - transcript: document
+- Outputs:
+  - precheck_verdict: document
+  - postcheck_verdict: document
 - Key constraints: read-only against transcript
 - Rationale: keeps CLI deterministic
 - Citations: src-test
@@ -138,7 +181,7 @@ def test_finalize_with_minimal_transcript_writes_decision_log(tmp_path):
     )
     assert result["status"] == "compiled"
     assert result["decision_log_version"] == 1
-    assert result["block_count"] == 1
+    assert result["block_count"] == 3
     assert result["requirement_count"] == 0
 
     decision_log_path = paths.decision_logs_dir / "decision_log_v1.yaml"
@@ -185,7 +228,7 @@ def test_finalize_with_full_transcript_populates_every_section(tmp_path):
     )
     assert result["status"] == "compiled"
     assert result["requirement_count"] == 1
-    assert result["block_count"] == 7
+    assert result["block_count"] == 9
 
     decision_log_path = paths.decision_logs_dir / "decision_log_v1.yaml"
     with decision_log_path.open("r", encoding="utf-8") as handle:
@@ -193,6 +236,7 @@ def test_finalize_with_full_transcript_populates_every_section(tmp_path):
     root = payload["decision_log"]
     assert len(root["conventions"]) == 1
     assert len(root["architecture"]) == 1
+    assert len(root["code_architecture"]) == 2
     assert len(root["scope"]["in_scope"]) == 1
     assert len(root["scope"]["out_of_scope"]) == 1
     assert len(root["requirements"]) == 1

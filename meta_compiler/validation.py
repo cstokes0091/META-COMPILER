@@ -14,6 +14,15 @@ VALID_PROJECT_TYPES = {"algorithm", "report", "hybrid"}
 VALID_STATUS = {"initialized", "researched", "scaffolded", "active"}
 VALID_REVIEW_VERDICTS = {"PROCEED", "ITERATE"}
 VALID_CONVENTION_DOMAINS = {"math", "code", "citation", "terminology"}
+VALID_AGENT_MODALITIES = {"document", "code"}
+VALID_CODE_ARCH_ASPECTS = {
+    "language",
+    "libraries",
+    "module_layout",
+    "build_tooling",
+    "runtime",
+}
+CODE_ARCH_REQUIRED_PROJECT_TYPES = {"algorithm", "hybrid"}
 REQUIRED_PROBLEM_STATEMENT_SECTIONS = [
     "## Domain and Problem Space",
     "## Goals and Success Criteria",
@@ -541,6 +550,7 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
     )
 
     meta = root.get("meta", {})
+    project_type: str | None = None
     if isinstance(meta, dict):
         _require_fields(
             meta,
@@ -559,6 +569,8 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
         )
         if meta.get("project_type") not in VALID_PROJECT_TYPES:
             issues.append("decision_log.meta.project_type: must be algorithm|report|hybrid")
+        else:
+            project_type = str(meta.get("project_type"))
         version = meta.get("version")
         if not isinstance(version, int) or version < 1:
             issues.append("decision_log.meta.version: must be int >= 1")
@@ -654,12 +666,140 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
                 continue
             _require_fields(
                 row,
-                ["role", "responsibility", "reads", "writes", "key_constraints"],
+                ["role", "responsibility", "inputs", "outputs", "key_constraints"],
                 f"decision_log.agents_needed[{idx}]",
                 issues,
             )
+            if "reads" in row or "writes" in row:
+                issues.append(
+                    f"decision_log.agents_needed[{idx}]: legacy 'reads'/'writes' fields are no "
+                    "longer accepted — replace with typed 'inputs'/'outputs' (modality: "
+                    "document|code). Run `meta-compiler migrate-decision-log --plan` to migrate."
+                )
+            _validate_agent_modality_list(
+                row.get("inputs"),
+                f"decision_log.agents_needed[{idx}].inputs",
+                project_type=project_type,
+                role="inputs",
+                issues=issues,
+            )
+            _validate_agent_modality_list(
+                row.get("outputs"),
+                f"decision_log.agents_needed[{idx}].outputs",
+                project_type=project_type,
+                role="outputs",
+                issues=issues,
+            )
+
+    code_arch = root.get("code_architecture")
+    if project_type == "report":
+        if code_arch not in (None, []):
+            issues.append(
+                "decision_log.code_architecture: must be omitted (or empty list) for "
+                "project_type=report"
+            )
+    elif project_type in CODE_ARCH_REQUIRED_PROJECT_TYPES:
+        if not isinstance(code_arch, list) or not code_arch:
+            issues.append(
+                "decision_log.code_architecture: required and must contain at least one "
+                "entry for algorithm/hybrid projects"
+            )
+        else:
+            seen_aspects: set[str] = set()
+            for idx, row in enumerate(code_arch):
+                prefix = f"decision_log.code_architecture[{idx}]"
+                if not isinstance(row, dict):
+                    issues.append(f"{prefix}: must be an object")
+                    continue
+                _require_fields(
+                    row,
+                    ["aspect", "choice", "rationale", "citations"],
+                    prefix,
+                    issues,
+                )
+                aspect = row.get("aspect")
+                if aspect not in VALID_CODE_ARCH_ASPECTS:
+                    issues.append(
+                        f"{prefix}.aspect: must be one of "
+                        f"{sorted(VALID_CODE_ARCH_ASPECTS)}"
+                    )
+                if isinstance(aspect, str):
+                    seen_aspects.add(aspect)
+                if aspect == "libraries":
+                    libraries = row.get("libraries")
+                    if not isinstance(libraries, list) or not libraries:
+                        issues.append(
+                            f"{prefix}.libraries: required when aspect='libraries' "
+                            "and must be a non-empty list"
+                        )
+                    else:
+                        for jdx, lib in enumerate(libraries):
+                            if not isinstance(lib, dict):
+                                issues.append(
+                                    f"{prefix}.libraries[{jdx}]: must be an object"
+                                )
+                                continue
+                            _require_fields(
+                                lib,
+                                ["name", "description"],
+                                f"{prefix}.libraries[{jdx}]",
+                                issues,
+                            )
+                if aspect == "module_layout":
+                    layout = row.get("module_layout")
+                    if not isinstance(layout, str) or not layout.strip():
+                        issues.append(
+                            f"{prefix}.module_layout: required string when "
+                            "aspect='module_layout'"
+                        )
+            for required_aspect in ("language", "libraries"):
+                if required_aspect not in seen_aspects:
+                    issues.append(
+                        f"decision_log.code_architecture: must contain at least one entry "
+                        f"with aspect='{required_aspect}' for algorithm/hybrid projects"
+                    )
 
     return issues
+
+
+def _validate_agent_modality_list(
+    items: Any,
+    prefix: str,
+    project_type: str | None,
+    role: str,
+    issues: list[str],
+) -> None:
+    if items is None:
+        return
+    if not isinstance(items, list):
+        issues.append(f"{prefix}: must be a list of {{name, modality}} entries")
+        return
+    if not items:
+        issues.append(f"{prefix}: must contain at least one entry")
+        return
+    for jdx, entry in enumerate(items):
+        item_prefix = f"{prefix}[{jdx}]"
+        if not isinstance(entry, dict):
+            issues.append(
+                f"{item_prefix}: must be a {{name, modality}} object"
+            )
+            continue
+        _require_fields(entry, ["name", "modality"], item_prefix, issues)
+        modality = entry.get("modality")
+        if modality not in VALID_AGENT_MODALITIES:
+            issues.append(
+                f"{item_prefix}.modality: must be one of "
+                f"{sorted(VALID_AGENT_MODALITIES)} (got {modality!r})"
+            )
+        if (
+            project_type == "report"
+            and role == "outputs"
+            and modality == "code"
+        ):
+            issues.append(
+                f"{item_prefix}.modality: report projects cannot declare 'code' "
+                "outputs — use 'document'"
+            )
 
 
 def _validate_agent_delegation(frontmatter: dict[str, Any], agent_path: Path) -> list[str]:

@@ -855,6 +855,64 @@ def gate_phase4_finalize(payload):
     return {"permissionDecision": "allow"}
 
 
+@register("gate_migration_request")
+def gate_migration_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """Block `meta-compiler migrate-decision-log --apply` unless the proposal
+    written by `--plan` exists.
+
+    The workflow is:
+      1. `decision-log-migrate-v2` prompt walks the human/LLM through Step 0
+         (re-orient on the v1 Decision Log + author migration_request.yaml).
+      2. `meta-compiler migrate-decision-log --plan` writes
+         runtime/migration/proposal.yaml.
+      3. The LLM/human refines the proposal modalities and (for
+         algorithm/hybrid projects) authors
+         runtime/migration/code_architecture_blocks.md.
+      4. `meta-compiler migrate-decision-log --apply` compiles the new
+         Decision Log — the step this gate protects.
+
+    Skipping straight from the prompt to `--apply` would drop the typed-I/O
+    review and silently emit a v{N+1} log with bad modalities.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    if "migrate-decision-log" not in cmd or "--apply" not in cmd:
+        return {"permissionDecision": "allow"}
+    if not cmd.strip().startswith("meta-compiler"):
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_migration_request", ws)
+    if disabled:
+        audit(ws, "gate_migration_request", "PreToolUse", "allow_override",
+              reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": f"gate_migration_request disabled by override: {ov_reason}",
+        }
+
+    proposal_path = ws / "workspace-artifacts" / "runtime" / "migration" / "proposal.yaml"
+    if not proposal_path.exists():
+        line = audit(ws, "gate_migration_request", "PreToolUse", "deny",
+                     reason="proposal.yaml missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "Migration proposal.yaml is missing — --plan did not run.",
+            "remediation": (
+                "Run `meta-compiler migrate-decision-log --plan` first, review "
+                "runtime/migration/proposal.yaml (and author "
+                "runtime/migration/code_architecture_blocks.md for "
+                "algorithm/hybrid projects), then retry --apply."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_migration_request", "PreToolUse", "allow", extra={"command": cmd})
+    return {"permissionDecision": "allow"}
+
+
 @register("gate_reconcile_request")
 def gate_reconcile_request(payload: dict[str, Any]) -> dict[str, Any]:
     """Block `meta-compiler wiki-apply-reconciliation` unless the preflight

@@ -28,6 +28,10 @@ from .stages.ingest_stage import (
     validate_all_findings,
 )
 from .stages.init_stage import run_meta_init
+from .stages.migrate_decision_log_stage import (
+    run_migrate_decision_log_apply,
+    run_migrate_decision_log_plan,
+)
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
@@ -423,6 +427,26 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common_paths(finalize_parser)
     finalize_parser.add_argument("--version", type=int, default=None, help="Decision log version to finalize")
 
+    migrate_parser = subparsers.add_parser(
+        "migrate-decision-log",
+        help=(
+            "Migrate a v1 Decision Log to the typed-IO + code-architecture schema. "
+            "Use --plan to draft the proposal, --apply to compile the new version."
+        ),
+    )
+    _add_common_paths(migrate_parser)
+    migrate_mode_group = migrate_parser.add_mutually_exclusive_group(required=True)
+    migrate_mode_group.add_argument(
+        "--plan",
+        action="store_true",
+        help="Write runtime/migration/proposal.yaml from the latest Decision Log",
+    )
+    migrate_mode_group.add_argument(
+        "--apply",
+        action="store_true",
+        help="Compile the proposal (and code_architecture_blocks.md) into a new Decision Log version",
+    )
+
     validate_parser = subparsers.add_parser("validate-stage", help="Validate stage artifacts")
     _add_common_paths(validate_parser)
     validate_parser.add_argument(
@@ -663,6 +687,17 @@ def main(argv: list[str] | None = None) -> int:
                 workspace_root=workspace_root,
                 version=args.version,
             )
+        elif args.command == "migrate-decision-log":
+            if args.plan:
+                result = run_migrate_decision_log_plan(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                )
+            else:
+                result = run_migrate_decision_log_apply(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                )
         elif args.command == "validate-stage":
             paths = build_paths(artifacts_root)
             issues = validate_stage(paths, stage=args.stage)

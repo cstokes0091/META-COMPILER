@@ -69,6 +69,59 @@ that ruled out the alternatives. Probes:
 
 ---
 
+## Section: `code-architecture`
+
+**Applicability.** Required for `algorithm` and `hybrid` projects. Forbidden
+for `report` projects.
+
+Code-architecture decisions describe HOW the logical architecture is
+realized in code: language, libraries, module layout, build/test tooling,
+runtime. They are not the same as `architecture`, which captures the
+component decomposition. A single `architecture` block may be backed by
+several `code-architecture` aspects (e.g. one `language`, one `libraries`,
+one `module_layout`, one `build_tooling`).
+
+At minimum, the dialog must produce one block with `Aspect: language` and
+one with `Aspect: libraries`. The other aspects (`module_layout`,
+`build_tooling`, `runtime`) are encouraged when load-bearing. Probes:
+
+1. **Aspect.** Which aspect does this block address — `language`,
+   `libraries`, `module_layout`, `build_tooling`, or `runtime`? Pick exactly
+   one. Walk separate blocks for each load-bearing aspect.
+2. **Choice.** What is the concrete commitment? "Python 3.11", "numpy >=1.26
+   + pyarrow >=15", "src/foo/{ingest,transform,emit}.py", "uv + pytest",
+   "containerized on GHA runners". Avoid placeholders like "TBD" or
+   "standard tooling".
+3. **Library candidates and version pins.** When `Aspect=libraries`, list
+   each library with name, version pin, and load-bearing purpose under a
+   `Libraries:` sublist (e.g. `  - numpy: PSF math (>=1.26)`). Vague entries
+   like "as needed" do not count.
+4. **Alternatives rejected.** Which 1–3 alternatives were considered for
+   this aspect? For language, why not Rust / Julia / TypeScript / etc.? For
+   libraries, what are the rejected options and the constraint that ruled
+   them out (license, performance, team familiarity, maintenance status)?
+5. **Constraints applied.** Which problem-statement, wiki, or upstream
+   architecture constraints narrowed this aspect? "must run on M-series
+   Macs", "cannot add a Java toolchain", "license must be permissive" all
+   count. Tie back to a citation when possible.
+6. **Module/package layout.** When `Aspect=module_layout`, describe the
+   file/package layout as a `Module layout:` line (e.g.
+   `src/foo/{ingest,transform,emit}.py`). Note where the entry point lives
+   and how tests mirror the source tree.
+7. **Build & test tooling.** When `Aspect=build_tooling`, what runs the
+   tests, lints, and packages the code? Pin the tooling versions when the
+   choice is load-bearing.
+8. **Runtime / deployment target.** When `Aspect=runtime`, what executes
+   the code in production — a CLI binary, a notebook, a container, a
+   serverless function? Note OS/arch constraints and runtime version pins.
+9. **Reversibility.** If we swap this choice in 6 months, what has to move
+   with it (other libraries, the module layout, CI config, agent specs)?
+10. **Citation.** Which wiki page, code seed, or external authority backs
+    this choice? An empty Citations is acceptable for team-local conventions
+    but should be rare.
+
+---
+
 ## Section: `requirements`
 
 Requirements are the testable specification of what the system must do. The
@@ -146,16 +199,33 @@ Agents needed describe Stage 3 scaffold output: roles, responsibilities, and
 the interfaces between generated agents. Probes:
 
 1. **Role.** Name the agent in 1–3 words. What is its single responsibility?
-2. **Reads.** Which artifacts does this agent consume? Be specific —
-   "the wiki" is too vague; "wiki/v2/pages/concept-foo.md" is right.
-3. **Writes.** Which artifacts does this agent produce? Same specificity rule.
+2. **Inputs (typed).** Which artifacts does this agent consume? Use the
+   `Inputs:` sublist and tag every entry with modality (`document` or
+   `code`):
+       - Inputs:
+         - decision_log: document
+         - code: code
+   "the wiki" is too vague; "wiki/v2/pages/concept-foo.md" is right. Modality
+   makes Stage 3 generate the right tooling — code-modality inputs imply a
+   reader that handles source files; document-modality inputs imply markdown
+   ingestion.
+3. **Outputs (typed).** Which artifacts does this agent produce, and at what
+   modality? Same `Outputs:` sublist with modality tags. For
+   `project_type=report`, every output modality must be `document`. For
+   `algorithm`/`hybrid`, outputs may be `code`, `document`, or a mix —
+   declare each entry explicitly. Don't default to "document" when the
+   artifact is actually source code.
 4. **Boundary.** What does this agent NOT do? What belongs to a sibling agent?
 5. **Tools required.** Read-only, search, edit, execute, agent (delegation),
-   todo? Don't grant tools the agent doesn't need.
+   todo? Don't grant tools the agent doesn't need. Modality should drive
+   tool selection — code-modality outputs imply `execute` for tests; pure
+   document outputs usually do not.
 6. **Failure mode.** What kind of failure is most likely (parse error, missing
    input, hallucination, timeout)? How does it surface?
 7. **Verification.** How does the next stage verify this agent's output? CLI
-   schema check, hash-tracked manifest, downstream agent review?
+   schema check, hash-tracked manifest, downstream agent review? Code outputs
+   imply test/typecheck verification; document outputs imply citation/lint
+   verification.
 8. **Concurrency.** Does this agent fan out to subagents? What's the cap?
 
 ---

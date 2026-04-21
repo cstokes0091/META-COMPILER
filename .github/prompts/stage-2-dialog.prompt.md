@@ -70,10 +70,16 @@ Your dialog is asymmetric:
 
 Before you write a decision block, walk the section's probe library at
 `.github/docs/stage-2-probes.md`. Each section (`conventions`, `architecture`,
-`requirements`, `scope-in`/`scope-out`, `open_items`, `agents_needed`) has
-6–10 probes; the floor is **at least 4 probes addressed** before the block
-lands. Shallow blocks with fewer than 4 probes will be flagged `REVISE` by
-the postflight.
+`code-architecture` for algorithm/hybrid projects, `requirements`,
+`scope-in`/`scope-out`, `open_items`, `agents_needed`) has 6–10 probes; the
+floor is **at least 4 probes addressed** before the block lands. Shallow
+blocks with fewer than 4 probes will be flagged `REVISE` by the postflight.
+
+For `algorithm` and `hybrid` projects, the `code-architecture` decision
+area is required — at minimum one block with `Aspect: language` and one
+with `Aspect: libraries` must land before --finalize will succeed. For
+`report` projects, do not author any `code-architecture` blocks; the
+compile step rejects them.
 
 Walking a probe means doing one of:
 
@@ -126,15 +132,68 @@ When a decision actually lands, write a **decision block** in this exact format:
 |---|---|
 | `conventions` | Domain (math\|code\|citation\|terminology), Choice |
 | `architecture` | Component, Approach, Constraints applied. Alternatives rejected is optional but strongly preferred — write as an indented `  - <name>: <reason>` sublist. |
+| `code-architecture` | Aspect (language\|libraries\|module_layout\|build_tooling\|runtime), Choice. When `Aspect=libraries`, also include a `Libraries:` sublist of `  - <name>: <description>` (e.g. `  - numpy: PSF math (>=1.26)`). When `Aspect=module_layout`, also include a `Module layout:` line. Algorithm/hybrid only — forbidden for report. |
 | `scope-in` | Item |
 | `scope-out` | Item, Revisit if |
 | `requirements` | Source (user\|derived), Description (EARS-phrased), Verification, Lens |
 | `open_items` | Description, Deferred to (implementation\|future_work), Owner |
-| `agents_needed` | Role, Responsibility, Reads, Writes, Key constraints |
+| `agents_needed` | Role, Responsibility, Inputs (typed sublist), Outputs (typed sublist), Key constraints. Inputs and Outputs use `  - <name>: <modality>` entries with `modality ∈ {document, code}` (see Inputs/Outputs format below). |
 
 Every block always needs `Section:`, `Rationale:`, and `Citations:`.
 
 Do **not** assign `REQ-NNN` IDs yourself. The `--finalize` step assigns them sequentially starting at `REQ-001`.
+
+#### Inputs / Outputs format for `agents_needed`
+
+Every agent block must declare typed `Inputs:` and `Outputs:` sublists. Each
+entry pairs an artifact name with its modality (`document` or `code`):
+
+```
+### Decision: scaffold-generator
+- Section: agents_needed
+- Role: scaffold-generator
+- Responsibility: Generate the scaffold from the Decision Log
+- Inputs:
+  - decision_log: document
+- Outputs:
+  - scaffold: code
+  - agents: document
+  - docs: document
+- Key constraints: input is Decision Log only; do not consume wiki
+- Rationale: separates dialog (Stage 2) from execution (Stage 3)
+- Citations: (none)
+```
+
+For `project_type=report`, every output's modality must be `document`. For
+`algorithm`/`hybrid`, mix `document` and `code` honestly — pick the dominant
+modality when an artifact is genuinely both.
+
+#### Code-architecture block format example (algorithm/hybrid only)
+
+```
+### Decision: language-choice
+- Section: code-architecture
+- Aspect: language
+- Choice: Python 3.11
+- Constraints applied: existing toolchain, team familiarity
+- Alternatives rejected:
+  - Julia: no team familiarity (REQ-014)
+  - Rust: build-time cost outweighs runtime gains for this workload
+- Rationale: matches the rest of the workspace and the team's depth
+- Citations: src-team-skills
+
+### Decision: numerical-libraries
+- Section: code-architecture
+- Aspect: libraries
+- Choice: numpy + pyarrow + scipy
+- Libraries:
+  - numpy: PSF computation (>=1.26)
+  - pyarrow: columnar I/O (>=15)
+  - scipy: optimization routines (>=1.13)
+- Constraints applied: permissive license, active maintenance
+- Rationale: stable, documented, and already vendored elsewhere
+- Citations: src-numpy, src-pyarrow
+```
 
 ### Lens matrix for requirements
 

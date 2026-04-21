@@ -62,10 +62,18 @@ meta-compiler scaffold
 meta-compiler phase4-finalize
 
 # Post-scaffold
-meta-compiler wiki-update
+meta-compiler wiki-reconcile-concepts        # Phase A preflight: cluster alias candidates
+# (LLM runs wiki-concept-reconciliation.prompt.md → writes the proposal)
+meta-compiler wiki-apply-reconciliation      # Phase A postflight: merge aliases into canonical pages
+meta-compiler wiki-cross-source-synthesize   # Phase B preflight: cross-source definition work plan
+# (LLM runs wiki-cross-source-synthesis.prompt.md → rewrites Definition/Key Claims)
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
+
+# Code ingestion (pin a git repo as a seed and fan out over its files)
+meta-compiler add-code-seed --repo https://github.com/org/widget-lib --ref v1.2.0 --name widget-lib
+meta-compiler bind-code-seed --path seeds/code/already-cloned
 
 # Utility commands
 meta-compiler track-seeds                        # Auto-detect and ingest new seeds
@@ -79,6 +87,36 @@ python scripts/pdf_to_text.py <file.pdf>        # Extract text from PDFs for ing
 python scripts/read_document.py <file.pdf>       # Extract text from PDF/DOCX/XLSX/PPTX
 python scripts/write_document.py <output.docx>   # Write text to documents
 ```
+
+## Code Ingestion
+
+META-COMPILER ingests code through the same fan-out architecture as documents,
+with two key differences:
+
+1. **Seeds are git repos** pinned to a specific commit SHA, placed under
+   `workspace-artifacts/seeds/code/<name>/`. Immutability is enforced at the
+   commit boundary (not per-file). `meta-compiler add-code-seed --repo <url> --ref <sha|tag> --name <slug>`
+   clones the repo and records a `code_bindings` entry in
+   `workspace-artifacts/manifests/source_bindings.yaml`. If you already have the
+   repo checked out under `seeds/code/`, `bind-code-seed --path <rel>` records
+   the current HEAD.
+2. **Ingest is two-pass.** When `meta-compiler ingest` sees a registered code
+   repo it emits `repo_map_items[]` (one per repo) into the work plan alongside
+   per-file `work_items` with `seed_kind: code`. The `ingest-orchestrator` first
+   spawns `repo-mapper` subagents that walk each repo and emit a RepoMap YAML
+   to `runtime/ingest/repo_map/<name>.yaml`. It then fans out `code-reader`
+   subagents (≤4 in parallel) that full-read each priority file and emit code
+   findings JSON with line-anchored locators.
+
+The wiki stays a single tree. Code findings render per-file `type: code` pages
+(one per source file), plus a `type: code-repo` overview page per seed. Concept
+aggregation naturally merges document concepts with code concepts — so when a
+concept appears in both a paper and a source file, the concept page carries
+both citations automatically.
+
+Full schemas (RepoMap + Code Findings) live in
+`.github/prompts/ingest-orchestrator.prompt.md`. Agent specs are at
+`.github/agents/repo-mapper.agent.md` and `.github/agents/code-reader.agent.md`.
 
 ## Hooks and Determinism
 
@@ -188,10 +226,15 @@ meta-compiler validate-stage --stage all
 ## Post-Scaffold Operations
 
 ```bash
-# When new seed documents arrive
-meta-compiler wiki-update
+# When new seed documents arrive, re-run ingest → research-breadth, then:
+meta-compiler wiki-reconcile-concepts         # cluster any new alias candidates
+# (LLM runs wiki-concept-reconciliation.prompt.md)
+meta-compiler wiki-apply-reconciliation       # merge into canonical pages
+meta-compiler wiki-cross-source-synthesize    # surface inter-source divergence
+# (LLM runs wiki-cross-source-synthesis.prompt.md)
+meta-compiler wiki-link                       # alias-aware link pass
 
-# Auto-detect and ingest new seeds (checks + updates in one step)
+# Detect new seeds and report the handoff
 meta-compiler track-seeds
 
 # When scope or requirements change

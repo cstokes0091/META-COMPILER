@@ -181,8 +181,14 @@ def test_agents_needed_block():
         "- Section: agents_needed\n"
         "- Role: stage2-orchestrator\n"
         "- Responsibility: preflight + postflight integrity audit\n"
-        "- Reads: precheck_request, postcheck_request, decision_log, transcript\n"
-        "- Writes: precheck_verdict, postcheck_verdict\n"
+        "- Inputs:\n"
+        "  - precheck_request: document\n"
+        "  - postcheck_request: document\n"
+        "  - decision_log: document\n"
+        "  - transcript: document\n"
+        "- Outputs:\n"
+        "  - precheck_verdict: document\n"
+        "  - postcheck_verdict: document\n"
         "- Key constraints: read-only against the transcript, never edit the decision log\n"
         "- Rationale: keeps the CLI deterministic while preserving semantic checks\n"
         "- Citations: (none)\n"
@@ -191,12 +197,107 @@ def test_agents_needed_block():
     assert errors == []
     block = blocks[0]
     assert block.fields["role"] == "stage2-orchestrator"
-    assert block.fields["reads"] == [
-        "precheck_request",
-        "postcheck_request",
-        "decision_log",
-        "transcript",
+    assert block.fields["inputs"] == [
+        {"name": "precheck_request", "modality": "document"},
+        {"name": "postcheck_request", "modality": "document"},
+        {"name": "decision_log", "modality": "document"},
+        {"name": "transcript", "modality": "document"},
     ]
+    assert block.fields["outputs"] == [
+        {"name": "precheck_verdict", "modality": "document"},
+        {"name": "postcheck_verdict", "modality": "document"},
+    ]
+
+
+def test_agents_needed_rejects_invalid_modality():
+    text = (
+        "### Decision: bad-agent\n"
+        "- Section: agents_needed\n"
+        "- Role: bad-agent\n"
+        "- Responsibility: fails modality enum\n"
+        "- Inputs:\n"
+        "  - decision_log: binary\n"
+        "- Outputs:\n"
+        "  - scaffold: code\n"
+        "- Key constraints: (none)\n"
+        "- Rationale: test case\n"
+        "- Citations: (none)\n"
+    )
+    blocks, errors = parse_decision_blocks(text)
+    assert blocks == []
+    assert any("modality 'binary'" in e for e in errors)
+
+
+def test_agents_needed_requires_inputs_and_outputs():
+    text = (
+        "### Decision: missing-outputs\n"
+        "- Section: agents_needed\n"
+        "- Role: missing-outputs\n"
+        "- Responsibility: forgot outputs\n"
+        "- Inputs:\n"
+        "  - decision_log: document\n"
+        "- Key constraints: (none)\n"
+        "- Rationale: test\n"
+        "- Citations: (none)\n"
+    )
+    blocks, errors = parse_decision_blocks(text)
+    assert blocks == []
+    assert any("outputs" in e for e in errors)
+
+
+def test_code_architecture_block_with_libraries():
+    text = (
+        "### Decision: numerical-libraries\n"
+        "- Section: code-architecture\n"
+        "- Aspect: libraries\n"
+        "- Choice: numpy + pyarrow\n"
+        "- Libraries:\n"
+        "  - numpy: PSF math (>=1.26)\n"
+        "  - pyarrow: columnar IO (>=15)\n"
+        "- Alternatives rejected:\n"
+        "  - pandas: PSF ops need zero-copy arrow buffers\n"
+        "- Constraints applied: permissive license\n"
+        "- Rationale: stable and documented\n"
+        "- Citations: src-numpy, src-pyarrow\n"
+    )
+    blocks, errors = parse_decision_blocks(text)
+    assert errors == []
+    block = blocks[0]
+    assert block.section == "code-architecture"
+    assert block.fields["aspect"] == "libraries"
+    assert block.fields["libraries"] == [
+        {"name": "numpy", "description": "PSF math (>=1.26)"},
+        {"name": "pyarrow", "description": "columnar IO (>=15)"},
+    ]
+    assert block.alternatives_rejected[0]["name"] == "pandas"
+
+
+def test_code_architecture_rejects_unknown_aspect():
+    text = (
+        "### Decision: bad-aspect\n"
+        "- Section: code-architecture\n"
+        "- Aspect: cosmos\n"
+        "- Choice: whatever\n"
+        "- Rationale: nope\n"
+        "- Citations: (none)\n"
+    )
+    blocks, errors = parse_decision_blocks(text)
+    assert blocks == []
+    assert any("Aspect 'cosmos'" in e for e in errors)
+
+
+def test_code_architecture_libraries_aspect_requires_library_sublist():
+    text = (
+        "### Decision: missing-libs\n"
+        "- Section: code-architecture\n"
+        "- Aspect: libraries\n"
+        "- Choice: something\n"
+        "- Rationale: missing libs\n"
+        "- Citations: (none)\n"
+    )
+    blocks, errors = parse_decision_blocks(text)
+    assert blocks == []
+    assert any("Aspect=libraries" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +490,23 @@ def _full_transcript_all_sections() -> str:
         "- Rationale: separates dialog from integrity\n"
         "- Citations: (none)\n"
         "\n"
+        "### Decision: language-choice\n"
+        "- Section: code-architecture\n"
+        "- Aspect: language\n"
+        "- Choice: Python 3.11\n"
+        "- Rationale: matches existing meta-compiler toolchain\n"
+        "- Citations: (none)\n"
+        "\n"
+        "### Decision: libraries-choice\n"
+        "- Section: code-architecture\n"
+        "- Aspect: libraries\n"
+        "- Choice: pyyaml + pytest\n"
+        "- Libraries:\n"
+        "  - pyyaml: config serialization (>=6.0)\n"
+        "  - pytest: unit tests (>=8.0)\n"
+        "- Rationale: stable and already vendored\n"
+        "- Citations: (none)\n"
+        "\n"
         "### Decision: Ralph-loop Python driver\n"
         "- Section: scope-in\n"
         "- Item: Stage 4 Python runner\n"
@@ -423,8 +541,13 @@ def _full_transcript_all_sections() -> str:
         "- Section: agents_needed\n"
         "- Role: stage2-orchestrator\n"
         "- Responsibility: preflight + postflight integrity audit\n"
-        "- Reads: precheck_request, decision_log, transcript\n"
-        "- Writes: precheck_verdict, postcheck_verdict\n"
+        "- Inputs:\n"
+        "  - precheck_request: document\n"
+        "  - decision_log: document\n"
+        "  - transcript: document\n"
+        "- Outputs:\n"
+        "  - precheck_verdict: document\n"
+        "  - postcheck_verdict: document\n"
         "- Key constraints: read-only against transcript\n"
         "- Rationale: keeps CLI deterministic\n"
         "- Citations: (none)\n"
@@ -450,6 +573,7 @@ def test_compile_produces_schema_valid_decision_log():
     assert root["meta"]["parent_version"] is None
     assert len(root["conventions"]) == 1
     assert len(root["architecture"]) == 1
+    assert len(root["code_architecture"]) == 2
     assert len(root["scope"]["in_scope"]) == 1
     assert len(root["scope"]["out_of_scope"]) == 1
     assert len(root["requirements"]) == 1

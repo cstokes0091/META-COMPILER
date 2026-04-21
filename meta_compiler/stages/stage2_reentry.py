@@ -34,8 +34,9 @@ from .elicit_stage import run_elicit_vision_finalize
 
 # Maps each section to downstream sections it can affect
 CASCADE_MAP: dict[str, list[str]] = {
-    "conventions": ["architecture", "scope", "requirements", "agents_needed"],
-    "architecture": ["scope", "requirements", "agents_needed"],
+    "conventions": ["architecture", "code_architecture", "scope", "requirements", "agents_needed"],
+    "architecture": ["code_architecture", "scope", "requirements", "agents_needed"],
+    "code_architecture": ["agents_needed"],
     "scope": ["requirements", "agents_needed"],
     "requirements": ["agents_needed"],
     "agents_needed": [],
@@ -43,10 +44,12 @@ CASCADE_MAP: dict[str, list[str]] = {
 
 # Sections the human can ask to revise. "scope" is a single unit at the
 # human-facing level; it splits into scope-in / scope-out Sections at the
-# decision-block level.
+# decision-block level. "code_architecture" only applies to algorithm/hybrid
+# projects; the run_stage2_reentry caller validates that.
 REVISABLE_SECTIONS = {
     "conventions",
     "architecture",
+    "code_architecture",
     "scope",
     "requirements",
     "open_items",
@@ -186,25 +189,86 @@ def _render_open_item_block(row: dict[str, Any], parent_version: int) -> list[st
     ]
 
 
+def _render_modality_sublist(items: Any, label: str) -> list[str]:
+    if not isinstance(items, list) or not items:
+        return [f"- {label}:", f"  - decision_log: document"]
+    lines = [f"- {label}:"]
+    for entry in items:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name", "")
+        modality = entry.get("modality", "document")
+        if not name:
+            continue
+        lines.append(f"  - {name}: {modality}")
+    if len(lines) == 1:
+        lines.append(f"  - decision_log: document")
+    return lines
+
+
 def _render_agent_block(row: dict[str, Any], parent_version: int) -> list[str]:
-    reads = row.get("reads") or []
-    writes = row.get("writes") or []
+    inputs = row.get("inputs") or []
+    outputs = row.get("outputs") or []
     constraints = row.get("key_constraints") or []
-    return [
+    lines = [
         f"### Decision: {row.get('role', 'agent')}",
         f"- Section: agents_needed",
         f"- Role: {row.get('role', '')}",
         f"- Responsibility: {row.get('responsibility', '')}",
-        f"- Reads: {', '.join(str(r) for r in reads) if reads else '(none)'}",
-        f"- Writes: {', '.join(str(w) for w in writes) if writes else '(none)'}",
-        (
-            f"- Key constraints: "
-            f"{', '.join(str(c) for c in constraints) if constraints else '(none)'}"
-        ),
-        f"- Rationale: Carried from v{parent_version}.",
-        f"- Citations: {_format_citations(row.get('citations'))}",
-        "",
     ]
+    lines.extend(_render_modality_sublist(inputs, "Inputs"))
+    lines.extend(_render_modality_sublist(outputs, "Outputs"))
+    lines.append(
+        f"- Key constraints: "
+        f"{', '.join(str(c) for c in constraints) if constraints else '(none)'}"
+    )
+    lines.append(f"- Rationale: Carried from v{parent_version}.")
+    lines.append(f"- Citations: {_format_citations(row.get('citations'))}")
+    lines.append("")
+    return lines
+
+
+def _render_code_arch_block(row: dict[str, Any], parent_version: int) -> list[str]:
+    aspect = row.get("aspect", "language")
+    lines = [
+        f"### Decision: code-arch-{aspect}",
+        f"- Section: code-architecture",
+        f"- Aspect: {aspect}",
+        f"- Choice: {row.get('choice', '')}",
+    ]
+    libraries = row.get("libraries") or []
+    if isinstance(libraries, list) and libraries:
+        lines.append("- Libraries:")
+        for lib in libraries:
+            if not isinstance(lib, dict):
+                continue
+            name = lib.get("name", "")
+            description = lib.get("description", "")
+            if name and description:
+                lines.append(f"  - {name}: {description}")
+    module_layout = row.get("module_layout")
+    if isinstance(module_layout, str) and module_layout.strip():
+        lines.append(f"- Module layout: {module_layout}")
+    alts = row.get("alternatives_rejected") or []
+    if isinstance(alts, list) and alts:
+        lines.append("- Alternatives rejected:")
+        for alt in alts:
+            if not isinstance(alt, dict):
+                continue
+            name = alt.get("name", "")
+            reason = alt.get("reason", "")
+            if name:
+                lines.append(f"  - {name}: {reason}")
+    constraints = row.get("constraints_applied") or []
+    if isinstance(constraints, list) and constraints:
+        lines.append(
+            f"- Constraints applied: {', '.join(str(c) for c in constraints)}"
+        )
+    rationale = row.get("rationale") or ""
+    lines.append(f"- Rationale: {rationale} [carried from v{parent_version}]")
+    lines.append(f"- Citations: {_format_citations(row.get('citations'))}")
+    lines.append("")
+    return lines
 
 
 def _prior_section_prose(row: dict[str, Any], label: str) -> list[str]:
@@ -301,6 +365,25 @@ def _render_seeded_transcript(
         for row in prior.get("architecture", []) or []:
             if isinstance(row, dict):
                 lines.extend(_render_architecture_block(row, parent_version))
+
+    # --- Decision Area: Code Architecture (algorithm/hybrid only) ---
+    code_arch = prior.get("code_architecture") or []
+    if isinstance(code_arch, list) and code_arch:
+        lines.extend(["## Decision Area: Code Architecture", ""])
+        if "code_architecture" in revised_sections:
+            lines.extend(
+                [
+                    "_Revising code architecture. Prior aspects shown for reference._",
+                    "",
+                ]
+            )
+            for row in code_arch:
+                if isinstance(row, dict):
+                    lines.extend(_prior_section_prose(row, "code-architecture aspect"))
+        else:
+            for row in code_arch:
+                if isinstance(row, dict):
+                    lines.extend(_render_code_arch_block(row, parent_version))
 
     # --- Decision Area: Scope (in) ---
     scope = prior.get("scope", {}) or {}

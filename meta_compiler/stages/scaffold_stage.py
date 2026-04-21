@@ -105,6 +105,68 @@ def _render_architecture_doc(decision_log: dict[str, Any], version: int) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _render_code_architecture_doc(decision_log: dict[str, Any], version: int) -> str:
+    root = decision_log["decision_log"]
+    meta = root["meta"]
+    project_type = meta.get("project_type")
+    code_arch = root.get("code_architecture") or []
+
+    lines = [
+        "# CODE_ARCHITECTURE",
+        "",
+        f"Decision Log Version: v{version}",
+        f"Project: {meta.get('project_name')}",
+        f"Project Type: {project_type}",
+        "",
+    ]
+
+    if not code_arch:
+        if project_type == "report":
+            lines.append("_Not applicable for report projects._")
+        else:
+            lines.append("- No code-architecture decisions captured.")
+        return "\n".join(lines).rstrip() + "\n"
+
+    for row in code_arch:
+        if not isinstance(row, dict):
+            continue
+        aspect = row.get("aspect", "")
+        choice = row.get("choice", "")
+        lines.append(f"## {aspect}")
+        lines.append("")
+        lines.append(f"- Choice: {choice}")
+        libraries = row.get("libraries") or []
+        if isinstance(libraries, list) and libraries:
+            lines.append("- Libraries:")
+            for lib in libraries:
+                if not isinstance(lib, dict):
+                    continue
+                name = lib.get("name", "")
+                description = lib.get("description", "")
+                lines.append(f"  - {name}: {description}")
+        module_layout = row.get("module_layout")
+        if isinstance(module_layout, str) and module_layout.strip():
+            lines.append(f"- Module layout: {module_layout}")
+        constraints = _as_string_list(row.get("constraints_applied", []))
+        if constraints:
+            lines.append(f"- Constraints applied: {', '.join(constraints)}")
+        rejected = row.get("alternatives_rejected") or []
+        if isinstance(rejected, list) and rejected:
+            lines.append("- Alternatives rejected:")
+            for alt in rejected:
+                if not isinstance(alt, dict):
+                    continue
+                lines.append(f"  - {alt.get('name', '')}: {alt.get('reason', '')}")
+        rationale = row.get("rationale", "")
+        if rationale:
+            lines.append(f"- Rationale: {rationale}")
+        citations = _as_string_list(row.get("citations", []))
+        lines.append(f"- Citations: {', '.join(citations) if citations else 'None'}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _render_conventions_doc(decision_log: dict[str, Any]) -> str:
     conventions = decision_log["decision_log"].get("conventions", [])
     lines = ["# CONVENTIONS", ""]
@@ -171,9 +233,99 @@ def _merge_ordered(left: list[str], right: list[str]) -> list[str]:
     return _ordered_unique(left + right)
 
 
+# ---------------------------------------------------------------------------
+# Typed I/O helpers — every agent row in the Decision Log carries
+# `inputs` / `outputs` as lists of {name, modality} dicts. Stage 3 needs to
+# survive both the canonical (always-typed) and user-authored shapes.
+# ---------------------------------------------------------------------------
+
+
+_VALID_MODALITIES = {"document", "code"}
+
+
+def _to_typed_io(value: Any) -> list[dict[str, str]]:
+    """Coerce an inputs/outputs value into a typed list of {name, modality} dicts.
+
+    Accepts either the canonical typed form ({name, modality}) or a bare-string
+    list (treated as document modality — defensive only; the validator rejects
+    untyped lists at the Decision Log level).
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in value:
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            modality = item.get("modality")
+            if not name:
+                continue
+            if modality not in _VALID_MODALITIES:
+                modality = "document"
+            out.append({"name": name, "modality": modality})
+        else:
+            name = str(item).strip()
+            if name:
+                out.append({"name": name, "modality": "document"})
+    return out
+
+
+def _io_names(typed: list[dict[str, str]]) -> list[str]:
+    seen: set[str] = set()
+    names: list[str] = []
+    for entry in typed:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _io_modalities(typed: list[dict[str, str]]) -> set[str]:
+    return {
+        entry.get("modality")
+        for entry in typed
+        if isinstance(entry, dict) and entry.get("modality")
+    }
+
+
+def _merge_typed_io(
+    left: list[dict[str, str]],
+    right: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Merge two typed I/O lists by (name, modality), preserving first-seen order."""
+    seen: set[tuple[str, str]] = set()
+    merged: list[dict[str, str]] = []
+    for entry in list(left) + list(right):
+        if not isinstance(entry, dict):
+            continue
+        key = (str(entry.get("name", "")), str(entry.get("modality", "")))
+        if not key[0] or not key[1] or key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(entry))
+    return merged
+
+
+def _dominant_output_modality(outputs_typed: list[dict[str, str]]) -> str:
+    """Return the dominant output modality, biased toward 'code' when present."""
+    modalities = _io_modalities(outputs_typed)
+    if "code" in modalities:
+        return "code"
+    if "document" in modalities:
+        return "document"
+    return "document"
+
+
 def _collect_constraints(root: dict[str, Any]) -> list[str]:
     constraints: list[str] = []
     for row in root.get("architecture", []):
+        if not isinstance(row, dict):
+            continue
+        constraints.extend(_as_string_list(row.get("constraints_applied", [])))
+    for row in root.get("code_architecture", []) or []:
         if not isinstance(row, dict):
             continue
         constraints.extend(_as_string_list(row.get("constraints_applied", [])))
@@ -182,12 +334,17 @@ def _collect_constraints(root: dict[str, Any]) -> list[str]:
 
 def _collect_citation_ids(root: dict[str, Any]) -> list[str]:
     citations: list[str] = []
-    for section_name in ["conventions", "architecture", "requirements"]:
-        for row in root.get(section_name, []):
+    for section_name in ["conventions", "architecture", "code_architecture", "requirements"]:
+        for row in root.get(section_name, []) or []:
             if not isinstance(row, dict):
                 continue
             citations.extend(_as_string_list(row.get("citations", [])))
     return _ordered_unique(citations)
+
+
+def _typed(*pairs: tuple[str, str]) -> list[dict[str, str]]:
+    """Shorthand for building a typed I/O list inline."""
+    return [{"name": name, "modality": modality} for name, modality in pairs]
 
 
 def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str, Any]]:
@@ -196,8 +353,13 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
         {
             "role": "scaffold-generator",
             "responsibility": "Generate project structure and traceable artifacts from the Decision Log.",
-            "reads": ["decision_log"],
-            "writes": ["scaffold", "agents", "docs", "requirements"],
+            "inputs": _typed(("decision_log", "document")),
+            "outputs": _typed(
+                ("scaffold", "code"),
+                ("agents", "document"),
+                ("docs", "document"),
+                ("requirements", "document"),
+            ),
             "key_constraints": _merge_ordered(
                 [
                     "input is Decision Log only",
@@ -214,15 +376,25 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
             [
                 {
                     "role": "algorithm-implementer",
-                    "responsibility": "Translate the Decision Log's architecture, data model, and requirements into a working implementation under code/, with tests/ exercising each requirement ID.",
-                    "reads": ["decision_log", "architecture", "requirements", "conventions"],
-                    "writes": ["code", "tests"],
+                    "responsibility": "Translate the Decision Log's architecture, code-architecture, data model, and requirements into a working implementation under code/, with tests/ exercising each requirement ID.",
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("architecture", "document"),
+                        ("code_architecture", "document"),
+                        ("requirements", "document"),
+                        ("conventions", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("code", "code"),
+                        ("tests", "code"),
+                    ),
                     "key_constraints": _merge_ordered(
                         [
-                            "write executable Python, not markdown placeholders",
+                            "write executable code in the language declared by code_architecture, not markdown placeholders",
                             "replace the scaffold stub in code/main.py with the real implementation",
                             "every public function must trace to a requirement ID",
                             "add tests/ coverage for each requirement in REQ_TRACE_MATRIX.md",
+                            "use only the libraries enumerated in decision_log.code_architecture",
                         ],
                         global_constraints,
                     ),
@@ -230,8 +402,16 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "math-conventions-agent",
                     "responsibility": "Normalize mathematical notation and assumptions across generated code and docs.",
-                    "reads": ["decision_log", "conventions", "requirements"],
-                    "writes": ["docs", "code", "tests"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("conventions", "document"),
+                        ("requirements", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("docs", "document"),
+                        ("code", "code"),
+                        ("tests", "code"),
+                    ),
                     "key_constraints": _merge_ordered(
                         ["use only approved math conventions", "avoid introducing uncited formalisms"],
                         global_constraints,
@@ -240,8 +420,16 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "scope-reduction-agent",
                     "responsibility": "Remove work outside explicit in-scope decisions before implementation starts.",
-                    "reads": ["decision_log", "scope", "requirements", "architecture"],
-                    "writes": ["docs", "code"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("scope", "document"),
+                        ("requirements", "document"),
+                        ("architecture", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("docs", "document"),
+                        ("code", "code"),
+                    ),
                     "key_constraints": _merge_ordered(
                         ["treat out-of-scope items as veto unless revised in Stage 2"],
                         global_constraints,
@@ -256,8 +444,16 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "report-writer",
                     "responsibility": "Draft report/OUTLINE.md and report/DRAFT.md from the Decision Log's architecture and requirements, grounding every claim in the citation index.",
-                    "reads": ["decision_log", "architecture", "requirements", "conventions"],
-                    "writes": ["report", "docs"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("architecture", "document"),
+                        ("requirements", "document"),
+                        ("conventions", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("report", "document"),
+                        ("docs", "document"),
+                    ),
                     "key_constraints": _merge_ordered(
                         [
                             "produce a full draft, not frontmatter-only stubs",
@@ -271,8 +467,15 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "citation-manager-agent",
                     "responsibility": "Maintain citation inventory and source traceability for report outputs.",
-                    "reads": ["decision_log", "requirements", "conventions"],
-                    "writes": ["references", "report"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("requirements", "document"),
+                        ("conventions", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("references", "document"),
+                        ("report", "document"),
+                    ),
                     "key_constraints": _merge_ordered(
                         ["preserve citation IDs exactly as recorded"],
                         global_constraints,
@@ -281,8 +484,15 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "style-conventions-agent",
                     "responsibility": "Apply writing and terminology conventions consistently across report drafts.",
-                    "reads": ["decision_log", "conventions", "scope"],
-                    "writes": ["docs", "report"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("conventions", "document"),
+                        ("scope", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("docs", "document"),
+                        ("report", "document"),
+                    ),
                     "key_constraints": _merge_ordered(
                         ["do not override constraints captured in architecture decisions"],
                         global_constraints,
@@ -291,8 +501,15 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                 {
                     "role": "narrative-structure-agent",
                     "responsibility": "Map architecture decisions and requirements into a coherent report narrative.",
-                    "reads": ["decision_log", "architecture", "requirements"],
-                    "writes": ["report", "docs"],
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("architecture", "document"),
+                        ("requirements", "document"),
+                    ),
+                    "outputs": _typed(
+                        ("report", "document"),
+                        ("docs", "document"),
+                    ),
                     "key_constraints": _merge_ordered(
                         ["cover all requirement IDs in narrative plan"],
                         global_constraints,
@@ -309,8 +526,8 @@ def _normalize_agent_row(row: dict[str, Any], fallback_role: str) -> dict[str, A
     return {
         "role": role,
         "responsibility": str(row.get("responsibility") or "No responsibility specified.").strip(),
-        "reads": _as_string_list(row.get("reads", [])),
-        "writes": _as_string_list(row.get("writes", [])),
+        "inputs": _to_typed_io(row.get("inputs", [])),
+        "outputs": _to_typed_io(row.get("outputs", [])),
         "key_constraints": _as_string_list(row.get("key_constraints", [])),
     }
 
@@ -328,8 +545,12 @@ def _merged_agents(project_type: str, root: dict[str, Any]) -> list[dict[str, An
             order.append(key)
             return
 
-        existing["reads"] = _merge_ordered(existing.get("reads", []), normalized.get("reads", []))
-        existing["writes"] = _merge_ordered(existing.get("writes", []), normalized.get("writes", []))
+        existing["inputs"] = _merge_typed_io(
+            existing.get("inputs", []), normalized.get("inputs", [])
+        )
+        existing["outputs"] = _merge_typed_io(
+            existing.get("outputs", []), normalized.get("outputs", [])
+        )
         existing["key_constraints"] = _merge_ordered(
             existing.get("key_constraints", []),
             normalized.get("key_constraints", []),
@@ -364,6 +585,9 @@ def _write_agent_specs(
     agents = _merged_agents(project_type=project_type, root=root)
 
     architecture = [row for row in root.get("architecture", []) if isinstance(row, dict)]
+    code_architecture = [
+        row for row in root.get("code_architecture", []) or [] if isinstance(row, dict)
+    ]
     conventions = [row for row in root.get("conventions", []) if isinstance(row, dict)]
     requirements = [row for row in root.get("requirements", []) if isinstance(row, dict)]
     citations = _collect_citation_ids(root)
@@ -377,6 +601,9 @@ def _write_agent_specs(
         path = agents_dir / f"{slug}.md"
         custom_path = custom_agents_dir / f"{slug}.agent.md"
 
+        inputs_typed = _to_typed_io(row.get("inputs", []))
+        outputs_typed = _to_typed_io(row.get("outputs", []))
+
         content_lines = [
             f"# Agent Spec: {role}",
             "",
@@ -384,19 +611,21 @@ def _write_agent_specs(
             f"Project Type: {project_type}",
             f"Responsibility: {row.get('responsibility')}",
             "",
-            "## Reads",
+            "## Inputs",
         ]
-        reads = row.get("reads", [])
-        if isinstance(reads, list) and reads:
-            content_lines.extend([f"- {item}" for item in reads])
+        if inputs_typed:
+            content_lines.extend(
+                [f"- {entry['name']} (modality: {entry['modality']})" for entry in inputs_typed]
+            )
         else:
             content_lines.append("- None")
 
         content_lines.append("")
-        content_lines.append("## Writes")
-        writes = row.get("writes", [])
-        if isinstance(writes, list) and writes:
-            content_lines.extend([f"- {item}" for item in writes])
+        content_lines.append("## Outputs")
+        if outputs_typed:
+            content_lines.extend(
+                [f"- {entry['name']} (modality: {entry['modality']})" for entry in outputs_typed]
+            )
         else:
             content_lines.append("- None")
 
@@ -421,6 +650,12 @@ def _write_agent_specs(
                 )
         else:
             content_lines.append("- No architecture decisions recorded.")
+
+        if code_architecture:
+            for ca in code_architecture[:8]:
+                aspect = ca.get("aspect", "")
+                choice = ca.get("choice", "")
+                content_lines.append(f"- Code Architecture ({aspect}): {choice}")
 
         if conventions:
             for convention in conventions[:8]:
@@ -477,14 +712,18 @@ def _write_agent_specs(
             "## Inputs",
         ]
 
-        if isinstance(reads, list) and reads:
-            custom_body_lines.extend([f"- {item}" for item in reads])
+        if inputs_typed:
+            custom_body_lines.extend(
+                [f"- {entry['name']} (modality: {entry['modality']})" for entry in inputs_typed]
+            )
         else:
             custom_body_lines.append("- None")
 
         custom_body_lines.extend(["", "## Outputs"])
-        if isinstance(writes, list) and writes:
-            custom_body_lines.extend([f"- {item}" for item in writes])
+        if outputs_typed:
+            custom_body_lines.extend(
+                [f"- {entry['name']} (modality: {entry['modality']})" for entry in outputs_typed]
+            )
         else:
             custom_body_lines.append("- None")
 
@@ -510,6 +749,11 @@ def _write_agent_specs(
                 component_name = component.get("component", "component")
                 approach = component.get("approach", "unspecified")
                 custom_body_lines.append(f"- Architecture: {component_name} -> {approach}")
+        if code_architecture:
+            for ca in code_architecture[:5]:
+                custom_body_lines.append(
+                    f"- Code Architecture ({ca.get('aspect', '')}): {ca.get('choice', '')}"
+                )
         if conventions:
             for convention in conventions[:5]:
                 custom_body_lines.append(
@@ -520,7 +764,7 @@ def _write_agent_specs(
                 custom_body_lines.append(
                     f"- {requirement.get('id', 'REQ-UNK')}: {requirement.get('description', '')}"
                 )
-        if not architecture and not conventions and not requirements:
+        if not architecture and not code_architecture and not conventions and not requirements:
             custom_body_lines.append("- No decision trace entries captured.")
 
         custom_path.write_text(
@@ -531,18 +775,13 @@ def _write_agent_specs(
     return len(agents)
 
 
-def _infer_output_kind(writes: list[str], responsibility: str) -> str:
-    writes_set = {str(w).lower() for w in writes}
-    if writes_set & {"code", "tests"}:
-        return "code"
-    if writes_set & {"report", "references", "docs", "documentation"}:
-        return "document"
-    lowered = responsibility.lower()
-    if any(token in lowered for token in ("code", "test", "algorithm", "implementation")):
-        return "code"
-    if any(token in lowered for token in ("report", "draft", "outline", "narrative", "document")):
-        return "document"
-    return "artifact"
+def _infer_output_kind(row: dict[str, Any]) -> str:
+    """Return the dominant output modality for an agent row.
+
+    Reads `outputs[].modality` from the typed Decision Log shape and biases
+    toward 'code' when any output is code. Returns 'document' otherwise.
+    """
+    return _dominant_output_modality(_to_typed_io(row.get("outputs", [])))
 
 
 def _write_ralph_loop_agents(
@@ -567,9 +806,12 @@ def _write_ralph_loop_agents(
     for idx, row in enumerate(agents, start=1):
         role = str(row.get("role", f"agent-{idx}"))
         slug = slugify(role) or f"agent-{idx}"
-        writes = _as_string_list(row.get("writes", []))
-        reads = _as_string_list(row.get("reads", []))
-        output_kind = _infer_output_kind(writes, str(row.get("responsibility", "")))
+        inputs_typed = _to_typed_io(row.get("inputs", []))
+        outputs_typed = _to_typed_io(row.get("outputs", []))
+        reads = [
+            f"{entry['name']} (modality: {entry['modality']})" for entry in inputs_typed
+        ]
+        output_kind = _infer_output_kind(row)
 
         reviewer_frontmatter = {
             "name": f"{slug}-reviewer",
@@ -756,13 +998,15 @@ def _write_ralph_loop_agents(
 
 def _infer_agent_triggers(row: dict[str, Any], project_type: str) -> list[str]:
     triggers: list[str] = []
-    writes = {str(w).lower() for w in _as_string_list(row.get("writes", []))}
+    outputs_typed = _to_typed_io(row.get("outputs", []))
+    output_names = {entry["name"].lower() for entry in outputs_typed}
+    output_modalities = _io_modalities(outputs_typed)
     role = str(row.get("role", "")).lower()
     responsibility = str(row.get("responsibility", "")).lower()
 
-    if writes & {"code", "tests"}:
+    if output_names & {"code", "tests"} or "code" in output_modalities:
         triggers.append("implementation_scope_code")
-    if writes & {"report", "references"}:
+    if output_names & {"report", "references"}:
         triggers.append("implementation_scope_report")
     if "citation" in role or "citation" in responsibility:
         triggers.append("citation_touch")
@@ -811,9 +1055,13 @@ def _write_agent_registry(
     for idx, row in enumerate(agents, start=1):
         role = str(row.get("role", f"agent-{idx}"))
         slug = slugify(role) or f"agent-{idx}"
-        writes = _as_string_list(row.get("writes", []))
-        reads = _as_string_list(row.get("reads", []))
-        output_kind = _infer_output_kind(writes, str(row.get("responsibility", "")))
+        inputs_typed = _to_typed_io(row.get("inputs", []))
+        outputs_typed = _to_typed_io(row.get("outputs", []))
+        if not inputs_typed:
+            inputs_typed = [{"name": "decision_log", "modality": "document"}]
+        if not outputs_typed:
+            outputs_typed = [{"name": "scaffold", "modality": "code"}]
+        output_kind = _infer_output_kind(row)
         triggers = _infer_agent_triggers(row, project_type)
         scoped_brief = _infer_scoped_wiki_brief(row)
 
@@ -822,8 +1070,8 @@ def _write_agent_registry(
             "role": role,
             "responsibility": row.get("responsibility", ""),
             "output_kind": output_kind,
-            "inputs": reads or ["decision_log"],
-            "outputs": writes or ["scaffold"],
+            "inputs": inputs_typed,
+            "outputs": outputs_typed,
             "capabilities": _infer_agent_tools(row),
             "triggers_when": triggers,
             "reviewer": f"{slug}-reviewer",
@@ -876,15 +1124,25 @@ def _markdown_with_frontmatter(frontmatter: dict[str, Any], body_lines: list[str
 
 
 def _infer_agent_tools(row: dict[str, Any]) -> list[str]:
-    writes = set(_as_string_list(row.get("writes", [])))
+    outputs_typed = _to_typed_io(row.get("outputs", []))
+    output_names = {entry["name"].lower() for entry in outputs_typed}
+    output_modalities = _io_modalities(outputs_typed)
     responsibility = str(row.get("responsibility", "")).lower()
     tools = ["read", "search", "agent"]
 
-    if writes:
+    if output_names:
         tools.append("edit")
-    if writes & {"code", "tests", "report", "references", "scaffold"} or "generate" in responsibility:
+    if (
+        "code" in output_modalities
+        or output_names & {"code", "tests", "report", "references", "scaffold"}
+        or "generate" in responsibility
+    ):
         tools.append("execute")
-    if writes & {"references"} or "citation" in responsibility or "source" in responsibility:
+    if (
+        output_names & {"references"}
+        or "citation" in responsibility
+        or "source" in responsibility
+    ):
         tools.append("web")
 
     return _ordered_unique(tools)
@@ -895,11 +1153,20 @@ def _default_subagent_allowlist() -> list[str]:
 
 
 def _agent_description(role: str, row: dict[str, Any], project_type: str) -> str:
-    reads = ", ".join(_as_string_list(row.get("reads", []))) or "Decision Log artifacts"
-    writes = ", ".join(_as_string_list(row.get("writes", []))) or "scaffold outputs"
+    inputs_typed = _to_typed_io(row.get("inputs", []))
+    outputs_typed = _to_typed_io(row.get("outputs", []))
+    inputs = (
+        ", ".join(f"{entry['name']}({entry['modality']})" for entry in inputs_typed)
+        or "Decision Log artifacts"
+    )
+    outputs = (
+        ", ".join(f"{entry['name']}({entry['modality']})" for entry in outputs_typed)
+        or "scaffold outputs"
+    )
     return (
         f"Use when executing the {role} role in a META-COMPILER {project_type} scaffold. "
-        f"Reads {reads}. Writes {writes}. Preserves Decision Log constraints, requirement traceability, and citation fidelity."
+        f"Reads {inputs}. Writes {outputs}. Preserves Decision Log constraints, "
+        "requirement traceability, and citation fidelity."
     )
 
 
@@ -975,8 +1242,20 @@ def _write_execution_contract(
         "    return entries if isinstance(entries, list) else []",
         "",
         "",
+        "def _io_names(entries_field):",
+        "    names = []",
+        "    for item in entries_field or []:",
+        "        if isinstance(item, dict):",
+        "            name = item.get('name')",
+        "            if name:",
+        "                names.append(name)",
+        "        elif isinstance(item, str) and item:",
+        "            names.append(item)",
+        "    return names",
+        "",
+        "",
         "def _topological_dispatch_plan(entries):",
-        "    produced = {output for entry in entries for output in entry.get('outputs', [])}",
+        "    produced = {name for entry in entries for name in _io_names(entry.get('outputs'))}",
         "    resolved = set()",
         "    plan = []",
         "    remaining = list(entries)",
@@ -984,11 +1263,12 @@ def _write_execution_contract(
         "    while remaining and guard < len(entries) * len(entries) + 1:",
         "        progressed = False",
         "        for entry in list(remaining):",
-        "            deps = [inp for inp in entry.get('inputs', []) if inp in produced and inp not in resolved]",
+        "            input_names = _io_names(entry.get('inputs'))",
+        "            deps = [inp for inp in input_names if inp in produced and inp not in resolved]",
         "            blocked = [d for d in deps if d not in resolved]",
         "            if not blocked:",
         "                plan.append(entry)",
-        "                resolved.update(entry.get('outputs', []))",
+        "                resolved.update(_io_names(entry.get('outputs')))",
         "                remaining.remove(entry)",
         "                progressed = True",
         "        if not progressed:",
@@ -1721,10 +2001,15 @@ def run_scaffold(
     architecture_doc = _render_architecture_doc(decision_log, version=version)
     conventions_doc = _render_conventions_doc(decision_log)
     requirements_doc = _render_requirements_doc(decision_log)
+    code_architecture_doc = _render_code_architecture_doc(decision_log, version=version)
 
     (layout["root"] / "ARCHITECTURE.md").write_text(architecture_doc, encoding="utf-8")
     (layout["root"] / "CONVENTIONS.md").write_text(conventions_doc, encoding="utf-8")
     (layout["root"] / "REQUIREMENTS_TRACED.md").write_text(requirements_doc, encoding="utf-8")
+    if project_type in {"algorithm", "hybrid"}:
+        (layout["root"] / "CODE_ARCHITECTURE.md").write_text(
+            code_architecture_doc, encoding="utf-8"
+        )
 
     agent_count = _write_agent_specs(
         layout["agents"],

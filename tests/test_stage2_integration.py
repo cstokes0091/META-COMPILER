@@ -76,7 +76,7 @@ def test_end_to_end_start_then_finalize_produces_valid_workspace(tmp_path):
     )
     assert finalize_result["status"] == "compiled"
     assert finalize_result["decision_log_version"] == 1
-    assert finalize_result["block_count"] == 7
+    assert finalize_result["block_count"] == 9
 
     # --- Step 5 would run @stage2-orchestrator mode=postflight ---
     # Simulate the verdict the agent would write.

@@ -33,6 +33,7 @@ from ..validation import validate_decision_log
 VALID_SECTIONS = {
     "conventions",
     "architecture",
+    "code-architecture",
     "scope-in",
     "scope-out",
     "requirements",
@@ -43,13 +44,29 @@ VALID_SECTIONS = {
 VALID_CONVENTION_DOMAINS = {"math", "code", "citation", "terminology"}
 VALID_REQUIREMENT_SOURCES = {"user", "derived"}
 VALID_DEFER_TARGETS = {"implementation", "future_work"}
+VALID_AGENT_MODALITIES = {"document", "code"}
+VALID_CODE_ARCH_ASPECTS = {
+    "language",
+    "libraries",
+    "module_layout",
+    "build_tooling",
+    "runtime",
+}
+CODE_ARCH_PROJECT_TYPES = {"algorithm", "hybrid"}
 
 _COMMA_LIST_FIELDS = {
     "citations",
     "constraints_applied",
-    "reads",
-    "writes",
     "key_constraints",
+}
+
+# Sublist fields use the indented `  - <name>: <value>` grammar (same as
+# alternatives_rejected). The mapped string is the dict key the value goes
+# under, e.g. inputs become [{"name": ..., "modality": ...}].
+_SUBLIST_FIELDS: dict[str, str] = {
+    "inputs": "modality",
+    "outputs": "modality",
+    "libraries": "description",
 }
 
 _NONE_SENTINELS = {"(none)", "none", "-"}
@@ -59,11 +76,12 @@ _NONE_SENTINELS = {"(none)", "none", "-"}
 _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "conventions": ("domain", "choice"),
     "architecture": ("component", "approach", "constraints_applied"),
+    "code-architecture": ("aspect", "choice"),
     "scope-in": ("item",),
     "scope-out": ("item", "revisit_if"),
     "requirements": ("source", "description", "verification", "lens"),
     "open_items": ("description", "deferred_to", "owner"),
-    "agents_needed": ("role", "responsibility", "reads", "writes", "key_constraints"),
+    "agents_needed": ("role", "responsibility", "inputs", "outputs", "key_constraints"),
 }
 
 
@@ -164,6 +182,27 @@ def _parse_single_block(block_lines: list[str], source_line: int) -> DecisionBlo
             alternatives.append({"name": alt_name, "reason": alt_reason})
             continue
 
+        if sub_match and current_field in _SUBLIST_FIELDS:
+            entry_name = sub_match.group(1).strip()
+            entry_value = sub_match.group(2).strip()
+            value_key = _SUBLIST_FIELDS[current_field]
+            if not entry_name:
+                raise DecisionBlockParseError(
+                    f"line {source_line + offset}: '{current_field}' entry missing a name"
+                )
+            if not entry_value:
+                raise DecisionBlockParseError(
+                    f"line {source_line + offset}: '{current_field}' entry "
+                    f"'{entry_name}' missing {value_key}"
+                )
+            bucket = fields.setdefault(current_field, [])
+            if not isinstance(bucket, list):
+                raise DecisionBlockParseError(
+                    f"line {source_line + offset}: '{current_field}' must be a sublist"
+                )
+            bucket.append({"name": entry_name, value_key: entry_value})
+            continue
+
         if field_match:
             label = _normalize_field_key(field_match.group(1))
             value = field_match.group(2).strip()
@@ -178,6 +217,19 @@ def _parse_single_block(block_lines: list[str], source_line: int) -> DecisionBlo
                         alternatives.append(
                             {"name": alt_parts[0].strip(), "reason": alt_parts[1].strip()}
                         )
+                continue
+
+            if label in _SUBLIST_FIELDS:
+                # Sublist body is collected on subsequent indented lines. The
+                # label line itself never carries an inline value — if one is
+                # present, that's a malformed block.
+                fields[label] = []
+                if value:
+                    raise DecisionBlockParseError(
+                        f"line {source_line + offset}: '{label}' takes its body as an "
+                        f"indented sublist of '  - <name>: <{_SUBLIST_FIELDS[label]}>' "
+                        "lines, not an inline value"
+                    )
                 continue
 
             if label in _COMMA_LIST_FIELDS:
@@ -225,10 +277,16 @@ def _parse_single_block(block_lines: list[str], source_line: int) -> DecisionBlo
         value = fields[required]
         # Accept zero-length list fields like `- Constraints applied: (none)` ONLY
         # when the underlying Decision Log schema accepts an empty list. For
-        # required string fields, empty is an error.
+        # required string fields, empty is an error. Sublist fields like
+        # Inputs/Outputs must have at least one entry.
         if isinstance(value, str) and not value.strip():
             raise DecisionBlockParseError(
                 f"line {source_line}: decision block '{name}' field '{required}' is empty"
+            )
+        if required in _SUBLIST_FIELDS and isinstance(value, list) and not value:
+            raise DecisionBlockParseError(
+                f"line {source_line}: decision block '{name}' field '{required}' "
+                f"requires at least one '  - <name>: <{_SUBLIST_FIELDS[required]}>' entry"
             )
 
     if section == "conventions":
@@ -252,6 +310,37 @@ def _parse_single_block(block_lines: list[str], source_line: int) -> DecisionBlo
                 f"line {source_line}: decision block '{name}' Deferred to '{deferred_to}' must be one of "
                 f"{sorted(VALID_DEFER_TARGETS)}"
             )
+    elif section == "agents_needed":
+        for io_field in ("inputs", "outputs"):
+            for entry in fields.get(io_field, []):
+                modality = entry.get("modality") if isinstance(entry, dict) else None
+                if modality not in VALID_AGENT_MODALITIES:
+                    raise DecisionBlockParseError(
+                        f"line {source_line}: decision block '{name}' {io_field.capitalize()} "
+                        f"entry '{entry.get('name', '<unknown>') if isinstance(entry, dict) else entry}' "
+                        f"modality '{modality}' must be one of {sorted(VALID_AGENT_MODALITIES)}"
+                    )
+    elif section == "code-architecture":
+        aspect = fields.get("aspect", "")
+        if aspect not in VALID_CODE_ARCH_ASPECTS:
+            raise DecisionBlockParseError(
+                f"line {source_line}: decision block '{name}' Aspect '{aspect}' must be one of "
+                f"{sorted(VALID_CODE_ARCH_ASPECTS)}"
+            )
+        if aspect == "libraries":
+            libraries = fields.get("libraries")
+            if not isinstance(libraries, list) or not libraries:
+                raise DecisionBlockParseError(
+                    f"line {source_line}: decision block '{name}' Aspect=libraries requires a "
+                    "non-empty 'Libraries:' sublist with '  - <name>: <description>' entries"
+                )
+        if aspect == "module_layout":
+            layout = fields.get("module_layout")
+            if not isinstance(layout, str) or not layout.strip():
+                raise DecisionBlockParseError(
+                    f"line {source_line}: decision block '{name}' Aspect=module_layout requires "
+                    "a non-empty 'Module layout:' field"
+                )
 
     return DecisionBlock(
         name=name,
@@ -368,6 +457,27 @@ def _compile_architecture(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
     return entries
 
 
+def _compile_code_architecture(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for block in blocks:
+        entry: dict[str, Any] = {
+            "aspect": block.fields["aspect"],
+            "choice": block.fields["choice"],
+            "alternatives_rejected": [dict(alt) for alt in block.alternatives_rejected],
+            "constraints_applied": list(block.fields.get("constraints_applied", [])),
+            "citations": list(block.citations),
+            "rationale": block.rationale,
+        }
+        libraries = block.fields.get("libraries")
+        if isinstance(libraries, list) and libraries:
+            entry["libraries"] = [dict(lib) for lib in libraries]
+        module_layout = block.fields.get("module_layout")
+        if isinstance(module_layout, str) and module_layout.strip():
+            entry["module_layout"] = module_layout
+        entries.append(entry)
+    return entries
+
+
 def _compile_scope(
     in_blocks: list[DecisionBlock], out_blocks: list[DecisionBlock]
 ) -> dict[str, list[dict[str, Any]]]:
@@ -430,8 +540,8 @@ def _compile_agents(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
             {
                 "role": block.fields["role"],
                 "responsibility": block.fields["responsibility"],
-                "reads": list(block.fields.get("reads", [])),
-                "writes": list(block.fields.get("writes", [])),
+                "inputs": [dict(item) for item in block.fields.get("inputs", [])],
+                "outputs": [dict(item) for item in block.fields.get("outputs", [])],
                 "key_constraints": list(block.fields.get("key_constraints", [])),
                 "rationale": block.rationale,
                 "citations": list(block.citations),
@@ -462,30 +572,44 @@ def compile_decision_log(
     for block in blocks:
         by_section[block.section].append(block)
 
-    return {
-        "decision_log": {
-            "meta": {
-                "project_name": project_meta.get("project_name", "META-COMPILER Project"),
-                "project_type": project_meta.get("project_type", "algorithm"),
-                "created": created_at or iso_now(),
-                "version": version,
-                "parent_version": prior_version,
-                "reason_for_revision": reason_for_revision,
-                "problem_statement_hash": problem_statement_hash,
-                "wiki_version": wiki_version,
-                "use_case": use_case,
-            },
-            "conventions": _compile_conventions(by_section["conventions"]),
-            "architecture": _compile_architecture(by_section["architecture"]),
-            "scope": _compile_scope(
-                in_blocks=by_section["scope-in"],
-                out_blocks=by_section["scope-out"],
-            ),
-            "requirements": _compile_requirements(by_section["requirements"]),
-            "open_items": _compile_open_items(by_section["open_items"]),
-            "agents_needed": _compile_agents(by_section["agents_needed"]),
-        }
+    project_type = project_meta.get("project_type", "algorithm")
+
+    decision_log: dict[str, Any] = {
+        "meta": {
+            "project_name": project_meta.get("project_name", "META-COMPILER Project"),
+            "project_type": project_type,
+            "created": created_at or iso_now(),
+            "version": version,
+            "parent_version": prior_version,
+            "reason_for_revision": reason_for_revision,
+            "problem_statement_hash": problem_statement_hash,
+            "wiki_version": wiki_version,
+            "use_case": use_case,
+        },
+        "conventions": _compile_conventions(by_section["conventions"]),
+        "architecture": _compile_architecture(by_section["architecture"]),
+        "scope": _compile_scope(
+            in_blocks=by_section["scope-in"],
+            out_blocks=by_section["scope-out"],
+        ),
+        "requirements": _compile_requirements(by_section["requirements"]),
+        "open_items": _compile_open_items(by_section["open_items"]),
+        "agents_needed": _compile_agents(by_section["agents_needed"]),
     }
+    if project_type in CODE_ARCH_PROJECT_TYPES:
+        decision_log["code_architecture"] = _compile_code_architecture(
+            by_section["code-architecture"]
+        )
+    elif by_section["code-architecture"]:
+        # report projects must not produce code-architecture decisions; surface
+        # this as a parse-time invariant violation by raising rather than
+        # silently dropping the blocks.
+        raise DecisionBlockParseError(
+            "decision_log: code-architecture decision blocks are not permitted for "
+            "project_type=report"
+        )
+
+    return {"decision_log": decision_log}
 
 
 def mechanical_fidelity_checks(
@@ -508,6 +632,7 @@ def mechanical_fidelity_checks(
     entry_count = (
         len(root.get("conventions", []))
         + len(root.get("architecture", []))
+        + len(root.get("code_architecture", []) or [])
         + len(root.get("scope", {}).get("in_scope", []) or [])
         + len(root.get("scope", {}).get("out_of_scope", []) or [])
         + len(root.get("requirements", []))
@@ -630,7 +755,7 @@ def mechanical_fidelity_checks(
 
 _DECISION_BLOCK_FORMAT_DOC = """\
 ### Decision: <short name>
-- Section: <conventions | architecture | scope-in | scope-out | requirements | open_items | agents_needed>
+- Section: <conventions | architecture | code-architecture | scope-in | scope-out | requirements | open_items | agents_needed>
 - <section-specific required fields — see below>
 - Rationale: <why, natural language>
 - Citations: src-..., src-...   (use '(none)' if no citations apply)
@@ -641,6 +766,14 @@ Section-specific required fields:
 - architecture: Component, Approach, Constraints applied. Alternatives rejected
   is optional but strongly preferred — write as an indented sublist of
   '  - <name>: <reason>'.
+- code-architecture (algorithm/hybrid only; forbidden for report): Aspect
+  (language|libraries|module_layout|build_tooling|runtime), Choice. When
+  Aspect=libraries, also include a 'Libraries:' indented sublist of
+  '  - <name>: <description>' entries (description should encode version
+  pin and purpose, e.g. 'numpy: PSF math (>=1.26)'). When
+  Aspect=module_layout, also include a 'Module layout:' line describing
+  the package layout. Alternatives rejected and Constraints applied are
+  optional but strongly preferred.
 - scope-in: Item
 - scope-out: Item, Revisit if
 - requirements: Source (user|derived), Description (EARS-phrased),
@@ -648,7 +781,14 @@ Section-specific required fields:
   maintainability|portability|constraint|data|interface|business-rule).
   Do not assign REQ-NNN IDs yourself — the --finalize step assigns them.
 - open_items: Description, Deferred to (implementation|future_work), Owner
-- agents_needed: Role, Responsibility, Reads, Writes, Key constraints
+- agents_needed: Role, Responsibility, Inputs, Outputs, Key constraints.
+  Inputs and Outputs are indented sublists where every entry is tagged
+  with modality (document|code):
+      - Inputs:
+        - decision_log: document
+      - Outputs:
+        - scaffold: code
+        - agents: document
 """
 
 
@@ -852,6 +992,7 @@ def _gap_annotations_by_section(paths) -> dict[str, list[str]]:
     buckets: dict[str, list[str]] = {
         "conventions": [],
         "architecture": [],
+        "code-architecture": [],
         "scope-in": [],
         "scope-out": [],
         "requirements": [],
@@ -905,6 +1046,7 @@ def _render_brief(
     manifest: dict[str, Any],
     decision_log_version: int,
     generated_at: str,
+    project_type: str,
 ) -> str:
     wm = manifest.get("workspace_manifest", {}) if isinstance(manifest, dict) else {}
     wiki = wm.get("wiki", {}) if isinstance(wm, dict) else {}
@@ -917,6 +1059,7 @@ def _render_brief(
         f"Generated: {generated_at}",
         f"Decision Log version: v{decision_log_version}",
         f"Wiki version: {wiki.get('version') or '(unset)'}",
+        f"Project type: {project_type}",
         "",
         "## Where to look",
         "",
@@ -930,15 +1073,21 @@ def _render_brief(
         "",
     ]
 
-    gap_section_labels = {
+    gap_section_labels: dict[str, str] = {
         "conventions": "Conventions",
         "architecture": "Architecture",
-        "scope-in": "Scope (in)",
-        "scope-out": "Scope (out)",
-        "requirements": "Requirements",
-        "open_items": "Open Items",
-        "agents_needed": "Agents Needed",
     }
+    if project_type in CODE_ARCH_PROJECT_TYPES:
+        gap_section_labels["code-architecture"] = "Code Architecture"
+    gap_section_labels.update(
+        {
+            "scope-in": "Scope (in)",
+            "scope-out": "Scope (out)",
+            "requirements": "Requirements",
+            "open_items": "Open Items",
+            "agents_needed": "Agents Needed",
+        }
+    )
 
     body_lines: list[str] = []
     for section_key, label in gap_section_labels.items():
@@ -994,6 +1143,7 @@ def _render_transcript_skeleton(
     paths,
     decision_log_version: int,
     generated_at: str,
+    project_type: str,
 ) -> str:
     gap_buckets = _gap_annotations_by_section(paths)
 
@@ -1010,6 +1160,7 @@ def _render_transcript_skeleton(
         f"# Stage 2 Transcript — v{decision_log_version}",
         "",
         f"Generated: {generated_at}",
+        f"Project type: {project_type}",
         "",
         "_Append prose (the conversation) and decision blocks (the commitments)_",
         "_below the appropriate heading. The --finalize step compiles only the_",
@@ -1027,9 +1178,25 @@ def _render_transcript_skeleton(
         _area_block(
             "Architecture",
             "architecture",
-            "Component-level decisions: chosen approach, alternatives rejected, constraints.",
+            "Logical component-level decisions: chosen approach, alternatives rejected, constraints.",
         )
     )
+    if project_type in CODE_ARCH_PROJECT_TYPES:
+        lines.extend(
+            _area_block(
+                "Code Architecture",
+                "code-architecture",
+                (
+                    "How the logical architecture is realized in code. Walk every aspect: "
+                    "language (Aspect: language), library selection with version pins and "
+                    "purpose (Aspect: libraries with a 'Libraries:' sublist), module/package "
+                    "layout (Aspect: module_layout with a 'Module layout:' field), build and "
+                    "test tooling (Aspect: build_tooling), and runtime/deploy target (Aspect: "
+                    "runtime). At least one 'language' block AND one 'libraries' block are "
+                    "required for algorithm/hybrid projects."
+                ),
+            )
+        )
     lines.extend(
         _area_block(
             "Scope (in)",
@@ -1067,7 +1234,16 @@ def _render_transcript_skeleton(
         _area_block(
             "Agents Needed",
             "agents_needed",
-            "Execution-time agent roles surfaced by the decisions above.",
+            (
+                "Execution-time agent roles. Every block must declare typed Inputs and "
+                "Outputs (modality: document|code) so Stage 3 knows what kind of artifact "
+                "each agent consumes and produces."
+                + (
+                    " For report projects, every output modality must be 'document'."
+                    if project_type == "report"
+                    else ""
+                )
+            ),
         )
     )
     return "\n".join(lines)
@@ -1172,12 +1348,17 @@ def run_elicit_vision_start(
             "for full evidence and remediation hints."
         )
 
+    project_type = (
+        manifest.get("workspace_manifest", {}).get("project_type") or "algorithm"
+    )
+
     paths.stage2_brief_path.write_text(
         _render_brief(
             paths=paths,
             manifest=manifest,
             decision_log_version=next_version,
             generated_at=generated_at,
+            project_type=project_type,
         ),
         encoding="utf-8",
     )
@@ -1191,6 +1372,7 @@ def run_elicit_vision_start(
                 paths=paths,
                 decision_log_version=next_version,
                 generated_at=generated_at,
+                project_type=project_type,
             ),
             encoding="utf-8",
         )

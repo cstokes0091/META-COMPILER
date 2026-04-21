@@ -12,7 +12,7 @@ from meta_compiler.stages.elicit_stage import (
 )
 
 
-_PROJECT_META = {"project_name": "Probe Test", "project_type": "algorithm"}
+_PROJECT_META = {"project_name": "Probe Test", "project_type": "report"}
 
 
 # ---------------------------------------------------------------------------
