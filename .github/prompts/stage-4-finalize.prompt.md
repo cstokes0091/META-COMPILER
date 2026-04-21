@@ -11,11 +11,13 @@ Stage 4 follows the same prompt-as-conductor pattern as Stage 2 ingest:
 
 1. CLI mechanical prep (`phase4-finalize --start`)
 2. Preflight verdict (`@execution-orchestrator mode=preflight`)
-3. LLM ralph loop fan-out (per-agent implementer subagents)
+3. Ralph loop: structure, then parallel implementer / reviewer / revision batches
 4. CLI mechanical compile (`phase4-finalize --finalize`)
 5. Postflight verdict (`@execution-orchestrator mode=postflight`)
 
 The conductor is *this prompt*. The CLI never holds the loop — the LLM does.
+Step 3 batches must be dispatched in a single message with multiple tool
+calls, the same way `ingest-orchestrator.prompt.md` fans out its readers.
 
 ## Your Role
 Conduct the Stage 4 ralph loop. You will:
@@ -91,44 +93,72 @@ after updating meta_compiler/stages/scaffold_stage.py::_canonical_agents.
 
 Do NOT continue to Step 3 with a refiner-only registry.
 
-## Step 3 — Ralph loop fan-out (tiered)
+## Step 3 — Ralph loop fan-out (structure + parallel batch)
 
-Read `executions/v{N}/dispatch_plan.yaml`. Fan-out runs in three tiers;
-later tiers consume earlier outputs, so do NOT flatten them.
+Read `executions/v{N}/dispatch_plan.yaml`. Fan-out runs in four
+sub-steps. The batch sub-steps (3b, 3c, 3d) MUST use a single message
+with multiple `@agent` tool calls — not a chain of one-per-message
+invocations. Modelled on `ingest-orchestrator.prompt.md`, which actually
+produces real fan-out in practice.
 
-**Tier 1 — Implementation (sequential, must complete first):**
-- `@algorithm-implementer` for `algorithm|hybrid` — writes real Python to
-  `executions/v{N}/work/algorithm-implementer/code/` and tests to
-  `.../tests/`. Replaces the scaffold stub, does not just re-export it.
-- `@report-writer` for `report|hybrid` — writes `report/OUTLINE.md` and
-  `report/DRAFT.md` with real sections and citations, not frontmatter
-  only.
+### Step 3a — Structure (1 agent, sequential)
 
-Both can run in parallel with each other when `project_type == hybrid`, but
-neither can be skipped.
+Invoke `@scaffold-generator` alone. It elaborates
+`requirements/REQ_TRACE_MATRIX.md` and validates scaffold structure,
+writing to `executions/v{N}/work/scaffold-generator/`. Every subsequent
+agent cites the settled requirements trace, so this step must finish
+before 3b starts.
 
-**Tier 2 — Refinement (up to 4 in parallel, Tier 1 outputs are inputs):**
-- `@math-conventions-agent`, `@scope-reduction-agent` — refine Tier 1 code.
-- `@citation-manager-agent`, `@style-conventions-agent`,
-  `@narrative-structure-agent` — refine Tier 1 report.
+Do NOT fold `scaffold-generator` into the batch in 3b — it is the only
+agent that produces context the others rely on.
 
-Tier 2 agents must read the Tier 1 `work/<tier1-slug>/` outputs as inputs.
-If a Tier 2 agent finds its Tier 1 input missing or stub-shaped, it fails
-its assignment instead of producing a placeholder.
+### Step 3b — Implementer fan-out (parallel, up to 4)
 
-**Tier 3 — Review (sequential per implementer):**
-- `@<slug>-reviewer` for every implementer that ran, in fresh context.
-  Returns `PASS | REVISE`. On `REVISE` with cycle < 3, feed the verdict's
-  `blocking_gaps` and `proposed_fixes` back to the implementer and retry.
-  On cycle == 3, force-advance and record an `open_item` in
-  `executions/v{N}/ralph_loop_log.yaml`.
+For every remaining `assignment` in `dispatch_plan.yaml` (i.e., every
+entry except `scaffold-generator`), spawn one subagent. **Run up to 4
+in parallel using a single message with multiple tool calls.** Each
+subagent:
 
-If an agent returns errors, retry once with the failure cited; on second
-failure, mark the assignment `status: failed` in the dispatch_plan and
-continue.
+- Reads `workspace-artifacts/decision-logs/decision_log_v{N}.yaml`,
+  `ARCHITECTURE.md`, `CONVENTIONS.md`, and `requirements/REQ_TRACE_MATRIX.md`
+  directly — NOT another agent's `work/` output.
+- Writes its deliverables under `executions/v{N}/work/<agent-slug>/`.
+  Directories are disjoint; no write conflicts.
+- Fails its own assignment with an `open_item` if a required input is
+  missing, rather than emitting a placeholder.
 
-Do NOT bypass the dispatch plan. Every deliverable must trace to one named
-agent.
+Every agent reads the Decision Log independently, so the registry has
+no cross-agent dependencies. Do not serialise on a false premise.
+
+If an agent returns errors, retry once with the failure cited; on
+second failure, mark the assignment `status: failed` in the
+dispatch_plan and continue.
+
+### Step 3c — Reviewer fan-out (parallel, up to 4)
+
+For every implementer that produced output in 3b, spawn its matching
+`<slug>-reviewer`. **Run up to 4 in parallel using a single message
+with multiple tool calls.** Each reviewer:
+
+- Runs in fresh context — it did not write the artifact it reviews.
+- Reads one implementer's `work/<slug>/` plus the Decision Log and
+  requirement trace.
+- Returns a JSON verdict `{verdict: PASS | REVISE, blocking_gaps,
+  proposed_fixes}`.
+
+### Step 3d — Revision batch (iterative, parallel within each cycle)
+
+Collect all `REVISE` verdicts from 3c. If one or more agents need
+revision, re-dispatch them **in a single message with multiple tool
+calls**, each receiving its reviewer's `blocking_gaps` and
+`proposed_fixes`. After revision, re-run the corresponding reviewers
+(also as a single batched message).
+
+Cap at 3 cycles per agent. On cycle 3 force-advance and append an
+`open_item` to `executions/v{N}/ralph_loop_log.yaml`.
+
+Do NOT bypass the dispatch plan. Every deliverable must trace to one
+named agent.
 
 ## Step 4 — Mechanical compile (CLI)
 
