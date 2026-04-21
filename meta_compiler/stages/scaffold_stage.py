@@ -213,6 +213,21 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
         canonical.extend(
             [
                 {
+                    "role": "algorithm-implementer",
+                    "responsibility": "Translate the Decision Log's architecture, data model, and requirements into a working implementation under code/, with tests/ exercising each requirement ID.",
+                    "reads": ["decision_log", "architecture", "requirements", "conventions"],
+                    "writes": ["code", "tests"],
+                    "key_constraints": _merge_ordered(
+                        [
+                            "write executable Python, not markdown placeholders",
+                            "replace the scaffold stub in code/main.py with the real implementation",
+                            "every public function must trace to a requirement ID",
+                            "add tests/ coverage for each requirement in REQ_TRACE_MATRIX.md",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
                     "role": "math-conventions-agent",
                     "responsibility": "Normalize mathematical notation and assumptions across generated code and docs.",
                     "reads": ["decision_log", "conventions", "requirements"],
@@ -238,6 +253,21 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
     if project_type in {"report", "hybrid"}:
         canonical.extend(
             [
+                {
+                    "role": "report-writer",
+                    "responsibility": "Draft report/OUTLINE.md and report/DRAFT.md from the Decision Log's architecture and requirements, grounding every claim in the citation index.",
+                    "reads": ["decision_log", "architecture", "requirements", "conventions"],
+                    "writes": ["report", "docs"],
+                    "key_constraints": _merge_ordered(
+                        [
+                            "produce a full draft, not frontmatter-only stubs",
+                            "every section cites an ID resolvable via wiki/citations/index.yaml",
+                            "cover every requirement ID declared in REQ_TRACE_MATRIX.md",
+                            "outline sections must match the architecture decomposition in the Decision Log",
+                        ],
+                        global_constraints,
+                    ),
+                },
                 {
                     "role": "citation-manager-agent",
                     "responsibility": "Maintain citation inventory and source traceability for report outputs.",
