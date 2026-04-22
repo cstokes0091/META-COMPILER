@@ -20,6 +20,10 @@ from ..artifacts import (
 )
 from ..io import dump_yaml, load_yaml
 from ..utils import iso_now, read_text_safe
+from . import pitch_render
+
+
+VALID_PITCH_STEPS = {"all", "evidence", "draft", "verify", "render"}
 
 
 def _require_pptx() -> None:
@@ -102,133 +106,30 @@ def _write_what_i_built_refresh(
     return output_path
 
 
-def _build_pitch_markdown(
+def _resolve_template_path(
+    *,
+    cli_template: Path | None,
     manifest: dict[str, Any],
-    decision_log_version: int,
-    project_type: str,
-    output_dir: Path,
-    execution_manifest: dict[str, Any],
-) -> str:
-    wm = manifest.get("workspace_manifest", {}) if isinstance(manifest, dict) else {}
-    wiki = wm.get("wiki", {}) if isinstance(wm, dict) else {}
-    final_output = execution_manifest.get("final_output", {}) if isinstance(execution_manifest, dict) else {}
-    deliverables = final_output.get("deliverables", []) if isinstance(final_output, dict) else []
-    deliverable_lines = [
-        f"- {row.get('kind')}: {row.get('path')}"
-        for row in deliverables
-        if isinstance(row, dict)
-    ] or ["- No deliverables recorded."]
+    workspace_root: Path,
+) -> Path | None:
+    """Return the resolved template path or None.
 
-    return "\n".join(
-        [
-            "# Stage 4 Pitch",
-            "",
-            "## Thesis",
-            f"{wm.get('name', 'This project')} uses a fresh-context agentic loop to turn research into a traceable build and a final packaged output.",
-            "",
-            "## Why The Loop Works",
-            "- Stage 1 separates breadth, depth, and fresh review so the wiki becomes durable instead of conversational.",
-            "- Stage 2 captures creator judgment explicitly in the Decision Log instead of hiding it in chat state.",
-            "- Stage 3 turns those decisions into an executable scaffold with reusable agents and skills.",
-            "- Stage 4 executes the scaffold contract and packages the result into a product pitch.",
-            "",
-            "## Creator Role",
-            "- The creator provides the problem statement, constraints, and decision checkpoints.",
-            f"- The build remains anchored to Decision Log v{decision_log_version}.",
-            "",
-            "## Product Built",
-            f"- Project type: {project_type}",
-            f"- Wiki name: {wiki.get('name') or 'Not named yet'}",
-            f"- Output directory: {output_dir}",
-            *deliverable_lines,
-            "",
-            "## Sell",
-            "- The loop is auditable: every major output has a file, schema, and manifest entry.",
-            "- The loop is reusable: generated agents inherit the same research/explore subagent palette.",
-            "- The loop is extensible: new seeds, re-entry, and final packaging are first-class stages.",
-        ]
-    ) + "\n"
-
-
-def _add_slide(prs: Presentation, title: str, bullets: list[str]) -> None:
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = title
-    text_frame = slide.placeholders[1].text_frame
-    text_frame.clear()
-    for idx, bullet in enumerate(bullets):
-        paragraph = text_frame.paragraphs[0] if idx == 0 else text_frame.add_paragraph()
-        paragraph.text = bullet
-        paragraph.level = 0
-
-
-def _write_pitch_deck(
-    pptx_path: Path,
-    manifest: dict[str, Any],
-    decision_log_version: int,
-    project_type: str,
-    output_dir: Path,
-    execution_manifest: dict[str, Any],
-) -> None:
-    _require_pptx()
-    wm = manifest.get("workspace_manifest", {}) if isinstance(manifest, dict) else {}
-    wiki = wm.get("wiki", {}) if isinstance(wm, dict) else {}
-    final_output = execution_manifest.get("final_output", {}) if isinstance(execution_manifest, dict) else {}
-    deliverables = final_output.get("deliverables", []) if isinstance(final_output, dict) else []
-
-    prs = Presentation()
-    title_slide = prs.slides.add_slide(prs.slide_layouts[0])
-    title_slide.shapes.title.text = f"{wm.get('name', 'META-COMPILER')} Stage 4 Pitch"
-    title_slide.placeholders[1].text = "Why the loop works, what it built, and why the creator wins."
-
-    _add_slide(
-        prs,
-        "Agentic Loop",
-        [
-            "Stage 0 defines the problem. Stage 1 builds and tests the wiki. Stage 2 captures judgment. Stage 3 scaffolds execution. Stage 4 executes and pitches.",
-            "Fresh context between stages keeps the artifacts cleaner than a single long-running chat.",
-        ],
-    )
-    _add_slide(
-        prs,
-        "Creator Advantage",
-        [
-            "The creator makes the narrow, high-value decisions while the system handles repeatable research and packaging work.",
-            f"Decision Log v{decision_log_version} is the explicit contract that downstream stages respect.",
-        ],
-    )
-    _add_slide(
-        prs,
-        "What Was Built",
-        [
-            f"Project type: {project_type}",
-            f"Wiki name: {wiki.get('name') or 'Not named yet'}",
-            f"Execution output directory: {output_dir}",
-        ]
-        + [
-            f"{row.get('kind')}: {row.get('path')}"
-            for row in deliverables
-            if isinstance(row, dict)
-        ],
-    )
-    _add_slide(
-        prs,
-        "Why This Loop Is Good",
-        [
-            "It is traceable: prompts, markdown, citations, and generated agents all resolve to files.",
-            "It is extensible: review search, re-entry, and final packaging are stage-aware rather than ad hoc.",
-            "It is portable: generated agents share the same explore/research delegation model.",
-        ],
-    )
-    _add_slide(
-        prs,
-        "Final Sell",
-        [
-            "This is not just a scaffold generator. It is a governed build loop with explicit evidence, decisions, and execution handoff.",
-            "The same pipeline that explains the work also produces the output and the pitch for it.",
-        ],
-    )
-    pptx_path.parent.mkdir(parents=True, exist_ok=True)
-    prs.save(str(pptx_path))
+    Precedence: CLI flag > manifest field > unset. Relative paths resolve
+    against `workspace_root`. The renderer further validates the suffix.
+    """
+    candidate: Path | None = None
+    if cli_template is not None:
+        candidate = cli_template
+    else:
+        wm = manifest.get("workspace_manifest", {}) if isinstance(manifest, dict) else {}
+        configured = (wm.get("pitch") or {}).get("template_path") if isinstance(wm, dict) else ""
+        if isinstance(configured, str) and configured.strip():
+            candidate = Path(configured.strip())
+    if candidate is None:
+        return None
+    if not candidate.is_absolute():
+        candidate = (workspace_root / candidate).resolve()
+    return candidate
 
 
 def _load_agent_registry(scaffold_root: Path) -> list[dict[str, Any]]:
@@ -394,7 +295,28 @@ def run_phase4_finalize(
     artifacts_root: Path,
     workspace_root: Path,
     decision_log_version: int | None = None,
+    *,
+    pitch_step: str = "all",
+    pptx_template: Path | None = None,
 ) -> dict[str, Any]:
+    """Stage 4 finalize — pitch sub-loop with four steps.
+
+    `pitch_step` controls which sub-step(s) run:
+      - `evidence`: build evidence_pack.yaml + pitch_request.yaml; stop.
+      - `draft`: alias for `evidence` (the draft is authored by the LLM
+                 agent, not the CLI).
+      - `verify`: re-build evidence + verify slides.yaml fidelity; stop.
+      - `render`: assume slides.yaml exists; verify + render the .pptx.
+      - `all` (default): run every step end-to-end. When slides.yaml is
+                 absent, stop at the evidence/draft handoff and surface
+                 the pitch-writer instruction.
+    """
+    if pitch_step not in VALID_PITCH_STEPS:
+        raise RuntimeError(
+            f"Invalid --pitch-step={pitch_step!r}. "
+            f"Choose from: {sorted(VALID_PITCH_STEPS)}."
+        )
+
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
 
@@ -471,29 +393,150 @@ def run_phase4_finalize(
         execution_manifest=final_output_manifest,
     )
 
-    markdown_pitch_path = paths.pitches_dir / f"pitch_v{version}.md"
-    markdown_pitch_path.write_text(
-        _build_pitch_markdown(
-            manifest,
-            decision_log_version=version,
-            project_type=project_type,
-            output_dir=output_dir,
-            execution_manifest=final_output_manifest,
-        ),
-        encoding="utf-8",
+    template_path = _resolve_template_path(
+        cli_template=pptx_template,
+        manifest=manifest,
+        workspace_root=workspace_root,
     )
+    if template_path is not None and template_path.suffix.lower() not in {".pptx", ".potx"}:
+        raise RuntimeError(
+            f"--pptx-template must point to a .pptx or .potx file (got {template_path})"
+        )
 
     pptx_path = paths.pitches_dir / f"pitch_v{version}.pptx"
-    _write_pitch_deck(
-        pptx_path,
-        manifest,
-        decision_log_version=version,
-        project_type=project_type,
-        output_dir=output_dir,
-        execution_manifest=final_output_manifest,
-    )
-
+    markdown_pitch_path = paths.pitches_dir / f"pitch_v{version}.md"
     metadata_path = paths.pitches_dir / f"pitch_v{version}.yaml"
+
+    decision_log_path = paths.decision_logs_dir / f"decision_log_v{version}.yaml"
+    decision_log_payload = load_yaml(decision_log_path) or {}
+
+    citations_payload = (
+        load_yaml(paths.citations_index_path) if paths.citations_index_path.exists() else {}
+    ) or {}
+
+    req_trace_path = scaffold_root / "requirements" / "REQ_TRACE_MATRIX.md"
+    ralph_loop_log_path = output_dir / "ralph_loop_log.yaml"
+
+    pitch_summary: dict[str, Any] = {}
+
+    if pitch_step in {"all", "evidence", "draft", "verify"} or pitch_step == "render":
+        # Evidence pack is cheap and deterministic — always rebuild so
+        # downstream steps work against fresh state.
+        evidence_pack = pitch_render.build_evidence_pack(
+            decision_log=decision_log_payload,
+            decision_log_version=version,
+            project_type=project_type,
+            workspace_root=workspace_root,
+            final_output_manifest=final_output_manifest,
+            work_dir=work_dir,
+            citations_payload=citations_payload,
+            req_trace_path=req_trace_path if req_trace_path.exists() else None,
+            ralph_loop_log_path=ralph_loop_log_path if ralph_loop_log_path.exists() else None,
+        )
+        dump_yaml(paths.phase4_evidence_pack_path, evidence_pack)
+        pitch_render.write_pitch_request(
+            pitch_request_path=paths.phase4_pitch_request_path,
+            evidence_pack_path=paths.phase4_evidence_pack_path,
+            slides_path=paths.phase4_slides_path,
+            pptx_output_path=pptx_path,
+            template_path=template_path,
+            decision_log_version=version,
+        )
+        pitch_summary["evidence_pack_path"] = str(paths.phase4_evidence_pack_path)
+        pitch_summary["pitch_request_path"] = str(paths.phase4_pitch_request_path)
+
+    if pitch_step in {"evidence", "draft"}:
+        return _phase4_summary(
+            paths=paths,
+            version=version,
+            project_type=project_type,
+            output_dir=output_dir,
+            what_i_built_path=what_i_built_path,
+            pitch_summary=pitch_summary,
+            pitch_status="pending_pitch_writer",
+            template_path=template_path,
+            stdout=completed_stdout,
+            stderr=completed_stderr,
+            extra_instruction=(
+                "Invoke @pitch-writer to draft "
+                f"{paths.phase4_slides_path.relative_to(paths.root).as_posix()}, "
+                "then re-run `meta-compiler phase4-finalize --pitch-step=render`."
+            ),
+        )
+
+    # Verify + render require slides.yaml.
+    if not paths.phase4_slides_path.exists():
+        if pitch_step == "render":
+            raise RuntimeError(
+                "Cannot --pitch-step=render: "
+                f"{paths.phase4_slides_path.relative_to(paths.root).as_posix()} is missing. "
+                "Run `meta-compiler phase4-finalize --pitch-step=evidence` and invoke "
+                "@pitch-writer to author it first."
+            )
+        # `all` mode without an LLM-authored slides.yaml — this is the
+        # normal handoff state at the end of the deterministic prep step.
+        return _phase4_summary(
+            paths=paths,
+            version=version,
+            project_type=project_type,
+            output_dir=output_dir,
+            what_i_built_path=what_i_built_path,
+            pitch_summary=pitch_summary,
+            pitch_status="pending_pitch_writer",
+            template_path=template_path,
+            stdout=completed_stdout,
+            stderr=completed_stderr,
+            extra_instruction=(
+                "Invoke @pitch-writer to draft "
+                f"{paths.phase4_slides_path.relative_to(paths.root).as_posix()}, "
+                "then re-run `meta-compiler phase4-finalize --pitch-step=render`."
+            ),
+        )
+
+    slides_payload = load_yaml(paths.phase4_slides_path) or {}
+    evidence_for_verify = load_yaml(paths.phase4_evidence_pack_path) or {}
+    fidelity_issues = pitch_render.verify_slides_fidelity(
+        slides_payload=slides_payload,
+        evidence_pack=evidence_for_verify,
+    )
+    if fidelity_issues:
+        violation_block = "\n".join(f"  - {issue}" for issue in fidelity_issues)
+        raise RuntimeError(
+            "Pitch fidelity check failed. Deck NOT rendered.\n"
+            f"{violation_block}\n"
+            "Edit the offending bullets in "
+            f"{paths.phase4_slides_path.relative_to(paths.root).as_posix()} so every "
+            "evidence_ids[...] resolves to a known entry in "
+            f"{paths.phase4_evidence_pack_path.relative_to(paths.root).as_posix()}."
+        )
+    pitch_summary["fidelity"] = "pass"
+
+    if pitch_step == "verify":
+        return _phase4_summary(
+            paths=paths,
+            version=version,
+            project_type=project_type,
+            output_dir=output_dir,
+            what_i_built_path=what_i_built_path,
+            pitch_summary=pitch_summary,
+            pitch_status="verified_pending_render",
+            template_path=template_path,
+            stdout=completed_stdout,
+            stderr=completed_stderr,
+            extra_instruction=(
+                "Re-run `meta-compiler phase4-finalize --pitch-step=render` to produce the .pptx."
+            ),
+        )
+
+    pitch_render.render_pitch_deck(
+        slides_payload=slides_payload,
+        output_path=pptx_path,
+        template_path=template_path,
+    )
+    markdown_pitch_path.write_text(
+        pitch_render.render_pitch_markdown(slides_payload),
+        encoding="utf-8",
+    )
     dump_yaml(
         metadata_path,
         {
@@ -504,6 +547,9 @@ def run_phase4_finalize(
                 "markdown_path": str(markdown_pitch_path),
                 "what_i_built_path": str(what_i_built_path),
                 "execution_output_dir": str(output_dir),
+                "evidence_pack_path": str(paths.phase4_evidence_pack_path),
+                "slides_path": str(paths.phase4_slides_path),
+                "template_path": str(template_path) if template_path else None,
             }
         },
     )
@@ -543,22 +589,65 @@ def run_phase4_finalize(
                 "execution_output_dir": str(output_dir.relative_to(paths.root)),
                 "final_output_manifest_path": str(final_output_manifest_path.relative_to(paths.root)),
                 "verdict_output_path": str(paths.phase4_postcheck_verdict_path.relative_to(paths.root)),
+                "pitch_pptx_path": str(pptx_path.relative_to(paths.root)),
+                "evidence_pack_path": str(paths.phase4_evidence_pack_path.relative_to(paths.root)),
+                "slides_path": str(paths.phase4_slides_path.relative_to(paths.root)),
+                "template_path": str(template_path) if template_path else None,
                 "next_action": (
                     "Invoke @execution-orchestrator mode=postflight to spot-verify "
-                    "deliverable fidelity against the dispatch plan."
+                    "deliverable fidelity against the dispatch plan and the rendered deck."
                 ),
             }
         },
+    )
+
+    pitch_summary.update(
+        {
+            "pptx_path": str(pptx_path),
+            "markdown_path": str(markdown_pitch_path),
+            "metadata_path": str(metadata_path),
+        }
     )
 
     return {
         "decision_log_version": version,
         "project_type": project_type,
         "execution_output_dir": str(output_dir),
+        "pitch": pitch_summary,
+        "pitch_status": "rendered",
         "pitch_pptx_path": str(pptx_path),
         "pitch_markdown_path": str(markdown_pitch_path),
         "what_i_built_path": str(what_i_built_path),
+        "template_path": str(template_path) if template_path else None,
         "postcheck_request_path": str(paths.phase4_postcheck_request_path),
         "stdout": completed_stdout,
         "stderr": completed_stderr,
+    }
+
+
+def _phase4_summary(
+    *,
+    paths,
+    version: int,
+    project_type: str,
+    output_dir: Path,
+    what_i_built_path: Path,
+    pitch_summary: dict[str, Any],
+    pitch_status: str,
+    template_path: Path | None,
+    stdout: str,
+    stderr: str,
+    extra_instruction: str,
+) -> dict[str, Any]:
+    return {
+        "decision_log_version": version,
+        "project_type": project_type,
+        "execution_output_dir": str(output_dir),
+        "pitch_status": pitch_status,
+        "pitch": pitch_summary,
+        "what_i_built_path": str(what_i_built_path),
+        "template_path": str(template_path) if template_path else None,
+        "next_step": extra_instruction,
+        "stdout": stdout,
+        "stderr": stderr,
     }

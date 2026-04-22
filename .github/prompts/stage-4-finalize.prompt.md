@@ -160,24 +160,62 @@ Cap at 3 cycles per agent. On cycle 3 force-advance and append an
 Do NOT bypass the dispatch plan. Every deliverable must trace to one
 named agent.
 
-## Step 4 — Mechanical compile (CLI)
+## Step 4 — Mechanical compile + pitch sub-loop
 
-Once all assignments are complete (or marked failed), run:
+The deck is built in three deterministic-then-LLM-then-deterministic sub-steps. Walk them in order; do not skip.
+
+### Step 4a — Evidence and final manifest (CLI)
 
 ```bash
-meta-compiler phase4-finalize --finalize
+meta-compiler phase4-finalize --pitch-step=evidence
 ```
 
 This:
 - Walks `executions/v{N}/work/` and compiles
   `executions/v{N}/FINAL_OUTPUT_MANIFEST.yaml` from the LLM-written files.
 - Refreshes `workspace-artifacts/wiki/provenance/what_i_built.md`.
-- Generates `workspace-artifacts/pitches/pitch_v{N}.md` and
-  `pitch_v{N}.pptx`.
-- Writes `runtime/phase4/postcheck_request.yaml` for the next step.
+- Builds `workspace-artifacts/runtime/phase4/evidence_pack.yaml` — typed
+  facts (problem, architecture, code-architecture, deliverables,
+  REQ-traced vs REQ-orphan, open items, citations, execution summary).
+  Every fact gets a stable `ev-...` ID.
+- Writes `workspace-artifacts/runtime/phase4/pitch_request.yaml` — the
+  entry point for the `@pitch-writer` agent.
 
 If `executions/v{N}/work/` is empty when this CLI runs, the
 `gate_phase4_finalize` hook blocks the call. Conduct Step 3 properly first.
+
+### Step 4b — Draft the deck (LLM)
+
+Invoke:
+
+```
+@pitch-writer
+```
+
+The agent reads the evidence pack and writes `runtime/phase4/slides.yaml`. Every bullet cites at least one evidence ID; every required slide role (`title | problem | approach | built | evidence | why | cta`) is present; orphan REQs and force-advanced agents are surfaced honestly. Spot-check the draft for evidence-anchored claims and project-specific narrative. If the agent drifts, re-invoke it with a correction; do not edit `slides.yaml` by hand.
+
+### Step 4c — Verify and render (CLI)
+
+```bash
+meta-compiler phase4-finalize --pitch-step=render
+```
+
+Optionally pass a `.pptx` or `.potx` template:
+
+```bash
+meta-compiler phase4-finalize --pitch-step=render --pptx-template ./brand/template.potx
+```
+
+This:
+- Runs the fidelity gate: every cited `evidence_ids[...]` must resolve to a known entry in `evidence_pack.yaml`. On failure, exits non-zero with a per-bullet violation list and the `.pptx` is **not** overwritten — re-invoke `@pitch-writer` with the violations.
+- Loads the template via `python-pptx`'s `Presentation(path)` when supplied, strips its placeholder slides, and renders the deck inheriting the template's master/theme.
+- Renders each slide with strict layout guards (≤6 bullets/slide, ≤140 chars/bullet, `auto_size = TEXT_TO_FIT_SHAPE`, `word_wrap = True`, long lists spill into `(k/N)` follow-on slides).
+- Writes `pitches/pitch_v{N}.pptx`, `pitches/pitch_v{N}.md`, and `pitches/pitch_v{N}.yaml`.
+- Writes `runtime/phase4/postcheck_request.yaml` for the next step.
+
+`gate_phase4_finalize` refuses `--pitch-step=render` when `slides.yaml` is missing or older than `evidence_pack.yaml`.
+
+The full sub-loop is documented at `.github/prompts/pitch-writer.prompt.md` if you want to iterate on the deck without re-running the Stage 4 ralph loop.
 
 ## Step 5 — Postflight (orchestrator agent)
 

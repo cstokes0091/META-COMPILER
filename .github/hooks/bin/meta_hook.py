@@ -806,8 +806,15 @@ def require_ingest_postcheck_verdict(payload):
 @register("gate_phase4_finalize")
 def gate_phase4_finalize(payload):
     """Block phase4-finalize --finalize unless dispatch_plan exists and the
-    work_dir holds at least one file. Lets --start through unconditionally
-    (it's the prep step that creates the dispatch plan)."""
+    work_dir holds at least one file. Lets --start through unconditionally.
+
+    Pitch sub-loop awareness:
+      - --pitch-step=evidence (and the alias --pitch-step=draft) are allowed
+        as soon as work_dir is populated; they only produce the evidence pack
+        and pitch_request that the @pitch-writer agent consumes.
+      - --pitch-step=render is denied when slides.yaml is absent or older
+        than evidence_pack.yaml — the deck must be drafted from a fresh pack.
+    """
     ws = resolve_workspace_root(payload)
     cmd = (payload.get("tool_input") or {}).get("command") or ""
     if not isinstance(cmd, str) or "phase4-finalize" not in cmd:
@@ -852,6 +859,31 @@ def gate_phase4_finalize(payload):
                 "populate work_dir before compiling the final manifest."
             ),
         }
+
+    if "--pitch-step=render" in cmd or "--pitch-step render" in cmd:
+        slides_path = ws / "workspace-artifacts" / "runtime" / "phase4" / "slides.yaml"
+        if not slides_path.exists():
+            return {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "phase4-finalize --pitch-step=render blocked: slides.yaml is missing. "
+                    "Run `meta-compiler phase4-finalize --pitch-step=evidence` first, then "
+                    "invoke @pitch-writer to author "
+                    "workspace-artifacts/runtime/phase4/slides.yaml. See "
+                    ".github/prompts/pitch-writer.prompt.md for the conductor."
+                ),
+            }
+        evidence_path = ws / "workspace-artifacts" / "runtime" / "phase4" / "evidence_pack.yaml"
+        if evidence_path.exists() and slides_path.stat().st_mtime < evidence_path.stat().st_mtime:
+            return {
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "phase4-finalize --pitch-step=render blocked: slides.yaml is older "
+                    "than evidence_pack.yaml. The deck would render against stale facts. "
+                    "Re-invoke @pitch-writer to refresh slides.yaml against the current "
+                    "evidence pack, then retry."
+                ),
+            }
     return {"permissionDecision": "allow"}
 
 

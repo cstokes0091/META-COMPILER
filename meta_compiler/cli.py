@@ -310,6 +310,33 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stage 4 finalize: compile FINAL_OUTPUT_MANIFEST + pitch deck from work/",
     )
+    # Pitch sub-loop controls. The deck is built in four steps; --pitch-step
+    # lets the operator drive each independently when working with the
+    # @pitch-writer agent. --pptx-template overrides the manifest's
+    # `workspace_manifest.pitch.template_path` for one invocation.
+    phase4_parser.add_argument(
+        "--pitch-step",
+        choices=["all", "evidence", "draft", "verify", "render"],
+        default="all",
+        help=(
+            "Run only one phase of the pitch sub-loop. 'evidence' (alias 'draft') "
+            "writes the evidence pack + pitch_request and stops; 'verify' checks "
+            "slides.yaml fidelity without rendering; 'render' renders the .pptx; "
+            "'all' (default) runs end-to-end and stops at the pitch-writer handoff "
+            "when slides.yaml is absent."
+        ),
+    )
+    phase4_parser.add_argument(
+        "--pptx-template",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to a .pptx or .potx template the renderer inherits styling "
+            "from. Overrides workspace_manifest.pitch.template_path. Relative "
+            "paths resolve against --workspace-root."
+        ),
+    )
 
     run_all_parser = subparsers.add_parser(
         "run-all",
@@ -619,6 +646,8 @@ def main(argv: list[str] | None = None) -> int:
                     artifacts_root=artifacts_root,
                     workspace_root=workspace_root,
                     decision_log_version=args.decision_log_version,
+                    pitch_step=args.pitch_step,
+                    pptx_template=args.pptx_template,
                 )
         elif args.command == "wiki-reconcile-concepts":
             result = run_wiki_reconcile_concepts(

@@ -62,6 +62,13 @@ class ArtifactPaths:
     phase4_preflight_verdict_path: Path
     phase4_postcheck_request_path: Path
     phase4_postcheck_verdict_path: Path
+    # Stage 4 pitch sub-loop runtime artifacts. The deck is built in four
+    # steps (evidence -> draft -> verify -> render); the agent reads
+    # pitch_request.yaml, writes slides.yaml, and the renderer fidelity-checks
+    # against evidence_pack.yaml before producing the .pptx.
+    phase4_evidence_pack_path: Path
+    phase4_slides_path: Path
+    phase4_pitch_request_path: Path
     # Semantic wiki enrichment runtime artifacts.
     # Phase A reconciles concept aliases across findings; Phase B synthesizes
     # cross-source definitions for canonical concept pages.
@@ -125,6 +132,9 @@ def build_paths(root: Path) -> ArtifactPaths:
         phase4_preflight_verdict_path=phase4_runtime_dir / "preflight_verdict.yaml",
         phase4_postcheck_request_path=phase4_runtime_dir / "postcheck_request.yaml",
         phase4_postcheck_verdict_path=phase4_runtime_dir / "postcheck_verdict.yaml",
+        phase4_evidence_pack_path=phase4_runtime_dir / "evidence_pack.yaml",
+        phase4_slides_path=phase4_runtime_dir / "slides.yaml",
+        phase4_pitch_request_path=phase4_runtime_dir / "pitch_request.yaml",
         wiki_reconcile_runtime_dir=wiki_reconcile_runtime_dir,
         wiki_reconcile_work_plan_path=wiki_reconcile_runtime_dir / "work_plan.yaml",
         wiki_reconcile_request_path=wiki_reconcile_runtime_dir / "reconcile_request.yaml",
@@ -381,6 +391,9 @@ def ensure_manifest_defaults(manifest: dict) -> dict:
     wm.setdefault("decision_logs", [])
     wm.setdefault("executions", [])
     wm.setdefault("pitches", [])
+
+    pitch = wm.setdefault("pitch", {})
+    pitch.setdefault("template_path", "")
 
     research = wm.setdefault("research", {})
     research.setdefault("iteration_count", 0)

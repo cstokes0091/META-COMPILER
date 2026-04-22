@@ -16,6 +16,12 @@ def _bootstrap(tmp_path: Path, *, decision_log_version: int = 1) -> tuple[Path, 
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
 
+    (workspace_root / "PROBLEM_STATEMENT.md").write_text(
+        "# PROBLEM_STATEMENT\n\n## Domain and Problem Space\n"
+        "Demo project for the phase4 finalize tests.\n",
+        encoding="utf-8",
+    )
+
     dump_yaml(
         paths.decision_logs_dir / f"decision_log_v{decision_log_version}.yaml",
         {"decision_log": {"version": decision_log_version, "decisions": {}}},
@@ -67,6 +73,97 @@ def _seed_work_dir(artifacts_root: Path, files: dict[str, str]) -> Path:
     return work_dir
 
 
+def _author_minimal_slides(artifacts_root: Path, *, decision_log_version: int = 1) -> Path:
+    """Write a hand-crafted slides.yaml that satisfies the fidelity gate
+    against the deterministic evidence pack the bootstrap workspace produces.
+
+    The bootstrap workspace's evidence pack always emits at least:
+      - ev-project (project metadata)
+      - ev-problem (problem statement)
+      - ev-exec    (execution summary)
+    and may add ev-deliv-001+ when work/ is populated. The slides below cite
+    only IDs guaranteed to exist regardless of work/ contents.
+    """
+    paths = build_paths(artifacts_root)
+    slides_path = paths.phase4_slides_path
+    slides_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pitch_deck": {
+            "decision_log_version": decision_log_version,
+            "slides": [
+                {
+                    "role": "title",
+                    "title": "Demo Project: pitch deck v2 smoke",
+                    "subtitle": "End-to-end render check.",
+                    "evidence_ids": ["ev-project", "ev-problem"],
+                },
+                {
+                    "role": "problem",
+                    "title": "Problem",
+                    "bullets": [
+                        {
+                            "text": "The deck must render cleanly with strict layout guards.",
+                            "evidence_ids": ["ev-problem"],
+                        }
+                    ],
+                },
+                {
+                    "role": "approach",
+                    "title": "Approach",
+                    "bullets": [
+                        {
+                            "text": "Typed evidence pack drives the slides.",
+                            "evidence_ids": ["ev-project"],
+                        }
+                    ],
+                },
+                {
+                    "role": "built",
+                    "title": "What was built",
+                    "bullets": [
+                        {
+                            "text": "Deterministic evidence pack and renderer.",
+                            "evidence_ids": ["ev-project", "ev-exec"],
+                        }
+                    ],
+                },
+                {
+                    "role": "evidence",
+                    "title": "Evidence",
+                    "bullets": [
+                        {
+                            "text": "Fidelity gate refuses unanchored claims.",
+                            "evidence_ids": ["ev-exec"],
+                        }
+                    ],
+                },
+                {
+                    "role": "why",
+                    "title": "Why it matters",
+                    "bullets": [
+                        {
+                            "text": "Accuracy + advocacy without overflow.",
+                            "evidence_ids": ["ev-project"],
+                        }
+                    ],
+                },
+                {
+                    "role": "cta",
+                    "title": "Next steps",
+                    "bullets": [
+                        {
+                            "text": "Wire a brand template and re-render.",
+                            "evidence_ids": ["ev-project"],
+                        }
+                    ],
+                },
+            ],
+        }
+    }
+    dump_yaml(slides_path, payload)
+    return slides_path
+
+
 def test_finalize_compiles_manifest_from_populated_work_dir(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
@@ -93,7 +190,9 @@ def test_finalize_compiles_manifest_from_populated_work_dir(tmp_path: Path):
     assert len(final["deliverables"]) == 3
 
 
-def test_finalize_writes_pitch_artifacts(tmp_path: Path):
+def test_finalize_without_slides_returns_pitch_writer_handoff(tmp_path: Path):
+    """Default --finalize (== --pitch-step=all) without slides.yaml stops at
+    the @pitch-writer handoff and surfaces the next-step instruction."""
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
         artifacts_root,
@@ -104,6 +203,37 @@ def test_finalize_writes_pitch_artifacts(tmp_path: Path):
         artifacts_root=artifacts_root, workspace_root=workspace_root
     )
 
+    assert result["pitch_status"] == "pending_pitch_writer"
+    assert "pitch-writer" in result["next_step"]
+    paths = build_paths(artifacts_root)
+    assert paths.phase4_evidence_pack_path.exists()
+    assert paths.phase4_pitch_request_path.exists()
+    # Deck not yet rendered.
+    assert not (paths.pitches_dir / "pitch_v1.pptx").exists()
+
+
+def test_finalize_renders_pitch_artifacts_when_slides_present(tmp_path: Path):
+    workspace_root, artifacts_root = _bootstrap(tmp_path)
+    _seed_work_dir(
+        artifacts_root,
+        {"alpha-agent/output.py": "print('hi')\n"},
+    )
+    # Step 1: build evidence + pitch_request.
+    run_phase4_finalize(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="evidence",
+    )
+    # Step 2: hand-author slides.yaml (the LLM agent's role in production).
+    _author_minimal_slides(artifacts_root)
+    # Step 3: render.
+    result = run_phase4_finalize(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="render",
+    )
+
+    assert result["pitch_status"] == "rendered"
     pitch_md = Path(result["pitch_markdown_path"])
     assert pitch_md.exists()
     pptx = Path(result["pitch_pptx_path"])
@@ -117,9 +247,16 @@ def test_finalize_writes_postcheck_request(tmp_path: Path):
         artifacts_root,
         {"alpha-agent/output.py": "print('hi')\n"},
     )
-
+    run_phase4_finalize(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="evidence",
+    )
+    _author_minimal_slides(artifacts_root)
     result = run_phase4_finalize(
-        artifacts_root=artifacts_root, workspace_root=workspace_root
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="render",
     )
 
     postcheck_path = Path(result["postcheck_request_path"])
@@ -128,6 +265,7 @@ def test_finalize_writes_postcheck_request(tmp_path: Path):
     assert body["decision_log_version"] == 1
     assert body["verdict_output_path"].endswith("postcheck_verdict.yaml")
     assert body["final_output_manifest_path"].endswith("FINAL_OUTPUT_MANIFEST.yaml")
+    assert body["pitch_pptx_path"].endswith("pitch_v1.pptx")
 
 
 def test_finalize_uses_existing_manifest_when_no_work(tmp_path: Path):
@@ -175,9 +313,16 @@ def test_finalize_records_execution_in_workspace_manifest(tmp_path: Path):
         artifacts_root,
         {"alpha-agent/output.py": "print('hi')\n"},
     )
-
     run_phase4_finalize(
-        artifacts_root=artifacts_root, workspace_root=workspace_root
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="evidence",
+    )
+    _author_minimal_slides(artifacts_root)
+    run_phase4_finalize(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        pitch_step="render",
     )
 
     paths = build_paths(artifacts_root)
