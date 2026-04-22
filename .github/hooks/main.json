@@ -54,6 +54,11 @@
           },
           {
             "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_wiki_search_apply",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_migration_request",
             "timeout": 10
           },
@@ -93,6 +98,11 @@
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py capture_output",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_wiki_search_schema",
+            "timeout": 10
           }
         ]
       }

@@ -77,6 +77,16 @@ class ArtifactPaths:
     wiki_reconcile_request_path: Path
     wiki_cross_source_runtime_dir: Path
     wiki_cross_source_work_plan_path: Path
+    # Stage 2 wiki-search runtime artifacts.
+    # Auto-fired as Step 0 of `elicit-vision --start` so the dialog opens with
+    # a populated "Wiki Evidence" section. Mirrors the concept-reconciliation
+    # preflight/orchestrator/postflight pattern.
+    wiki_search_runtime_dir: Path
+    wiki_search_results_dir: Path
+    wiki_search_inline_dir: Path
+    wiki_search_work_plan_path: Path
+    wiki_search_request_path: Path
+    wiki_search_results_path: Path
 
 
 def build_paths(root: Path) -> ArtifactPaths:
@@ -89,6 +99,7 @@ def build_paths(root: Path) -> ArtifactPaths:
     phase4_runtime_dir = runtime_dir / "phase4"
     wiki_reconcile_runtime_dir = runtime_dir / "wiki_reconcile"
     wiki_cross_source_runtime_dir = runtime_dir / "wiki_cross_source"
+    wiki_search_runtime_dir = stage2_runtime_dir / "wiki_search"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -140,6 +151,12 @@ def build_paths(root: Path) -> ArtifactPaths:
         wiki_reconcile_request_path=wiki_reconcile_runtime_dir / "reconcile_request.yaml",
         wiki_cross_source_runtime_dir=wiki_cross_source_runtime_dir,
         wiki_cross_source_work_plan_path=wiki_cross_source_runtime_dir / "work_plan.yaml",
+        wiki_search_runtime_dir=wiki_search_runtime_dir,
+        wiki_search_results_dir=wiki_search_runtime_dir / "results",
+        wiki_search_inline_dir=wiki_search_runtime_dir / "inline",
+        wiki_search_work_plan_path=wiki_search_runtime_dir / "work_plan.yaml",
+        wiki_search_request_path=wiki_search_runtime_dir / "wiki_search_request.yaml",
+        wiki_search_results_path=wiki_search_runtime_dir / "results.yaml",
     )
 
 
@@ -168,6 +185,9 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.phase4_runtime_dir,
         paths.wiki_reconcile_runtime_dir,
         paths.wiki_cross_source_runtime_dir,
+        paths.wiki_search_runtime_dir,
+        paths.wiki_search_results_dir,
+        paths.wiki_search_inline_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -362,12 +382,10 @@ def load_manifest(paths: ArtifactPaths) -> dict:
 
 
 def derive_wiki_name(project_name: str, project_type: str) -> str:
+    from .project_types import WIKI_NAME_SUFFIX
+
     base = project_name.strip() or "META-COMPILER"
-    suffix = {
-        "algorithm": "Build Atlas",
-        "report": "Research Atlas",
-        "hybrid": "Project Atlas",
-    }.get(project_type, "Knowledge Atlas")
+    suffix = WIKI_NAME_SUFFIX.get(project_type, "Knowledge Atlas")
     if base.lower().endswith(suffix.lower()):
         return base
     return f"{base} {suffix}"

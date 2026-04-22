@@ -61,6 +61,12 @@ def _ensure_scaffold_layout(scaffold_root: Path, project_type: str) -> dict[str,
     if project_type in {"report", "hybrid"}:
         dirs["report"] = scaffold_root / "report"
         dirs["references"] = scaffold_root / "references"
+    if project_type == "workflow":
+        dirs["inbox"] = scaffold_root / "inbox"
+        dirs["outbox"] = scaffold_root / "outbox"
+        dirs["state"] = scaffold_root / "state"
+        dirs["kb_brief"] = scaffold_root / "kb_brief"
+        dirs["wf_tests"] = scaffold_root / "tests"
 
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -512,6 +518,115 @@ def _canonical_agents(project_type: str, root: dict[str, Any]) -> list[dict[str,
                     ),
                     "key_constraints": _merge_ordered(
                         ["cover all requirement IDs in narrative plan"],
+                        global_constraints,
+                    ),
+                },
+            ]
+        )
+
+    if project_type == "workflow":
+        canonical.extend(
+            [
+                {
+                    "role": "workflow-conductor",
+                    "responsibility": "Receive a workflow trigger event, build a per-input dispatch plan from workflow_config, and route work items through comment-reader → kb-retriever → response-author → tracked-edit-writer → kb-maintainer.",
+                    "inputs": _typed(
+                        ("decision_log", "document"),
+                        ("workflow_config", "document"),
+                        ("agent_registry", "document"),
+                    ),
+                    "outputs": _typed(("dispatch_plan", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "respect workflow_config.escalation_policy on missing kb evidence",
+                            "serialize edits to the same input file (no parallel docx mutation)",
+                            "every dispatch step records to executions/v{N}/runs/<run_id>.yaml",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
+                    "role": "comment-reader",
+                    "responsibility": "Run scripts/edit_document.py read-comments on the input docx and emit a comment_thread JSON list of unresolved comments to process.",
+                    "inputs": _typed(
+                        ("workflow_config", "document"),
+                        ("input_docx", "document"),
+                    ),
+                    "outputs": _typed(("comment_thread", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "do not write to the input docx",
+                            "skip comments whose body matches a state.processed_comment_ids entry",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
+                    "role": "kb-retriever",
+                    "responsibility": "For one comment, search kb_brief/ and the workspace wiki for evidence relevant to the comment text, returning {comment_id, kb_excerpts:[{slug, excerpt, citations}]}.",
+                    "inputs": _typed(
+                        ("comment_thread", "document"),
+                        ("kb_brief", "document"),
+                        ("style_corpus", "document"),
+                    ),
+                    "outputs": _typed(("kb_excerpts", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "cite every excerpt with a citation_id from the wiki",
+                            "if no kb evidence found, escalate per workflow_config.escalation_policy",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
+                    "role": "response-author",
+                    "responsibility": "Compose a comment_reply for one comment using kb_excerpts plus style_corpus to match the operator's tone and word choices.",
+                    "inputs": _typed(
+                        ("kb_excerpts", "document"),
+                        ("style_corpus", "document"),
+                        ("comment_thread", "document"),
+                    ),
+                    "outputs": _typed(("comment_reply", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "match style_corpus voice (lexical_signature.preferred_transitions, sentence length)",
+                            "every claim cites a kb_excerpt citation_id",
+                            "respond inline; never invent a new section",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
+                    "role": "tracked-edit-writer",
+                    "responsibility": "Apply the response to the input docx via scripts/edit_document.py reply-comment / insert-tracked / delete-tracked, atomically saving in place.",
+                    "inputs": _typed(
+                        ("comment_reply", "document"),
+                        ("input_docx", "document"),
+                    ),
+                    "outputs": _typed(("tracked_doc", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "use atomic save (tmp + os.replace); never overwrite mid-write",
+                            "stamp every revision with the agent author name",
+                            "do not delete or accept existing reviewer revisions",
+                        ],
+                        global_constraints,
+                    ),
+                },
+                {
+                    "role": "kb-maintainer",
+                    "responsibility": "After each run, append processed comment IDs to state/state.yaml, update response_patterns success counts, and write any drift_notes for surprising kb misses.",
+                    "inputs": _typed(
+                        ("comment_thread", "document"),
+                        ("comment_reply", "document"),
+                        ("state", "document"),
+                    ),
+                    "outputs": _typed(("state", "document")),
+                    "key_constraints": _merge_ordered(
+                        [
+                            "preserve schema_version and scaffold_version on every state write",
+                            "never delete prior processed_comment_ids",
+                        ],
                         global_constraints,
                     ),
                 },
@@ -1679,7 +1794,21 @@ def _write_instruction_docs(
     )
 
     type_lines: list[str]
-    if project_type in {"algorithm", "hybrid"}:
+    if project_type == "workflow":
+        type_lines = [
+            "# WORKFLOW_TRACK_INSTRUCTIONS",
+            "",
+            "## Deliverables",
+            "- inbox/ accepts incoming docs to process.",
+            "- outbox/ holds processed copies (history; the in-place input is the canonical edit).",
+            "- state/state.yaml carries processed_comment_ids + response_patterns across runs.",
+            "- kb_brief/style_corpus.md anchors response voice.",
+            "",
+            "## Constraints",
+            "- Apply edits in place via scripts/edit_document.py — never produce a new docx.",
+            "- Serialize per-input mutation; the workflow-conductor must not parallelize edits to one file.",
+        ]
+    elif project_type in {"algorithm", "hybrid"}:
         type_lines = [
             "# ALGORITHM_TRACK_INSTRUCTIONS",
             "",
@@ -1715,9 +1844,14 @@ def _write_instruction_docs(
         "\n".join(type_lines) + "\n",
         encoding="utf-8",
     )
-    apply_to = ["code/**", "tests/**"] if project_type == "algorithm" else ["report/**", "references/**"]
-    if project_type == "hybrid":
+    if project_type == "workflow":
+        apply_to = ["inbox/**", "outbox/**", "state/**", "kb_brief/**", "agents/**", "tests/**"]
+    elif project_type == "algorithm":
+        apply_to = ["code/**", "tests/**"]
+    elif project_type == "hybrid":
         apply_to = ["code/**", "tests/**", "report/**", "references/**"]
+    else:
+        apply_to = ["report/**", "references/**"]
     (custom_instructions_dir / "type-track.instructions.md").write_text(
         _markdown_with_frontmatter(
             {
@@ -1985,6 +2119,227 @@ def _write_report_starter_files(layout: dict[str, Path], decision_log: dict[str,
     return 4
 
 
+def _write_workflow_starter_files(
+    paths,
+    layout: dict[str, Path],
+    decision_log: dict[str, Any],
+    project_type: str,
+    version: int,
+) -> int:
+    """Workflow scaffold: state.yaml, kb_brief copies, inbox/outbox markers,
+    orchestrator/run_workflow.py."""
+    if project_type != "workflow":
+        return 0
+
+    root = decision_log["decision_log"]
+    workflow_config = root.get("workflow_config") or {}
+
+    # state.yaml — initial empty state with schema_version
+    state_path = layout["state"] / "state.yaml"
+    if not state_path.exists():
+        dump_yaml(
+            state_path,
+            {
+                "workflow_state": {
+                    "schema_version": 1,
+                    "scaffold_version": version,
+                    "last_run": None,
+                    "processed_comment_ids": [],
+                    "response_patterns": [],
+                    "drift_notes": [],
+                    "escalations": [],
+                }
+            },
+        )
+
+    # kb_brief: copy style_corpus + drop an index.md pointing at it
+    kb_brief = layout["kb_brief"]
+    style_src = paths.wiki_dir / "style" / "style_corpus.md"
+    style_dst = kb_brief / "style_corpus.md"
+    if style_src.exists():
+        style_dst.write_text(style_src.read_text(encoding="utf-8"), encoding="utf-8")
+    elif not style_dst.exists():
+        style_dst.write_text(
+            "# Style Corpus (placeholder)\n\n"
+            "Run `meta-compiler wiki-build-style-corpus` after registering at "
+            "least one seed with `--author-role user_authored` to populate "
+            "this file. Until then, the response-author agent will fall back "
+            "to a neutral voice.\n",
+            encoding="utf-8",
+        )
+    (kb_brief / "index.md").write_text(
+        "# KB Brief Index\n\n"
+        "- `style_corpus.md` — operator voice calibration "
+        "(verbatim quotes + lexical signature).\n"
+        "- The wiki proper lives at `workspace-artifacts/wiki/v2/pages/`; "
+        "use `kb-retriever` to pull excerpts on demand.\n",
+        encoding="utf-8",
+    )
+
+    # inbox/outbox keep markers
+    (layout["inbox"] / ".gitkeep").write_text(
+        "# Drop input docx files here for the workflow to process.\n", encoding="utf-8"
+    )
+    (layout["outbox"] / ".gitkeep").write_text(
+        "# Processed copies land here (history; the in-place input is canonical).\n",
+        encoding="utf-8",
+    )
+
+    # orchestrator/run_workflow.py — minimal dispatcher analogue of run_stage4.py
+    orchestrator_dir = layout["orchestrator"]
+    run_workflow_path = orchestrator_dir / "run_workflow.py"
+    inputs = workflow_config.get("inputs") or []
+    outputs = workflow_config.get("outputs") or []
+    trigger = workflow_config.get("trigger") or "manual"
+    script = '''#!/usr/bin/env python3
+"""Workflow orchestrator (scaffold v{version}).
+
+Reads AGENT_REGISTRY.yaml, dispatches per-comment work through
+workflow-conductor -> comment-reader -> kb-retriever -> response-author ->
+tracked-edit-writer -> kb-maintainer. The actual reasoning happens in those
+agents; this script is just plumbing.
+
+Invoked by `meta-compiler run-workflow --input <docx> --task <task-name>`.
+The CLI sets META_COMPILER_EDIT_DOCUMENT to the absolute path of
+scripts/edit_document.py so the comment-reader can shell out without
+depending on cwd.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+SCAFFOLD_DIR = Path(__file__).resolve().parents[1]
+
+
+def _resolve_edit_document() -> Path:
+    env = os.environ.get("META_COMPILER_EDIT_DOCUMENT")
+    if env:
+        path = Path(env).expanduser().resolve()
+        if path.exists():
+            return path
+    # Fallback: walk up to find scripts/edit_document.py (META-COMPILER repo only)
+    for parent in [SCAFFOLD_DIR, *SCAFFOLD_DIR.parents]:
+        candidate = parent / "scripts" / "edit_document.py"
+        if candidate.exists():
+            return candidate
+    raise SystemExit(
+        "Could not locate scripts/edit_document.py; set "
+        "META_COMPILER_EDIT_DOCUMENT to its absolute path."
+    )
+
+
+def _load_registry() -> dict:
+    with (SCAFFOLD_DIR / "AGENT_REGISTRY.yaml").open("r", encoding="utf-8") as fh:
+        payload = yaml.safe_load(fh) or {{}}
+    block = payload.get("agent_registry")
+    if isinstance(block, dict):
+        return block
+    return payload
+
+
+def _read_comments(docx: Path, edit_document: Path) -> list[dict]:
+    proc = subprocess.run(
+        [sys.executable, str(edit_document), "read-comments", str(docx), "--json"],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"comment-reader failed: {{proc.stderr}}")
+    return json.loads(proc.stdout)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="run_workflow")
+    parser.add_argument("--input", required=True, help="Path to a .docx in inbox/")
+    parser.add_argument("--task", default="reply-to-comments")
+    args = parser.parse_args()
+
+    registry = _load_registry()
+    project_type = registry.get("project_type")
+    if project_type != "workflow":
+        raise SystemExit(
+            f"AGENT_REGISTRY.yaml project_type must be 'workflow', got {{project_type!r}}"
+        )
+
+    docx_path = Path(args.input).resolve()
+    if not docx_path.exists():
+        raise SystemExit(f"input docx not found: {{docx_path}}")
+
+    edit_document = _resolve_edit_document()
+    comments = _read_comments(docx_path, edit_document)
+    print(f"workflow-conductor: {{len(comments)}} comment(s) to process")
+
+    # Dispatch placeholder — the LLM-driven kb-retriever / response-author /
+    # tracked-edit-writer agents take over from here when run inside Copilot
+    # or another LLM runtime. This script ensures the plumbing works end-to-end.
+    entries = registry.get("entries") or registry.get("agents") or []
+    dispatch = {{
+        "task": args.task,
+        "trigger": "{trigger}",
+        "comments": comments,
+        "agents": [row.get("role") for row in entries if isinstance(row, dict)],
+    }}
+    print(json.dumps({{"status": "dispatch_ready", "plan": dispatch}}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''.format(version=version, trigger=trigger)
+    run_workflow_path.write_text(script, encoding="utf-8")
+
+    # tests/test_workflow_orchestrator_dag.py — checks the registry has at
+    # least one tracked_doc/comment_reply output kind and forms an acyclic DAG.
+    test_path = layout["wf_tests"] / "test_workflow_orchestrator_dag.py"
+    test_path.write_text(
+        '''"""Scaffold self-test: the workflow registry must satisfy Stage 4 finalize."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import yaml
+
+SCAFFOLD_DIR = Path(__file__).resolve().parents[1]
+
+
+def _load_registry():
+    payload = yaml.safe_load((SCAFFOLD_DIR / "AGENT_REGISTRY.yaml").read_text()) or {}
+    block = payload.get("agent_registry")
+    return block if isinstance(block, dict) else payload
+
+
+def test_registry_has_tracked_doc_or_comment_reply_output():
+    registry = _load_registry()
+    assert registry.get("project_type") == "workflow"
+    found = False
+    for row in registry.get("entries", []) or registry.get("agents", []):
+        for out in row.get("outputs", []) or []:
+            kind = out.get("modality") or out.get("kind") or ""
+            name = (out.get("name") or "").lower()
+            if kind in {"tracked_doc", "comment_reply"} or name in {"tracked_doc", "comment_reply"}:
+                found = True
+                break
+        if found:
+            break
+    assert found, "workflow scaffolds must own at least one tracked_doc/comment_reply output"
+
+
+def test_state_yaml_has_schema_version():
+    state = yaml.safe_load((SCAFFOLD_DIR / "state" / "state.yaml").read_text())
+    assert state["workflow_state"]["schema_version"] == 1
+''',
+        encoding="utf-8",
+    )
+
+    return 5  # state.yaml + style_corpus + index.md + inbox/outbox markers + run_workflow.py + test
+
+
 def run_scaffold(
     artifacts_root: Path,
     decision_log_version: int | None = None,
@@ -2048,6 +2403,9 @@ def run_scaffold(
     requirements_file_count = _write_requirements_matrix(layout["requirements"], decision_log)
     code_file_count = _write_code_starter_files(layout, decision_log, project_type=project_type)
     report_file_count = _write_report_starter_files(layout, decision_log, project_type=project_type)
+    workflow_file_count = _write_workflow_starter_files(
+        paths, layout, decision_log, project_type=project_type, version=version,
+    )
     execution_manifest_path, orchestrator_path = _write_execution_contract(
         layout,
         decision_log,
@@ -2081,6 +2439,7 @@ def run_scaffold(
             "requirements_file_count": requirements_file_count,
             "code_file_count": code_file_count,
             "report_file_count": report_file_count,
+            "workflow_file_count": workflow_file_count,
             "execution_manifest_path": str(execution_manifest_path),
             "orchestrator_path": str(orchestrator_path),
             "what_i_built_path": str(what_i_built_path),

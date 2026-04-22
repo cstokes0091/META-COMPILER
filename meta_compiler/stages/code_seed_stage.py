@@ -57,6 +57,18 @@ def _relative_prefix(paths: ArtifactPaths, repo_root: Path) -> str:
     return repo_root.resolve().relative_to(paths.root).as_posix().rstrip("/") + "/"
 
 
+VALID_AUTHOR_ROLES = {"external", "user_authored"}
+
+
+def _validate_author_role(value: str | None) -> str:
+    role = value or "external"
+    if role not in VALID_AUTHOR_ROLES:
+        raise ValueError(
+            f"--author-role must be one of {sorted(VALID_AUTHOR_ROLES)}, got {role!r}"
+        )
+    return role
+
+
 def run_add_code_seed(
     artifacts_root: Path,
     workspace_root: Path,
@@ -65,6 +77,7 @@ def run_add_code_seed(
     name: str,
     depth: int | None = None,
     submodules: bool = False,
+    author_role: str | None = None,
 ) -> dict[str, Any]:
     """Clone a git repo into seeds/code/<name>/ and pin it by commit SHA."""
     del workspace_root  # signature parity with other stage functions
@@ -111,6 +124,7 @@ def run_add_code_seed(
     relative = _relative_prefix(paths, target)
     now = iso_now()
 
+    role = _validate_author_role(author_role)
     payload = _load_bindings(paths)
     payload["code_bindings"][relative] = {
         "type": "code-repo",
@@ -122,6 +136,7 @@ def run_add_code_seed(
         "clone_depth": depth,
         "submodules": bool(submodules),
         "citation_id": citation_id,
+        "author_role": role,
     }
     _save_bindings(paths, payload)
 
@@ -135,6 +150,7 @@ def run_add_code_seed(
         "citation_id": citation_id,
         "clone_depth": depth,
         "submodules": bool(submodules),
+        "author_role": role,
     }
 
 
@@ -144,6 +160,7 @@ def run_bind_code_seed(
     path: str,
     name: str | None = None,
     ref: str | None = None,
+    author_role: str | None = None,
 ) -> dict[str, Any]:
     """Bind an existing git repo already placed under seeds/code/."""
     del workspace_root
@@ -176,6 +193,7 @@ def run_bind_code_seed(
     relative = _relative_prefix(paths, repo_root)
     now = iso_now()
 
+    role = _validate_author_role(author_role)
     payload = _load_bindings(paths)
     payload["code_bindings"][relative] = {
         "type": "code-repo",
@@ -187,6 +205,7 @@ def run_bind_code_seed(
         "clone_depth": None,
         "submodules": False,
         "citation_id": citation_id,
+        "author_role": role,
     }
     _save_bindings(paths, payload)
 
@@ -196,6 +215,7 @@ def run_bind_code_seed(
         "path": relative,
         "remote": remote,
         "ref": effective_ref,
+        "author_role": role,
         "commit_sha": commit_sha,
         "citation_id": citation_id,
     }

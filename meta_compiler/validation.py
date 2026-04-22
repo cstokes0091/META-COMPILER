@@ -6,11 +6,15 @@ from typing import Any
 
 from .artifacts import ArtifactPaths, latest_decision_log_path, load_manifest
 from .io import load_yaml, parse_frontmatter
+from .project_types import (
+    CODE_ARCH_REQUIRED_PROJECT_TYPES,
+    VALID_PROJECT_TYPES,
+    WORKFLOW_CONFIG_REQUIRED_PROJECT_TYPES,
+)
 from .stages.ingest_stage import validate_all_findings
 from .utils import read_text_safe
 
 
-VALID_PROJECT_TYPES = {"algorithm", "report", "hybrid"}
 VALID_STATUS = {"initialized", "researched", "scaffolded", "active"}
 VALID_REVIEW_VERDICTS = {"PROCEED", "ITERATE"}
 VALID_CONVENTION_DOMAINS = {"math", "code", "citation", "terminology"}
@@ -22,7 +26,16 @@ VALID_CODE_ARCH_ASPECTS = {
     "build_tooling",
     "runtime",
 }
-CODE_ARCH_REQUIRED_PROJECT_TYPES = {"algorithm", "hybrid"}
+VALID_AUTHOR_ROLES = {"external", "user_authored"}
+VALID_WORKFLOW_TRIGGERS = {"inbox_watch", "manual", "webhook", "schedule"}
+VALID_WORKFLOW_IO_KINDS = {
+    "tracked_doc",
+    "comment_thread",
+    "data_table",
+    "tracked_edit",
+    "comment_reply",
+    "summary",
+}
 REQUIRED_PROBLEM_STATEMENT_SECTIONS = [
     "## Domain and Problem Space",
     "## Goals and Success Criteria",
@@ -68,7 +81,9 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
 
     project_type = wm.get("project_type")
     if project_type not in VALID_PROJECT_TYPES:
-        issues.append("workspace_manifest.project_type: must be algorithm|report|hybrid")
+        issues.append(
+            f"workspace_manifest.project_type: must be one of {sorted(VALID_PROJECT_TYPES)}"
+        )
 
     status = wm.get("status")
     if status not in VALID_STATUS:
@@ -481,6 +496,11 @@ def validate_source_bindings(bindings_payload: dict[str, Any]) -> list[str]:
             f"source bindings.{relative_path}",
             issues,
         )
+        if "author_role" in row and row["author_role"] not in VALID_AUTHOR_ROLES:
+            issues.append(
+                f"source bindings.{relative_path}.author_role: must be one of "
+                f"{sorted(VALID_AUTHOR_ROLES)}, got {row['author_role']!r}"
+            )
 
     code_bindings = bindings_payload.get("code_bindings")
     if code_bindings is None:
@@ -502,6 +522,11 @@ def validate_source_bindings(bindings_payload: dict[str, Any]) -> list[str]:
         if row.get("type") != "code-repo":
             issues.append(
                 f"source bindings.code_bindings.{relative_path}.type: must be 'code-repo'"
+            )
+        if "author_role" in row and row["author_role"] not in VALID_AUTHOR_ROLES:
+            issues.append(
+                f"source bindings.code_bindings.{relative_path}.author_role: must be one of "
+                f"{sorted(VALID_AUTHOR_ROLES)}, got {row['author_role']!r}"
             )
     return issues
 
@@ -568,7 +593,9 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
             issues,
         )
         if meta.get("project_type") not in VALID_PROJECT_TYPES:
-            issues.append("decision_log.meta.project_type: must be algorithm|report|hybrid")
+            issues.append(
+                f"decision_log.meta.project_type: must be one of {sorted(VALID_PROJECT_TYPES)}"
+            )
         else:
             project_type = str(meta.get("project_type"))
         version = meta.get("version")
@@ -759,6 +786,63 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
                         f"with aspect='{required_aspect}' for algorithm/hybrid projects"
                     )
 
+    workflow_config = root.get("workflow_config")
+    if project_type in WORKFLOW_CONFIG_REQUIRED_PROJECT_TYPES:
+        if not isinstance(workflow_config, dict):
+            issues.append(
+                "decision_log.workflow_config: required object for "
+                "project_type=workflow"
+            )
+        else:
+            wc_prefix = "decision_log.workflow_config"
+            _require_fields(
+                workflow_config,
+                ["trigger", "inputs", "outputs", "state_keys", "escalation_policy"],
+                wc_prefix,
+                issues,
+            )
+            trigger = workflow_config.get("trigger")
+            if trigger is not None and trigger not in VALID_WORKFLOW_TRIGGERS:
+                issues.append(
+                    f"{wc_prefix}.trigger: must be one of "
+                    f"{sorted(VALID_WORKFLOW_TRIGGERS)}, got {trigger!r}"
+                )
+            for key in ("inputs", "outputs"):
+                rows = workflow_config.get(key)
+                if rows is not None:
+                    if not isinstance(rows, list):
+                        issues.append(f"{wc_prefix}.{key}: must be a list")
+                        continue
+                    for idx, row in enumerate(rows):
+                        if not isinstance(row, dict):
+                            issues.append(
+                                f"{wc_prefix}.{key}[{idx}]: must be an object"
+                            )
+                            continue
+                        kind = row.get("kind")
+                        if kind not in VALID_WORKFLOW_IO_KINDS:
+                            issues.append(
+                                f"{wc_prefix}.{key}[{idx}].kind: must be one of "
+                                f"{sorted(VALID_WORKFLOW_IO_KINDS)}, got {kind!r}"
+                            )
+            state_keys = workflow_config.get("state_keys")
+            if state_keys is not None:
+                if not isinstance(state_keys, list) or not all(
+                    isinstance(k, str) for k in state_keys
+                ):
+                    issues.append(
+                        f"{wc_prefix}.state_keys: must be a list of strings"
+                    )
+            policy = workflow_config.get("escalation_policy")
+            if policy is not None and not isinstance(policy, dict):
+                issues.append(
+                    f"{wc_prefix}.escalation_policy: must be an object"
+                )
+    elif workflow_config not in (None, {}):
+        issues.append(
+            "decision_log.workflow_config: must be omitted for non-workflow project types"
+        )
+
     return issues
 
 
@@ -888,7 +972,9 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
                 scaffold_meta = payload
                 project_type = payload.get("project_type")
                 if project_type not in VALID_PROJECT_TYPES:
-                    issues.append("scaffold manifest project_type must be algorithm|report|hybrid")
+                    issues.append(
+                        f"scaffold manifest project_type must be one of {sorted(VALID_PROJECT_TYPES)}"
+                    )
 
     expected_agent_count = scaffold_meta.get("agent_count")
 
@@ -914,6 +1000,7 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
                 "algorithm": 3,
                 "report": 4,
                 "hybrid": 6,
+                "workflow": 6,
             }
             if project_type in min_agents_by_type:
                 minimum = min_agents_by_type[project_type]
@@ -1292,6 +1379,33 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
             payload = load_yaml(paths.stage2_postcheck_verdict_path)
             if payload:
                 issues.extend(validate_stage2_verdict(payload))
+
+        # Wiki search runs as Step 0 of elicit-vision --start. Once the
+        # operator has entered Stage 2 the results.yaml must exist; the brief
+        # has a placeholder when it doesn't, but the dialog is materially
+        # weaker without it.
+        manifest = load_manifest(paths)
+        last_completed = ""
+        if manifest:
+            research = (
+                manifest.get("workspace_manifest", {}).get("research", {})
+                if isinstance(manifest, dict)
+                else {}
+            )
+            last_completed = str(research.get("last_completed_stage", ""))
+        if last_completed in {"2", "2-reentry-seeded", "3", "4"}:
+            if not paths.wiki_search_results_path.exists():
+                issues.append(
+                    "2: wiki_search/results.yaml missing — re-run "
+                    "`meta-compiler elicit-vision --start` so Step 0 wiki-search "
+                    "fires (or pass --skip-wiki-search to bypass)"
+                )
+            else:
+                from .stages.wiki_search_stage import validate_wiki_search_results
+
+                payload = load_yaml(paths.wiki_search_results_path)
+                if payload:
+                    issues.extend(validate_wiki_search_results(payload))
 
     if stage in {"all", "3", "scaffold"}:
         scaffold_dirs = sorted(

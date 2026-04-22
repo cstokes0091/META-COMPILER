@@ -10,6 +10,7 @@ from ..artifacts import (
     save_manifest,
 )
 from ..io import dump_yaml
+from ..project_types import VALID_PROJECT_TYPES, project_type_choices
 from ..utils import iso_now
 
 
@@ -150,8 +151,10 @@ def run_meta_init(
     problem_statement: str | None = None,
     force: bool = False,
 ) -> dict:
-    if project_type not in {"algorithm", "report", "hybrid"}:
-        raise ValueError("project_type must be one of: algorithm, report, hybrid")
+    if project_type not in VALID_PROJECT_TYPES:
+        raise ValueError(
+            f"project_type must be one of: {', '.join(project_type_choices())}"
+        )
 
     paths = build_paths(artifacts_root)
     ensure_layout(paths)

@@ -36,7 +36,8 @@ def test_end_to_end_start_then_finalize_produces_valid_workspace(tmp_path):
     start_result = run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     assert start_result["status"] == "ready_for_orchestrator"
     assert paths.stage2_brief_path.exists()
     assert paths.stage2_transcript_path.exists()
@@ -99,6 +100,22 @@ def test_end_to_end_start_then_finalize_produces_valid_workspace(tmp_path):
     }
     with paths.stage2_postcheck_verdict_path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(postcheck_verdict_payload, handle, sort_keys=False)
+
+    # The decision-log validator expects wiki_search/results.yaml once
+    # last_completed_stage is "2"; this integration test bypassed Step 0
+    # via skip_wiki_search=True, so seed a minimal valid payload.
+    with paths.wiki_search_results_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(
+            {
+                "wiki_search_results": {
+                    "generated_at": "2026-04-17T00:00:00+00:00",
+                    "problem_statement_hash": "test",
+                    "topics": {},
+                }
+            },
+            handle,
+            sort_keys=False,
+        )
 
     # --- Assertions on workspace state ---
 

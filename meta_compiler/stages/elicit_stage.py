@@ -15,6 +15,10 @@ from ..artifacts import (
 from ..io import dump_yaml, load_yaml
 from ..utils import iso_now, read_text_safe, sha256_bytes
 from ..validation import validate_decision_log
+from .wiki_search_stage import (
+    render_wiki_evidence_section,
+    run_wiki_search_preflight,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1104,6 +1108,21 @@ def _render_brief(
             "",
         ]
 
+    wiki_evidence = render_wiki_evidence_section(paths)
+    if wiki_evidence:
+        body_lines.append(wiki_evidence)
+    else:
+        body_lines.extend(
+            [
+                "## Wiki Evidence",
+                "",
+                "_Wiki search has not run yet (or produced no results). Re-invoke "
+                "`elicit-vision --start` after `@wiki-search-orchestrator` to "
+                "populate this section._",
+                "",
+            ]
+        )
+
     footer = [
         "## Citation inventory",
         "",
@@ -1298,12 +1317,16 @@ def run_elicit_vision_start(
     artifacts_root: Path,
     workspace_root: Path,
     override_iterate_reason: str | None = None,
+    skip_wiki_search: bool = False,
 ) -> dict[str, Any]:
     """Stage 2 Step 1 — CLI preflight bookend.
 
     Writes brief.md, transcript.md skeleton, and precheck_request.yaml into
-    `workspace-artifacts/runtime/stage2/`. Raises on mechanical prereq
-    failure (the CLI wrapper converts to nonzero exit).
+    `workspace-artifacts/runtime/stage2/`. Step 0 auto-fires the wiki-search
+    preflight; if it returns ``ready_for_orchestrator`` the dialog cannot
+    proceed until ``@wiki-search-orchestrator`` runs and the operator re-calls
+    --start. ``skip_wiki_search=True`` (or the cached freshness path) skips
+    Step 0. Raises on mechanical prereq failure.
     """
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
@@ -1313,6 +1336,29 @@ def run_elicit_vision_start(
         raise RuntimeError(
             "Manifest not found. Run `meta-compiler meta-init` first."
         )
+
+    if not skip_wiki_search:
+        wiki_search_result = run_wiki_search_preflight(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+        )
+        status = wiki_search_result.get("status")
+        if status == "ready_for_orchestrator":
+            return {
+                "status": "ready_for_wiki_search_orchestrator",
+                "wiki_search_request_path": wiki_search_result.get("request_path"),
+                "wiki_search_work_plan_path": wiki_search_result.get("work_plan_path"),
+                "topic_count": wiki_search_result.get("topic_count"),
+                "instruction": (
+                    "Invoke @wiki-search-orchestrator next. It fans out "
+                    "wiki-searcher subagents (max 4 parallel) per topic in "
+                    "the work plan. Then run "
+                    "`meta-compiler wiki-search --apply` and re-run "
+                    "`meta-compiler elicit-vision --start` to proceed to the "
+                    "stage2-orchestrator preflight."
+                ),
+            }
+        # status in {"cached", "no_work"} — fall through to brief rendering.
 
     checks, blocking = _preflight_checks(
         paths=paths,

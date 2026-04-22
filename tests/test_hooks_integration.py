@@ -86,3 +86,36 @@ def test_stage2_reentry_sequence_audited(tmp_path):
     decisions = [json.loads(l).get("decision") for l in lines if l.strip()]
     assert "deny" in decisions
     assert "allow" in decisions
+
+
+def test_gate_wiki_search_apply_denies_without_topic_files(tmp_path):
+    """gate_wiki_search_apply blocks --apply when results dir is empty."""
+    artifacts = tmp_path / "workspace-artifacts"
+    runtime = artifacts / "runtime" / "stage2" / "wiki_search"
+    runtime.mkdir(parents=True)
+
+    apply_cmd = _bash("meta-compiler wiki-search --apply")
+
+    # No request yet -> deny
+    r = _invoke("gate_wiki_search_apply", apply_cmd, tmp_path)
+    assert r.get("permissionDecision") == "deny"
+    assert "wiki_search_request.yaml" in r.get("reason", "")
+
+    # Request exists but no T-*.yaml -> still deny
+    (runtime / "wiki_search_request.yaml").write_text(
+        "wiki_search_request:\n  topic_count: 1\n"
+    )
+    r = _invoke("gate_wiki_search_apply", apply_cmd, tmp_path)
+    assert r.get("permissionDecision") == "deny"
+    assert "T-*.yaml" in r.get("reason", "")
+
+    # Drop in a topic file -> allow
+    results_dir = runtime / "results"
+    results_dir.mkdir(parents=True)
+    (results_dir / "T-001.yaml").write_text(
+        "wiki_search_topic_result:\n  topic_id: T-001\n  generated_at: x\n"
+        "  concepts: []\n  equations: []\n  citations: []\n  related_pages: []\n"
+        "  cross_source_notes: []\n"
+    )
+    r = _invoke("gate_wiki_search_apply", apply_cmd, tmp_path)
+    assert r.get("permissionDecision") == "allow"

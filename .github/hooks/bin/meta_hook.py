@@ -1014,6 +1014,123 @@ def gate_reconcile_request(payload: dict[str, Any]) -> dict[str, Any]:
     return {"permissionDecision": "allow"}
 
 
+@register("gate_wiki_search_apply")
+def gate_wiki_search_apply(payload: dict[str, Any]) -> dict[str, Any]:
+    """Block `meta-compiler wiki-search --apply` unless the preflight wrote the
+    request and at least one `T-*.yaml` topic file landed in the results dir.
+
+    Workflow:
+      1. `wiki-search --scope stage2` (preflight: writes work_plan + request)
+      2. `@wiki-search-orchestrator` (fan-out: writes T-*.yaml per topic)
+      3. `wiki-search --apply` (postflight: consolidates) — gated here.
+
+    Catches the common failure of an LLM skipping the orchestrator and
+    asking apply to consolidate an empty results directory.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    if "wiki-search" not in cmd or "--apply" not in cmd or not cmd.strip().startswith(
+        "meta-compiler"
+    ):
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_wiki_search_apply", ws)
+    if disabled:
+        audit(ws, "gate_wiki_search_apply", "PreToolUse", "allow_override",
+              reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": f"gate_wiki_search_apply disabled by override: {ov_reason}",
+        }
+
+    runtime_dir = ws / "workspace-artifacts" / "runtime" / "stage2" / "wiki_search"
+    request_path = runtime_dir / "wiki_search_request.yaml"
+    if not request_path.exists():
+        line = audit(ws, "gate_wiki_search_apply", "PreToolUse", "deny",
+                     reason="wiki_search_request.yaml missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "wiki_search_request.yaml is missing — preflight did not run.",
+            "remediation": (
+                "Run `meta-compiler wiki-search --scope stage2` first (or just "
+                "`meta-compiler elicit-vision --start`, which auto-fires it), "
+                "then invoke @wiki-search-orchestrator, then retry --apply."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    results_dir = runtime_dir / "results"
+    topic_files = sorted(results_dir.glob("T-*.yaml")) if results_dir.exists() else []
+    if not topic_files:
+        line = audit(ws, "gate_wiki_search_apply", "PreToolUse", "deny",
+                     reason="no T-*.yaml topic files",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "No T-*.yaml topic results found in runtime/stage2/wiki_search/results/.",
+            "remediation": (
+                "Invoke @wiki-search-orchestrator first; it fans out wiki-searcher "
+                "subagents that write one file per topic before --apply consolidates."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_wiki_search_apply", "PreToolUse", "allow",
+          extra={"command": cmd, "topic_count": len(topic_files)})
+    return {"permissionDecision": "allow"}
+
+
+@register("validate_wiki_search_schema")
+def validate_wiki_search_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    """PostToolUse: re-load runtime/stage2/wiki_search/results.yaml after a
+    successful `wiki-search --apply` and surface schema errors back to the LLM.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {}
+    if "wiki-search" not in cmd or "--apply" not in cmd:
+        return {}
+
+    results_path = (
+        ws / "workspace-artifacts" / "runtime" / "stage2" / "wiki_search" / "results.yaml"
+    )
+    if not results_path.exists():
+        return {}
+
+    try:
+        import sys
+
+        repo_root = Path(__file__).resolve().parents[3]
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from meta_compiler.io import load_yaml
+        from meta_compiler.stages.wiki_search_stage import validate_wiki_search_results
+
+        issues = validate_wiki_search_results(load_yaml(results_path) or {})
+    except Exception as exc:  # noqa: BLE001
+        audit(ws, "validate_wiki_search_schema", "PostToolUse", "error",
+              reason=str(exc), extra={"command": cmd})
+        return {
+            "systemMessage": (
+                f"validate_wiki_search_schema raised {exc.__class__.__name__}: {exc}"
+            )
+        }
+    if not issues:
+        audit(ws, "validate_wiki_search_schema", "PostToolUse", "allow",
+              extra={"command": cmd})
+        return {}
+    audit(ws, "validate_wiki_search_schema", "PostToolUse", "deny",
+          reason="schema_issues", extra={"issues": issues[:5]})
+    return {
+        "systemMessage": "wiki_search/results.yaml failed schema validation:\n  - "
+        + "\n  - ".join(issues[:10])
+    }
+
+
 @register("require_handoff")
 def require_handoff(payload):
     return _presence_check(

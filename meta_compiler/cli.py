@@ -43,6 +43,11 @@ from .stages.concept_reconciliation_stage import (
     run_wiki_cross_source_synthesize,
     run_wiki_reconcile_concepts,
 )
+from .stages.wiki_search_stage import (
+    run_wiki_search_apply,
+    run_wiki_search_preflight,
+)
+from .project_types import project_type_choices
 from .validation import validate_stage
 from .wiki_browser import run_wiki_browser
 
@@ -74,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument(
         "--project-type",
         required=True,
-        choices=["algorithm", "report", "hybrid"],
+        choices=project_type_choices(),
     )
     init_parser.add_argument(
         "--problem-statement",
@@ -154,6 +159,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Recursively initialise submodules after checkout",
     )
+    add_code_seed_parser.add_argument(
+        "--author-role",
+        choices=["external", "user_authored"],
+        default="external",
+        help="Tag the binding so wiki-build-style-corpus can find user-authored seeds",
+    )
 
     bind_code_seed_parser = subparsers.add_parser(
         "bind-code-seed",
@@ -174,6 +185,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ref",
         default=None,
         help="Symbolic ref to record (defaults to the resolved commit SHA)",
+    )
+    bind_code_seed_parser.add_argument(
+        "--author-role",
+        choices=["external", "user_authored"],
+        default="external",
+        help="Tag the binding so wiki-build-style-corpus can find user-authored seeds",
+    )
+
+    tag_seed_parser = subparsers.add_parser(
+        "tag-seed",
+        help="Set author_role on an existing doc seed in source_bindings.yaml",
+    )
+    _add_common_paths(tag_seed_parser)
+    tag_seed_parser.add_argument(
+        "--path",
+        required=True,
+        help="Workspace-relative path of the seed (must already be tracked in source_bindings.bindings)",
+    )
+    tag_seed_parser.add_argument(
+        "--author-role",
+        required=True,
+        choices=["external", "user_authored"],
+        help="Author role to record on this seed binding",
     )
 
     depth_parser = subparsers.add_parser("research-depth", help="Run Stage 1B depth pass")
@@ -273,6 +307,14 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="REASON",
         help="Override a Stage 1C ITERATE handoff when running --start (reason is recorded)",
     )
+    elicit_parser.add_argument(
+        "--skip-wiki-search",
+        action="store_true",
+        help=(
+            "Skip the Step 0 wiki-search auto-fire (escape hatch when results.yaml "
+            "is unreachable; brief.md will note the missing evidence)."
+        ),
+    )
 
     scaffold_parser = subparsers.add_parser("scaffold", help="Run Stage 3 scaffold generation")
     _add_common_paths(scaffold_parser)
@@ -348,7 +390,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run_all_parser.add_argument(
         "--project-type",
         required=True,
-        choices=["algorithm", "report", "hybrid"],
+        choices=project_type_choices(),
     )
     run_all_parser.add_argument(
         "--problem-statement",
@@ -416,6 +458,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wiki version. Only 2 is supported.",
     )
 
+    wiki_search_parser = subparsers.add_parser(
+        "wiki-search",
+        help="Auto-fired Stage 2 wiki evidence pull (preflight or --apply postflight)",
+    )
+    _add_common_paths(wiki_search_parser)
+    wiki_search_mx = wiki_search_parser.add_mutually_exclusive_group(required=True)
+    wiki_search_mx.add_argument(
+        "--scope",
+        choices=["stage2"],
+        help="Run preflight: write work_plan.yaml + wiki_search_request.yaml",
+    )
+    wiki_search_mx.add_argument(
+        "--apply",
+        action="store_true",
+        help="Run postflight: consolidate per-topic results into results.yaml",
+    )
+    wiki_search_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip the freshness cache and re-run preflight",
+    )
+
     cross_source_parser = subparsers.add_parser(
         "wiki-cross-source-synthesize",
         help="Phase B preflight: write work plan for cross-source definition synthesis",
@@ -427,6 +491,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=2,
         choices=[2],
         help="Wiki version. Only 2 is supported.",
+    )
+
+    style_corpus_parser = subparsers.add_parser(
+        "wiki-build-style-corpus",
+        help="Scan user_authored seeds + findings; emit wiki/style/style_corpus.md",
+    )
+    _add_common_paths(style_corpus_parser)
+
+    run_workflow_parser = subparsers.add_parser(
+        "run-workflow",
+        help="Invoke a workflow scaffold's orchestrator/run_workflow.py against an input docx",
+    )
+    _add_common_paths(run_workflow_parser)
+    run_workflow_parser.add_argument(
+        "--input", required=True, help="Path to a .docx (typically under inbox/)"
+    )
+    run_workflow_parser.add_argument(
+        "--task", default="reply-to-comments", help="Task name (default: reply-to-comments)"
+    )
+    run_workflow_parser.add_argument(
+        "--scaffold-version",
+        type=int,
+        default=None,
+        help="Pin a specific scaffold version (default: latest)",
     )
 
     wiki_browser_parser = subparsers.add_parser("wiki-browse", help="Open the local wiki browser")
@@ -568,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 name=args.name,
                 depth=args.depth,
                 submodules=args.submodules,
+                author_role=args.author_role,
             )
         elif args.command == "bind-code-seed":
             result = run_bind_code_seed(
@@ -576,6 +665,31 @@ def main(argv: list[str] | None = None) -> int:
                 path=args.path,
                 name=args.name,
                 ref=args.ref,
+                author_role=args.author_role,
+            )
+        elif args.command == "tag-seed":
+            from .stages.style_corpus_stage import run_tag_seed
+
+            result = run_tag_seed(
+                artifacts_root=artifacts_root,
+                seed_path=args.path,
+                author_role=args.author_role,
+            )
+        elif args.command == "wiki-build-style-corpus":
+            from .stages.style_corpus_stage import run_wiki_build_style_corpus
+
+            result = run_wiki_build_style_corpus(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+            )
+        elif args.command == "run-workflow":
+            from .stages.workflow_stage import run_workflow
+
+            result = run_workflow(
+                artifacts_root=artifacts_root,
+                input_path=args.input,
+                task=args.task,
+                scaffold_version=args.scaffold_version,
             )
         elif args.command == "research-breadth":
             result = run_research_breadth(artifacts_root=artifacts_root, workspace_root=workspace_root)
@@ -622,6 +736,7 @@ def main(argv: list[str] | None = None) -> int:
                     artifacts_root=artifacts_root,
                     workspace_root=workspace_root,
                     override_iterate_reason=args.override_iterate,
+                    skip_wiki_search=args.skip_wiki_search,
                 )
             else:  # --finalize (argparse enforces one of --start/--finalize)
                 result = run_elicit_vision_finalize(
@@ -661,6 +776,18 @@ def main(argv: list[str] | None = None) -> int:
                 workspace_root=workspace_root,
                 version=args.version,
             )
+        elif args.command == "wiki-search":
+            if args.apply:
+                result = run_wiki_search_apply(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                )
+            else:
+                result = run_wiki_search_preflight(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    force=args.force,
+                )
         elif args.command == "wiki-cross-source-synthesize":
             result = run_wiki_cross_source_synthesize(
                 artifacts_root=artifacts_root,

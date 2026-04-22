@@ -170,7 +170,8 @@ def test_finalize_with_minimal_transcript_writes_decision_log(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         MINIMAL_TRANSCRIPT_WITH_ONE_BLOCK, encoding="utf-8"
     )
@@ -217,7 +218,8 @@ def test_finalize_with_full_transcript_populates_every_section(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         FULL_TRANSCRIPT_ALL_SECTIONS, encoding="utf-8"
     )
@@ -270,7 +272,8 @@ def test_finalize_with_empty_blocks_raises(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     # Skeleton has no decision blocks — leave it as-is.
     with pytest.raises(RuntimeError) as excinfo:
         run_elicit_vision_finalize(
@@ -288,7 +291,8 @@ def test_finalize_with_malformed_block_raises_and_does_not_write_yaml(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     # Missing 'Domain:' for a conventions block.
     paths.stage2_transcript_path.write_text(
         "### Decision: Broken\n"
@@ -316,7 +320,8 @@ def test_finalize_with_unresolved_citation_fails_fidelity(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         "### Decision: Code style\n"
         "- Section: conventions\n"
@@ -355,7 +360,8 @@ def test_finalize_v2_sets_parent_version(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         MINIMAL_TRANSCRIPT_WITH_ONE_BLOCK, encoding="utf-8"
     )
@@ -369,7 +375,8 @@ def test_finalize_v2_sets_parent_version(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         MINIMAL_TRANSCRIPT_WITH_ONE_BLOCK.replace(
             "Code style", "Code style revised"
@@ -403,7 +410,8 @@ def test_finalize_extracts_use_case_from_frontmatter(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths.stage2_transcript_path.write_text(
         "---\n"
         "use_case: Initial scaffold for the widget factory\n"

@@ -205,11 +205,55 @@ def run_all(
     # The dialog itself happens outside run-all — it requires a chat runtime
     # reading .github/prompts/stage-2-dialog.prompt.md. run-all's job is to
     # prepare the preflight artifacts and hand off.
+    #
+    # Step 0 of elicit-vision --start auto-fires the wiki-search preflight. If
+    # work_plan.yaml lists topics, --start returns
+    # status="ready_for_wiki_search_orchestrator" and run-all hands off there.
     elicit_start_result = run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
     )
     _log_step("2-preflight", elicit_start_result, log)
+
+    if elicit_start_result.get("status") == "ready_for_wiki_search_orchestrator":
+        return {
+            "status": "wiki-search-handoff",
+            "started": started,
+            "finished": iso_now(),
+            "stages_completed": len(
+                [
+                    e
+                    for e in log
+                    if e["status"] == "ok" and not e["stage"].startswith("validate-")
+                ]
+            ),
+            "handoff_stage": "2-step0-wiki-search",
+            "handoff_ready": True,
+            "wiki_search_request_path": elicit_start_result.get(
+                "wiki_search_request_path"
+            ),
+            "wiki_search_work_plan_path": elicit_start_result.get(
+                "wiki_search_work_plan_path"
+            ),
+            "topic_count": elicit_start_result.get("topic_count"),
+            "next_steps": [
+                "Open .github/prompts/wiki-search-orchestrator.prompt.md and invoke "
+                "@wiki-search-orchestrator. It fans out wiki-searcher subagents "
+                "(<=4 parallel) per topic in the work plan.",
+                "Run `meta-compiler wiki-search --apply` to consolidate the "
+                "per-topic results into runtime/stage2/wiki_search/results.yaml.",
+                "Re-run `meta-compiler elicit-vision --start` to render brief.md "
+                "with the populated '## Wiki Evidence' section, then proceed to "
+                "@stage2-orchestrator preflight.",
+            ],
+            "pipeline_log": log,
+            "use_case": use_case,
+            "message": (
+                "Pipeline paused at Stage 2 Step 0 (wiki-search). Walk the "
+                "next_steps to enrich the brief, then re-run `meta-compiler "
+                "elicit-vision --start` to enter the dialog."
+            ),
+        }
 
     return {
         "status": "stage-2-preflight-handoff",

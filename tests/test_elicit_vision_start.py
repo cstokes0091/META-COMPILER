@@ -179,7 +179,8 @@ def test_start_happy_path_writes_all_artifacts(tmp_path):
     result = run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     paths = build_paths(artifacts_root)
 
     assert result["status"] == "ready_for_orchestrator"
@@ -247,6 +248,7 @@ def test_start_fails_when_problem_statement_is_template(tmp_path):
         run_elicit_vision_start(
             artifacts_root=artifacts_root,
             workspace_root=workspace_root,
+            skip_wiki_search=True,
         )
     assert "problem statement incomplete" in str(excinfo.value)
 
@@ -263,6 +265,7 @@ def test_start_fails_when_handoff_iterates_without_override(tmp_path):
         run_elicit_vision_start(
             artifacts_root=artifacts_root,
             workspace_root=workspace_root,
+            skip_wiki_search=True,
         )
     assert "ITERATE" in str(excinfo.value)
 
@@ -275,7 +278,8 @@ def test_start_with_override_iterate_records_reason_and_proceeds(tmp_path):
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
         override_iterate_reason="Human override: proceeding to Stage 2 despite ITERATE.",
-    )
+        skip_wiki_search=True,
+        )
     assert result["status"] == "ready_for_orchestrator"
 
     paths = build_paths(artifacts_root)
@@ -300,7 +304,8 @@ def test_rerunning_start_preserves_transcript_content(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
 
     # Simulate the LLM having appended a decision block mid-dialog.
     existing = paths.stage2_transcript_path.read_text(encoding="utf-8")
@@ -320,7 +325,8 @@ def test_rerunning_start_preserves_transcript_content(tmp_path):
     run_elicit_vision_start(
         artifacts_root=artifacts_root,
         workspace_root=workspace_root,
-    )
+        skip_wiki_search=True,
+        )
     assert (
         "### Decision: Code style"
         in paths.stage2_transcript_path.read_text(encoding="utf-8")

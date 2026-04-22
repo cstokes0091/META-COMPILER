@@ -6,7 +6,8 @@ Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: PyYAML>=6.0.2
 Requires-Dist: python-pptx>=1.0.2
-Requires-Dist: python-docx>=1.1.2
+Requires-Dist: python-docx>=1.2.0
+Requires-Dist: lxml>=5.2
 Requires-Dist: openpyxl>=3.1.5
 Requires-Dist: PyMuPDF>=1.25.3
 Requires-Dist: XlsxWriter>=3.2.9
