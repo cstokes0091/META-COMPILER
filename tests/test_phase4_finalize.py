@@ -44,19 +44,20 @@ def _bootstrap(tmp_path: Path, *, decision_log_version: int = 1) -> tuple[Path, 
             "execution": {
                 "decision_log_version": decision_log_version,
                 "project_type": "hybrid",
-                "orchestrator_path": "orchestrator/run_stage4.py",
+                "capabilities_path": "capabilities.yaml",
             }
         },
     )
-
-    # Empty agent registry is fine for these tests; finalize doesn't need it.
+    # Empty dispatch hints are fine for these tests; finalize doesn't need them.
     dump_yaml(
-        scaffold_root / "AGENT_REGISTRY.yaml",
+        scaffold_root / "DISPATCH_HINTS.yaml",
         {
-            "agent_registry": {
+            "dispatch_hints": {
                 "decision_log_version": decision_log_version,
                 "project_type": "hybrid",
-                "entries": [],
+                "agent_palette": ["planner", "implementer", "reviewer", "researcher"],
+                "dispatch_policy": "capability-keyed",
+                "assignments": [],
             }
         },
     )
@@ -64,7 +65,7 @@ def _bootstrap(tmp_path: Path, *, decision_log_version: int = 1) -> tuple[Path, 
 
 
 def _seed_work_dir(artifacts_root: Path, files: dict[str, str]) -> Path:
-    """Populate executions/v1/work/<agent>/<file> with given content."""
+    """Populate executions/v1/work/<capability>/<file> with given content."""
     work_dir = artifacts_root / "executions" / "v1" / "work"
     for rel, content in files.items():
         target = work_dir / rel
@@ -169,9 +170,9 @@ def test_finalize_compiles_manifest_from_populated_work_dir(tmp_path: Path):
     _seed_work_dir(
         artifacts_root,
         {
-            "alpha-agent/output.py": "print('alpha')\n",
-            "alpha-agent/notes.md": "alpha notes\n",
-            "beta-agent/report.md": "beta report\n",
+            "req-001-alpha/output.py": "print('alpha')\n",
+            "req-001-alpha/notes.md": "alpha notes\n",
+            "req-002-beta/report.md": "beta report\n",
         },
     )
 
@@ -185,8 +186,9 @@ def test_finalize_compiles_manifest_from_populated_work_dir(tmp_path: Path):
     )
     assert final_manifest_path.exists()
     final = load_yaml(final_manifest_path)["final_output"]
-    deliverable_agents = {row["agent"] for row in final["deliverables"]}
-    assert deliverable_agents == {"alpha-agent", "beta-agent"}
+    # New shape: deliverables keyed by `capability`, not `agent`.
+    deliverable_capabilities = {row["capability"] for row in final["deliverables"]}
+    assert deliverable_capabilities == {"req-001-alpha", "req-002-beta"}
     assert len(final["deliverables"]) == 3
 
 
@@ -196,7 +198,7 @@ def test_finalize_without_slides_returns_pitch_writer_handoff(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
         artifacts_root,
-        {"alpha-agent/output.py": "print('hi')\n"},
+        {"req-001-alpha/output.py": "print('hi')\n"},
     )
 
     result = run_phase4_finalize(
@@ -216,7 +218,7 @@ def test_finalize_renders_pitch_artifacts_when_slides_present(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
         artifacts_root,
-        {"alpha-agent/output.py": "print('hi')\n"},
+        {"req-001-alpha/output.py": "print('hi')\n"},
     )
     # Step 1: build evidence + pitch_request.
     run_phase4_finalize(
@@ -245,7 +247,7 @@ def test_finalize_writes_postcheck_request(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
         artifacts_root,
-        {"alpha-agent/output.py": "print('hi')\n"},
+        {"req-001-alpha/output.py": "print('hi')\n"},
     )
     run_phase4_finalize(
         artifacts_root=artifacts_root,
@@ -298,10 +300,12 @@ def test_finalize_uses_existing_manifest_when_no_work(tmp_path: Path):
     assert result["decision_log_version"] == 1
 
 
-def test_finalize_raises_without_work_or_manifest_or_orchestrator(tmp_path: Path):
+def test_finalize_raises_without_work_or_manifest(tmp_path: Path):
+    # Commit 8 removed the legacy orchestrator subprocess fallback. When both
+    # the work_dir and the pre-written manifest are absent, we expect a clear
+    # error pointing the operator at the LLM conductor flow.
     workspace_root, artifacts_root = _bootstrap(tmp_path)
-    # No work/, no manifest, no orchestrator script => fall-through fails.
-    with pytest.raises(RuntimeError, match="Stage 4 orchestrator missing"):
+    with pytest.raises(RuntimeError, match="work/ is empty"):
         run_phase4_finalize(
             artifacts_root=artifacts_root, workspace_root=workspace_root
         )
@@ -311,7 +315,7 @@ def test_finalize_records_execution_in_workspace_manifest(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap(tmp_path)
     _seed_work_dir(
         artifacts_root,
-        {"alpha-agent/output.py": "print('hi')\n"},
+        {"req-001-alpha/output.py": "print('hi')\n"},
     )
     run_phase4_finalize(
         artifacts_root=artifacts_root,

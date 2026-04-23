@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -132,14 +130,17 @@ def _resolve_template_path(
     return candidate
 
 
-def _load_agent_registry(scaffold_root: Path) -> list[dict[str, Any]]:
-    registry_path = scaffold_root / "AGENT_REGISTRY.yaml"
-    if not registry_path.exists():
+def _load_dispatch_hints(scaffold_root: Path) -> list[dict[str, Any]]:
+    """Load capability-keyed dispatch hints. Replaces the legacy
+    _load_agent_registry that read AGENT_REGISTRY.yaml. Commit 8 of the
+    Stage-3 rearchitecture."""
+    hints_path = scaffold_root / "DISPATCH_HINTS.yaml"
+    if not hints_path.exists():
         return []
-    payload = load_yaml(registry_path) or {}
-    registry = payload.get("agent_registry", {}) if isinstance(payload, dict) else {}
-    entries = registry.get("entries", []) if isinstance(registry, dict) else []
-    return [row for row in entries if isinstance(row, dict)]
+    payload = load_yaml(hints_path) or {}
+    root = payload.get("dispatch_hints", {}) if isinstance(payload, dict) else {}
+    assignments = root.get("assignments", []) if isinstance(root, dict) else []
+    return [row for row in assignments if isinstance(row, dict)]
 
 
 def run_phase4_start(
@@ -177,22 +178,21 @@ def run_phase4_start(
     work_dir = output_dir / "work"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    agent_entries = _load_agent_registry(scaffold_root)
+    capability_entries = _load_dispatch_hints(scaffold_root)
     dispatch_assignments: list[dict[str, Any]] = []
-    for entry in agent_entries:
-        slug = entry.get("slug") or entry.get("role")
-        if not slug:
+    for entry in capability_entries:
+        capability = entry.get("capability")
+        if not capability:
             continue
-        agent_work_dir = work_dir / str(slug)
+        capability_work_dir = work_dir / str(capability)
         dispatch_assignments.append(
             {
-                "agent": slug,
-                "role": entry.get("role"),
-                "responsibility": entry.get("responsibility"),
-                "output_kind": entry.get("output_kind"),
-                "outputs": entry.get("outputs", []),
-                "expected_work_dir": str(agent_work_dir.relative_to(paths.root)),
-                "max_cycles": entry.get("max_cycles", 3),
+                "capability": capability,
+                "assigned_agent": "planner",  # palette-keyed dispatch
+                "skill_path": entry.get("skill_path"),
+                "contract_ref": entry.get("contract_ref"),
+                "verification_hook_ids": list(entry.get("verification_hook_ids") or []),
+                "expected_work_dir": str(capability_work_dir.relative_to(paths.root)),
                 "status": "pending",
             }
         )
@@ -237,7 +237,7 @@ def run_phase4_start(
         "dispatch_plan_path": str(dispatch_plan_path),
         "execution_request_path": str(paths.phase4_execution_request_path),
         "work_dir": str(work_dir),
-        "agent_count": len(dispatch_assignments),
+        "capability_count": len(dispatch_assignments),
     }
 
 
@@ -251,20 +251,20 @@ def _compile_final_output_manifest(
 ) -> dict[str, Any]:
     """Compile FINAL_OUTPUT_MANIFEST.yaml from LLM-populated work/ directory.
 
-    Walks each per-agent subdirectory, records every output file as a
-    deliverable, and writes the manifest.
+    Walks each per-capability subdirectory, records every output file as a
+    deliverable keyed by capability_id, and writes the manifest.
     """
     deliverables: list[dict[str, Any]] = []
     if work_dir.exists():
-        for agent_dir in sorted(work_dir.iterdir()):
-            if not agent_dir.is_dir():
+        for capability_dir in sorted(work_dir.iterdir()):
+            if not capability_dir.is_dir():
                 continue
-            for path in sorted(agent_dir.rglob("*")):
+            for path in sorted(capability_dir.rglob("*")):
                 if not path.is_file():
                     continue
                 deliverables.append(
                     {
-                        "agent": agent_dir.name,
+                        "capability": capability_dir.name,
                         "kind": path.suffix.lstrip(".") or "file",
                         "path": str(path.relative_to(output_dir.parent.parent))
                         if path.is_relative_to(output_dir.parent.parent)
@@ -328,7 +328,6 @@ def run_phase4_finalize(
         )
 
     execution_manifest_path = scaffold_root / "EXECUTION_MANIFEST.yaml"
-    orchestrator_path = scaffold_root / "orchestrator" / "run_stage4.py"
     if not execution_manifest_path.exists():
         raise RuntimeError(f"Execution manifest missing: {execution_manifest_path}")
 
@@ -359,27 +358,17 @@ def run_phase4_finalize(
         # Manifest already on disk (e.g., LLM agent wrote it directly).
         final_output_manifest = load_yaml(final_output_manifest_path)
     else:
-        # Legacy fallback: invoke the scaffold-generated subprocess.
-        if not orchestrator_path.exists():
-            raise RuntimeError(
-                f"Stage 4 orchestrator missing: {orchestrator_path}. "
-                "Either populate executions/v{N}/work/ via the LLM conductor "
-                "(meta-compiler phase4-finalize --start, then run the prompt) "
-                "or regenerate the scaffold."
-            )
-        command = [sys.executable, str(orchestrator_path), "--output-dir", str(output_dir)]
-        completed = subprocess.run(
-            command,
-            cwd=str(scaffold_root),
-            capture_output=True,
-            text=True,
-            check=True,
+        # The legacy orchestrator/run_stage4.py subprocess fallback was deleted
+        # in Commit 8 of the Stage-3 rearchitecture. Stage 4 is now LLM-conducted
+        # only: the operator runs `meta-compiler phase4-finalize --start`, the
+        # execution-orchestrator populates executions/v{N}/work/, and then
+        # `phase4-finalize --finalize` compiles the manifest from work_dir.
+        raise RuntimeError(
+            f"executions/v{version}/work/ is empty and FINAL_OUTPUT_MANIFEST.yaml "
+            "is absent. Run `meta-compiler phase4-finalize --start`, then let the "
+            "@execution-orchestrator populate the work directory before calling "
+            "--finalize."
         )
-        completed_stdout = completed.stdout.strip()
-        completed_stderr = completed.stderr.strip()
-        if not final_output_manifest_path.exists():
-            raise RuntimeError("Stage 4 orchestrator completed without FINAL_OUTPUT_MANIFEST.yaml")
-        final_output_manifest = load_yaml(final_output_manifest_path)
 
     manifest = load_manifest(paths)
     if not manifest:
@@ -414,7 +403,13 @@ def run_phase4_finalize(
         load_yaml(paths.citations_index_path) if paths.citations_index_path.exists() else {}
     ) or {}
 
-    req_trace_path = scaffold_root / "requirements" / "REQ_TRACE_MATRIX.md"
+    # Primary location (Commit 6+): structured REQ trace under verification/.
+    # Legacy location (pre-Commit 6): requirements/REQ_TRACE_MATRIX.md.
+    req_trace_path = scaffold_root / "verification" / "REQ_TRACE.yaml"
+    if not req_trace_path.exists():
+        legacy = scaffold_root / "requirements" / "REQ_TRACE_MATRIX.md"
+        if legacy.exists():
+            req_trace_path = legacy
     ralph_loop_log_path = output_dir / "ralph_loop_log.yaml"
 
     pitch_summary: dict[str, Any] = {}

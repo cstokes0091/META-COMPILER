@@ -14,7 +14,7 @@ def _bootstrap_scaffold(
     tmp_path: Path,
     *,
     decision_log_version: int = 1,
-    agent_entries: list[dict] | None = None,
+    capability_assignments: list[dict] | None = None,
 ) -> tuple[Path, Path]:
     workspace_root = tmp_path / "workspace"
     artifacts_root = workspace_root / "workspace-artifacts"
@@ -38,38 +38,41 @@ def _bootstrap_scaffold(
             "execution": {
                 "decision_log_version": decision_log_version,
                 "project_type": "hybrid",
-                "orchestrator_path": "orchestrator/run_stage4.py",
+                "capabilities_path": "capabilities.yaml",
             }
         },
     )
 
-    if agent_entries is None:
-        agent_entries = [
+    if capability_assignments is None:
+        capability_assignments = [
             {
-                "slug": "alpha-agent",
-                "role": "alpha-agent",
-                "responsibility": "Do alpha work.",
-                "output_kind": "code",
-                "outputs": ["code"],
-                "max_cycles": 3,
+                "capability": "req-001-alpha",
+                "skill_path": "skills/req-001-alpha/SKILL.md",
+                "contract_ref": "contract-alpha",
+                "verification_hook_ids": ["ver-req-001-alpha-001"],
+                "expected_work_dir_relative": "work/req-001-alpha/",
             },
             {
-                "slug": "beta-agent",
-                "role": "beta-agent",
-                "responsibility": "Do beta work.",
-                "output_kind": "document",
-                "outputs": ["report"],
-                "max_cycles": 3,
+                "capability": "req-002-beta",
+                "skill_path": "skills/req-002-beta/SKILL.md",
+                "contract_ref": "contract-beta",
+                "verification_hook_ids": ["ver-req-002-beta-001"],
+                "expected_work_dir_relative": "work/req-002-beta/",
             },
         ]
     dump_yaml(
-        scaffold_root / "AGENT_REGISTRY.yaml",
+        scaffold_root / "DISPATCH_HINTS.yaml",
         {
-            "agent_registry": {
+            "dispatch_hints": {
                 "decision_log_version": decision_log_version,
                 "project_type": "hybrid",
-                "orchestrator": "execution-orchestrator",
-                "entries": agent_entries,
+                "agent_palette": ["planner", "implementer", "reviewer", "researcher"],
+                "skill_index_path": "skills/INDEX.md",
+                "capabilities_path": "capabilities.yaml",
+                "contracts_manifest_path": "contracts/_manifest.yaml",
+                "verification_dir": "verification",
+                "dispatch_policy": "capability-keyed",
+                "assignments": capability_assignments,
             }
         },
     )
@@ -86,7 +89,7 @@ def test_run_phase4_start_writes_dispatch_plan_and_request(tmp_path: Path):
 
     assert result["status"] == "ready_for_orchestrator"
     assert result["decision_log_version"] == 1
-    assert result["agent_count"] == 2
+    assert result["capability_count"] == 2
 
     paths = build_paths(artifacts_root)
     plan_path = paths.executions_dir / "v1" / "dispatch_plan.yaml"
@@ -95,8 +98,9 @@ def test_run_phase4_start_writes_dispatch_plan_and_request(tmp_path: Path):
     assert plan["decision_log_version"] == 1
     assert plan["project_type"] == "hybrid"
     assignments = plan["assignments"]
-    assert {a["agent"] for a in assignments} == {"alpha-agent", "beta-agent"}
+    assert {a["capability"] for a in assignments} == {"req-001-alpha", "req-002-beta"}
     for a in assignments:
+        assert a["assigned_agent"] == "planner"
         assert a["status"] == "pending"
         assert "expected_work_dir" in a
 
@@ -116,16 +120,16 @@ def test_run_phase4_start_creates_work_dir(tmp_path: Path):
     assert work_dir.is_dir()
 
 
-def test_run_phase4_start_handles_empty_agent_registry(tmp_path: Path):
+def test_run_phase4_start_handles_empty_dispatch_hints(tmp_path: Path):
     workspace_root, artifacts_root = _bootstrap_scaffold(
-        tmp_path, agent_entries=[]
+        tmp_path, capability_assignments=[]
     )
 
     result = run_phase4_start(
         artifacts_root=artifacts_root, workspace_root=workspace_root
     )
 
-    assert result["agent_count"] == 0
+    assert result["capability_count"] == 0
     paths = build_paths(artifacts_root)
     plan = load_yaml(paths.executions_dir / "v1" / "dispatch_plan.yaml")["dispatch_plan"]
     assert plan["assignments"] == []

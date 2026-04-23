@@ -1475,6 +1475,93 @@ def _decision_log_vocabulary(decision_log: dict[str, Any]) -> set[str]:
     return vocab
 
 
+@register("validate_capability_coverage")
+def validate_capability_coverage(payload: dict[str, Any]) -> dict[str, Any]:
+    """PreToolUse/Bash on `validate-stage --stage 3`.
+
+    Enforces that every REQ-NNN in the latest decision log is covered by
+    >=1 capability in the latest scaffold. Mirrors check #8 of the
+    validator so the stage-3 gate fires even if the operator skips
+    validate-stage.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+
+    if os.environ.get("META_COMPILER_SKIP_HOOK") == "1":
+        return {"permissionDecision": "allow"}
+
+    sub = _parse_meta_compiler_command(cmd)
+    if sub != "validate-stage":
+        return {"permissionDecision": "allow"}
+    if "--stage" not in cmd:
+        return {"permissionDecision": "allow"}
+    # Only fire for --stage 3 (exact match).
+    if not _hook_re.search(r"--stage\s+3(?:\s|$)", cmd):
+        return {"permissionDecision": "allow"}
+
+    # Find latest scaffold version.
+    scaffolds_dir = ws / "workspace-artifacts" / "scaffolds"
+    if not scaffolds_dir.exists():
+        return {"permissionDecision": "allow"}
+    scaffold_versions: list[tuple[int, Path]] = []
+    for entry in scaffolds_dir.iterdir():
+        match = _hook_re.match(r"v(\d+)$", entry.name)
+        if match and entry.is_dir():
+            scaffold_versions.append((int(match.group(1)), entry))
+    if not scaffold_versions:
+        return {"permissionDecision": "allow"}
+    scaffold_versions.sort(key=lambda x: x[0])
+    latest_version, scaffold_root = scaffold_versions[-1]
+
+    cap_path = scaffold_root / "capabilities.yaml"
+    if not cap_path.exists():
+        return {"permissionDecision": "allow"}
+    dl_path = ws / "workspace-artifacts" / "decision-logs" / f"decision_log_v{latest_version}.yaml"
+    if not dl_path.exists():
+        return {"permissionDecision": "allow"}
+
+    try:
+        caps_data = _parse_yaml_subset(cap_path.read_text(encoding="utf-8"))
+        dl_data = _parse_yaml_subset(dl_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"permissionDecision": "allow"}
+
+    capabilities = ((caps_data or {}).get("capability_graph") or {}).get("capabilities") or []
+    covered: set[str] = set()
+    for cap in capabilities:
+        if isinstance(cap, dict):
+            for rid in cap.get("requirement_ids") or []:
+                covered.add(str(rid))
+    requirements = ((dl_data or {}).get("decision_log") or {}).get("requirements") or []
+    missing: list[str] = []
+    for row in requirements:
+        if isinstance(row, dict):
+            rid = str(row.get("id") or "")
+            if rid and rid not in covered:
+                missing.append(rid)
+
+    if not missing:
+        audit(ws, "validate_capability_coverage", "PreToolUse", "allow",
+              extra={"capability_count": len(capabilities)})
+        return {"permissionDecision": "allow"}
+
+    line = audit(ws, "validate_capability_coverage", "PreToolUse", "deny",
+                 reason="uncovered_requirements",
+                 extra={"missing": missing[:12]})
+    return {
+        "permissionDecision": "deny",
+        "reason": (
+            f"Stage 3 capability coverage gate: {len(missing)} requirement(s) "
+            f"uncovered: {', '.join(missing[:6])}."
+        ),
+        "remediation": (
+            "Every decision-log requirement must map to >=1 capability. "
+            "Add citations to the uncovered REQ rows and re-run compile-capabilities."
+        ),
+        "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+    }
+
+
 @register("gate_capability_compile")
 def gate_capability_compile(payload: dict[str, Any]) -> dict[str, Any]:
     """PreToolUse/Bash precondition for `compile-capabilities` and `scaffold`.

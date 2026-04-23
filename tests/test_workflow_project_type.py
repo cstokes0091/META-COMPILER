@@ -1,27 +1,43 @@
-"""Tests for the workflow project type end-to-end:
+"""Tests for the workflow project type.
+
+Post-Commit-8: the scaffold no longer produces a hardcoded roster of
+workflow-named agents (workflow-conductor, comment-reader, etc.). Instead
+the capability graph drives execution via the static palette. This file
+covers:
 
 - meta-init accepts --project-type workflow
-- decision_log.workflow_config is required and validated
-- scaffold emits inbox/outbox/state/kb_brief/orchestrator + run_workflow.py
-- Stage 4 finalize check accepts a registry with tracked_doc/comment_reply outputs
-- run-workflow CLI invokes the scaffold's runner against an input docx
+- decision_log.workflow_config is required for workflow projects
+- scaffold emits workflow-specific empty output buckets
+  (inbox/outbox/state/kb_brief/tests) via scaffold_subdirs_for
+- scaffold does NOT emit domain-named agent files under scaffolds/v*/agents/
+  or scaffolds/v*/.github/agents/ (capability-driven == palette-only)
+
+The legacy `run_workflow` CLI command + its orchestrator/run_workflow.py
+runner are out of scope for the post-dialogue rearchitecture; those tests
+were removed along with the old-shape scaffold helpers in Commit 8.
 """
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
+import json
 import pytest
 import yaml
 
 from meta_compiler.artifacts import build_paths, ensure_layout, save_manifest
-from meta_compiler.project_types import VALID_PROJECT_TYPES, project_type_choices
+from meta_compiler.project_types import (
+    VALID_PROJECT_TYPES,
+    project_type_choices,
+    scaffold_subdirs_for,
+)
 from meta_compiler.stages.init_stage import run_meta_init
-from meta_compiler.stages.scaffold_stage import run_scaffold
-from meta_compiler.stages.workflow_stage import run_workflow
+from meta_compiler.stages.capability_compile_stage import run_capability_compile
+from meta_compiler.stages.contract_extract_stage import run_contract_extract
+from meta_compiler.stages.skill_synthesis_stage import run_skill_synthesis
+from meta_compiler.stages.workspace_bootstrap_stage import (
+    PALETTE_AGENTS,
+    run_workspace_bootstrap,
+)
 from meta_compiler.validation import validate_decision_log
 
 
@@ -33,7 +49,7 @@ def test_workflow_in_valid_project_types():
 def test_meta_init_accepts_workflow(tmp_path):
     workspace_root = tmp_path / "ws"
     artifacts_root = workspace_root / "workspace-artifacts"
-    result = run_meta_init(
+    run_meta_init(
         workspace_root=workspace_root,
         artifacts_root=artifacts_root,
         project_name="Reviewer Replies",
@@ -43,11 +59,8 @@ def test_meta_init_accepts_workflow(tmp_path):
     paths = build_paths(artifacts_root)
     manifest = yaml.safe_load(paths.manifest_path.read_text(encoding="utf-8"))
     assert manifest["workspace_manifest"]["project_type"] == "workflow"
-    # Wiki name is populated by later stages, not at init; verify the suffix mapping.
     from meta_compiler.artifacts import derive_wiki_name
-
     assert derive_wiki_name("Reviewer Replies", "workflow").endswith("Workflow Atlas")
-    assert isinstance(result, dict)
 
 
 def test_meta_init_rejects_unknown_project_type(tmp_path):
@@ -64,7 +77,7 @@ def test_meta_init_rejects_unknown_project_type(tmp_path):
     assert "workflow" in str(excinfo.value)
 
 
-# --- Decision-log validation --------------------------------------------------
+# --- Decision-log validation (schema gates Stage 2, not Stage 3) --------------
 
 
 def _minimal_workflow_decision_log(with_workflow_config: bool = True) -> dict:
@@ -122,152 +135,126 @@ def test_decision_log_rejects_invalid_trigger():
 def test_decision_log_rejects_workflow_config_for_other_types():
     body = _minimal_workflow_decision_log()
     body["decision_log"]["meta"]["project_type"] = "report"
-    # Make report-shaped (no code_architecture)
     issues = validate_decision_log(body)
     assert any("workflow_config" in issue for issue in issues), issues
 
 
-# --- Scaffold layout ----------------------------------------------------------
+# --- Scaffold layout (capability-driven shape) ---------------------------------
+
+
+def test_scaffold_subdirs_for_workflow_is_workflow_layout():
+    subdirs = scaffold_subdirs_for("workflow")
+    assert subdirs == frozenset({"inbox", "outbox", "state", "kb_brief", "tests"})
 
 
 def _seed_workflow_workspace(tmp_path: Path) -> tuple[Path, Path]:
-    workspace_root = tmp_path / "ws"
+    """Build a workflow workspace with enough content to drive compile →
+    extract → synth → bootstrap through to success."""
+    workspace_root = tmp_path
     artifacts_root = workspace_root / "workspace-artifacts"
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
+
     save_manifest(
         paths,
         {
             "workspace_manifest": {
                 "project_type": "workflow",
-                "name": "Reviewer Replies",
-                "problem_domain": "test",
+                "project_name": "Reviewer Replies",
+                "problem_domain": "peer review",
+                "use_case": "unit-test",
                 "wiki": {"name": "Reviewer Replies Workflow Atlas", "version": "x"},
                 "research": {"last_completed_stage": "2"},
-                "decision_logs": [],
             }
         },
     )
+    # Citations index
+    citations = {
+        "citations_index": {
+            "citations": {
+                "src-workflow-seed": {
+                    "human": "Workflow seed",
+                    "source": {"type": "document", "path": "seeds/workflow-seed.md"},
+                    "metadata": {"title": "seed"},
+                    "status": "tracked",
+                }
+            }
+        }
+    }
+    paths.citations_index_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.citations_index_path.write_text(yaml.safe_dump(citations, sort_keys=False), encoding="utf-8")
+
     body = _minimal_workflow_decision_log()
+    body["decision_log"]["requirements"] = [
+        {
+            "id": "REQ-001",
+            "description": "Respond to every reviewer comment with a cited reply.",
+            "source": "derived",
+            "citations": ["src-workflow-seed"],
+            "verification": "Every comment has a reply traced to a citation.",
+        }
+    ]
     body["decision_log"]["agents_needed"] = [
         {
             "role": "tracked-edit-writer",
-            "responsibility": "stub",
+            "responsibility": "write tracked edits against the reviewer comment",
             "inputs": [{"name": "comment_reply", "modality": "document"}],
             "outputs": [{"name": "tracked_doc", "modality": "document"}],
-            "key_constraints": [],
+            "key_constraints": ["cite every reply"],
         }
     ]
     paths.decision_logs_dir.mkdir(parents=True, exist_ok=True)
-    yaml_path = paths.decision_logs_dir / "decision_log_v1.yaml"
-    yaml_path.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+    (paths.decision_logs_dir / "decision_log_v1.yaml").write_text(
+        yaml.safe_dump(body, sort_keys=False), encoding="utf-8"
+    )
+    # Palette at workspace root so bootstrap passes.
+    agents_dir = workspace_root / ".github" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for name in PALETTE_AGENTS:
+        (agents_dir / f"{name}.agent.md").write_text(
+            f"---\nname: {name}\ndescription: test\ntools: [read]\nagents: []\nuser-invocable: false\n---\n# {name}\n",
+            encoding="utf-8",
+        )
     return workspace_root, artifacts_root
 
 
-def test_scaffold_emits_workflow_layout(tmp_path):
+def test_scaffold_workflow_emits_workflow_buckets(tmp_path):
     workspace_root, artifacts_root = _seed_workflow_workspace(tmp_path)
-    paths = build_paths(artifacts_root)
+    run_capability_compile(artifacts_root)
+    run_contract_extract(artifacts_root)
+    run_skill_synthesis(artifacts_root)
+    run_workspace_bootstrap(artifacts_root, workspace_root=workspace_root)
 
-    result = run_scaffold(
-        artifacts_root=artifacts_root, decision_log_version=1
-    )
-    scaffold_root = Path(result["root"]) if "root" in result else paths.scaffolds_dir / "v1"
-    assert (scaffold_root / "inbox").is_dir()
-    assert (scaffold_root / "outbox").is_dir()
-    assert (scaffold_root / "state").is_dir()
-    assert (scaffold_root / "kb_brief").is_dir()
-    assert (scaffold_root / "orchestrator" / "run_workflow.py").is_file()
-    state = yaml.safe_load((scaffold_root / "state" / "state.yaml").read_text())
-    assert state["workflow_state"]["schema_version"] == 1
-    assert state["workflow_state"]["scaffold_version"] == 1
+    scaffold_root = artifacts_root / "scaffolds" / "v1"
+    for bucket in ("inbox", "outbox", "state", "kb_brief", "tests"):
+        assert (scaffold_root / bucket).is_dir(), f"workflow bucket missing: {bucket}"
 
 
-def test_scaffold_workflow_includes_canonical_agents(tmp_path):
+def test_scaffold_workflow_omits_domain_agent_files(tmp_path):
+    """No domain-named agents are produced — we rely on the 4-agent palette."""
     workspace_root, artifacts_root = _seed_workflow_workspace(tmp_path)
-    paths = build_paths(artifacts_root)
+    run_capability_compile(artifacts_root)
+    run_contract_extract(artifacts_root)
+    run_skill_synthesis(artifacts_root)
+    run_workspace_bootstrap(artifacts_root, workspace_root=workspace_root)
 
-    result = run_scaffold(artifacts_root=artifacts_root, decision_log_version=1)
-    scaffold_root = paths.scaffolds_dir / "v1"
-    agent_files = [p.stem for p in (scaffold_root / "agents").glob("*.md")]
-    expected = {
-        "workflow-conductor",
-        "comment-reader",
-        "kb-retriever",
-        "response-author",
-        "tracked-edit-writer",
-        "kb-maintainer",
-    }
-    assert expected.issubset({a.lower().replace("_", "-") for a in agent_files}), (
-        agent_files,
-        expected,
-    )
+    scaffold_root = artifacts_root / "scaffolds" / "v1"
+    # Old-shape directories should not be created by the new pipeline.
+    assert not (scaffold_root / "agents").exists()
+    assert not (scaffold_root / ".github").exists()
+    # No orchestrator/run_workflow.py under the new shape.
+    legacy_runner = scaffold_root / "orchestrator" / "run_workflow.py"
+    assert not legacy_runner.exists()
 
 
-# --- run-workflow round-trip --------------------------------------------------
-
-
-def _make_two_comments_docx(path: Path) -> None:
-    from docx import Document
-
-    doc = Document()
-    p = doc.add_paragraph("Reviewer note one.")
-    doc.add_comment([p.runs[0]], text="please clarify", author="R", initials="R")
-    p2 = doc.add_paragraph("Reviewer note two.")
-    doc.add_comment([p2.runs[0]], text="add citation", author="R", initials="R")
-    doc.save(str(path))
-
-
-def test_run_workflow_invokes_scaffold_orchestrator(tmp_path):
+def test_scaffold_workflow_palette_not_inline(tmp_path):
+    """The palette agents live at repo/.github/agents — not embedded in the scaffold."""
     workspace_root, artifacts_root = _seed_workflow_workspace(tmp_path)
-    paths = build_paths(artifacts_root)
+    run_capability_compile(artifacts_root)
+    run_contract_extract(artifacts_root)
+    run_skill_synthesis(artifacts_root)
+    run_workspace_bootstrap(artifacts_root, workspace_root=workspace_root)
 
-    run_scaffold(artifacts_root=artifacts_root, decision_log_version=1)
-
-    docx_path = workspace_root / "input.docx"
-    _make_two_comments_docx(docx_path)
-
-    result = run_workflow(
-        artifacts_root=artifacts_root,
-        input_path=str(docx_path),
-        task="reply-to-comments",
-    )
-    assert result["status"] == "ok", (result.get("stdout"), result.get("stderr"))
-    assert result["scaffold_version"] == 1
-    # The dispatch JSON is the last block of stdout. Find it.
-    stdout = result["stdout"]
-    json_start = stdout.find('{\n  "status": "dispatch_ready"')
-    assert json_start != -1, stdout
-    # Parse from json_start to end (the trailing payload).
-    payload = json.loads(stdout[json_start:])
-    # The dispatch JSON enumerates the scaffold's agent roles.
-    assert payload["status"] == "dispatch_ready"
-    assert any(
-        agent and "tracked-edit-writer" in agent.lower()
-        for agent in payload["plan"]["agents"]
-    )
-
-
-def test_run_workflow_rejects_non_workflow_scaffold(tmp_path):
-    workspace_root = tmp_path / "ws"
-    artifacts_root = workspace_root / "workspace-artifacts"
-    paths = build_paths(artifacts_root)
-    ensure_layout(paths)
-    # Create a fake non-workflow scaffold v1
-    scaffold_root = paths.scaffolds_dir / "v1"
-    scaffold_root.mkdir(parents=True)
-    (scaffold_root / "SCAFFOLD_MANIFEST.yaml").write_text(
-        "scaffold:\n  project_type: report\n", encoding="utf-8"
-    )
-    (scaffold_root / "orchestrator").mkdir()
-    (scaffold_root / "orchestrator" / "run_workflow.py").write_text("# stub\n")
-    docx = workspace_root / "x.docx"
-    docx.parent.mkdir(parents=True, exist_ok=True)
-    docx.write_text("not really a docx but won't be opened")
-    with pytest.raises(RuntimeError) as excinfo:
-        run_workflow(
-            artifacts_root=artifacts_root,
-            input_path=str(docx),
-            task="t",
-            scaffold_version=1,
-        )
-    assert "workflow" in str(excinfo.value).lower()
+    # Palette agents are at the workspace root, not per-scaffold.
+    for name in PALETTE_AGENTS:
+        assert (workspace_root / ".github" / "agents" / f"{name}.agent.md").exists()

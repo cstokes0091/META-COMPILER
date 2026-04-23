@@ -427,6 +427,81 @@ def test_validate_skill_finding_citations_bootstrap_v1_allows_citation_id(tmp_pa
     assert r.get("permissionDecision") == "allow", r
 
 
+def _write_capability_graph_fixture(artifacts: Path, *, covered_reqs: list[str], dl_reqs: list[str]) -> None:
+    scaffold_dir = artifacts / "scaffolds" / "v1"
+    scaffold_dir.mkdir(parents=True, exist_ok=True)
+    caps = "\n".join(
+        f"    - name: cap-{rid}\n"
+        f"      description: Test capability for {rid}.\n"
+        f"      when_to_use:\n        - validate schema\n"
+        f"      required_finding_ids:\n        - src-x\n"
+        f"      io_contract_ref: contract-x\n"
+        f"      verification_type: unit_test\n"
+        f"      verification_hook_ids:\n        - ver-001\n"
+        f"      requirement_ids:\n        - {rid}\n"
+        f"      citation_ids:\n        - src-x\n"
+        f"      composes: []"
+        for rid in covered_reqs
+    )
+    (scaffold_dir / "capabilities.yaml").write_text(
+        f"capability_graph:\n"
+        f"  generated_at: 2026-04-22T00:00:00+00:00\n"
+        f"  decision_log_version: 1\n"
+        f"  project_type: hybrid\n"
+        f"  capabilities:\n{caps if caps else '    []'}\n",
+        encoding="utf-8",
+    )
+    dl_rows = "\n".join(
+        f"    - id: {rid}\n      description: stub\n      citations:\n        - src-x"
+        for rid in dl_reqs
+    )
+    (artifacts / "decision-logs").mkdir(parents=True, exist_ok=True)
+    (artifacts / "decision-logs" / "decision_log_v1.yaml").write_text(
+        f"decision_log:\n  meta:\n    version: 1\n  requirements:\n{dl_rows}\n",
+        encoding="utf-8",
+    )
+
+
+def test_validate_capability_coverage_accepts_full_coverage(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    _write_capability_graph_fixture(
+        artifacts,
+        covered_reqs=["REQ-001", "REQ-002"],
+        dl_reqs=["REQ-001", "REQ-002"],
+    )
+    r = _invoke(
+        "validate_capability_coverage",
+        _bash("meta-compiler validate-stage --stage 3"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow"
+
+
+def test_validate_capability_coverage_denies_uncovered_req(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    _write_capability_graph_fixture(
+        artifacts,
+        covered_reqs=["REQ-001"],
+        dl_reqs=["REQ-001", "REQ-999"],
+    )
+    r = _invoke(
+        "validate_capability_coverage",
+        _bash("meta-compiler validate-stage --stage 3"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "REQ-999" in (r.get("reason") or "")
+
+
+def test_validate_capability_coverage_skips_unrelated_commands(tmp_path):
+    r = _invoke(
+        "validate_capability_coverage",
+        _bash("meta-compiler scaffold"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow"
+
+
 def test_gate_artifact_writes_blocks_contract_yaml(tmp_path):
     artifacts = tmp_path / "workspace-artifacts"
     _write_hybrid_manifest(artifacts, stage="2")
