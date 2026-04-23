@@ -319,6 +319,7 @@ STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
     "scaffold": {"allowed_prior": ["2"], "sets": "3"},
     "compile-capabilities": {"allowed_prior": ["2", "3"], "sets": None},
     "extract-contracts": {"allowed_prior": ["2", "3"], "sets": None},
+    "synthesize-skills": {"allowed_prior": ["2", "3"], "sets": None},
     "phase4-finalize": {"allowed_prior": ["3"], "sets": "4"},
     "wiki-update": {"allowed_prior": ["1a", "1b", "1c", "2"], "sets": None},
     "track-seeds": {"allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
@@ -1639,6 +1640,169 @@ def validate_capability_schema(payload: dict[str, Any]) -> dict[str, Any]:
 
     audit(ws, "validate_capability_schema", "PostToolUse", "allow",
           extra={"file_path": rel, "capability_count": len(caps)})
+    return {"permissionDecision": "allow"}
+
+
+def _available_finding_ids(ws: Path) -> set[str]:
+    """Return every finding_id present under wiki/findings/ (citation_id#hash[:12])."""
+    findings_dir = ws / "workspace-artifacts" / "wiki" / "findings"
+    out: set[str] = set()
+    if not findings_dir.exists():
+        return out
+    for json_path in sorted(findings_dir.glob("*.json")):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        cid = str(data.get("citation_id") or data.get("source_id") or "").strip()
+        file_hash = str(data.get("file_hash") or "").strip()
+        if cid and file_hash:
+            out.add(f"{cid}#{file_hash[:12]}")
+        # Legacy: each row under `findings[]` may have its own citation_id.
+        for row in data.get("findings") or []:
+            if isinstance(row, dict):
+                row_cid = str(row.get("citation_id") or cid).strip()
+                row_hash = str(row.get("file_hash") or file_hash or "legacy").strip()
+                if row_cid:
+                    out.add(f"{row_cid}#{row_hash[:12] if row_hash else 'legacy'}")
+    return out
+
+
+def _available_citation_ids(ws: Path) -> set[str]:
+    idx_path = ws / "workspace-artifacts" / "wiki" / "citations" / "index.yaml"
+    if not idx_path.exists():
+        return set()
+    try:
+        data = _parse_yaml_subset(idx_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return set()
+    cits = (data.get("citations_index") or {}).get("citations") or {}
+    if isinstance(cits, dict):
+        return set(cits.keys())
+    return set()
+
+
+@register("validate_skill_finding_citations")
+def validate_skill_finding_citations(payload: dict[str, Any]) -> dict[str, Any]:
+    """PostToolUse/Write on SKILL.md or capabilities.yaml.
+
+    Verifies every finding_id referenced in frontmatter (or in
+    capabilities[*].required_finding_ids) resolves in wiki/findings/.
+    Bootstrap exception: if wiki/findings/ is empty AND the file targets
+    decision_log_version == 1, allow finding_ids that resolve against
+    wiki/citations/index.yaml.
+    """
+    ws = resolve_workspace_root(payload)
+    fp_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not fp_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(fp_str).resolve()
+        rel = fp.relative_to(ws).as_posix()
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+
+    is_capabilities = bool(_hook_re.match(
+        r"^workspace-artifacts/scaffolds/v\d+/capabilities\.yaml$", rel
+    ))
+    is_skill = bool(_hook_re.match(
+        r"^workspace-artifacts/scaffolds/v\d+/skills/[^/]+/SKILL\.md$", rel
+    ))
+    if not is_capabilities and not is_skill:
+        return {"permissionDecision": "allow"}
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "validate_skill_finding_citations", "PostToolUse", "deny",
+                     reason=msg, extra={"file_path": rel})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": (
+                "Ensure every referenced finding_id exists in wiki/findings/ "
+                "(finding_id = citation_id#file_hash[:12]), or add the citation to "
+                "wiki/citations/index.yaml for v1 bootstrap."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    try:
+        text = fp.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _deny(f"{fp.name}: unreadable ({exc})")
+
+    referenced: list[tuple[str, str]] = []  # (owner_label, finding_id)
+    target_version: int | None = None
+    if is_capabilities:
+        try:
+            data = _parse_yaml_subset(text)
+        except ValueError as exc:
+            return _deny(f"{fp.name}: unparseable YAML ({exc})")
+        graph = (data or {}).get("capability_graph")
+        if not isinstance(graph, dict):
+            return {"permissionDecision": "allow"}  # schema hook will flag
+        target_version = graph.get("decision_log_version")
+        for cap in graph.get("capabilities") or []:
+            if not isinstance(cap, dict):
+                continue
+            name = str(cap.get("name") or "<unknown>")
+            for fid in cap.get("required_finding_ids") or []:
+                referenced.append((name, str(fid)))
+    else:
+        if not text.startswith("---"):
+            return {"permissionDecision": "allow"}
+        _, _, remainder = text.partition("---")
+        fm_text, _, _ = remainder.partition("---")
+        try:
+            fm = _parse_yaml_subset(fm_text)
+        except ValueError as exc:
+            return _deny(f"{fp.name}: unparseable frontmatter ({exc})")
+        if not isinstance(fm, dict):
+            return _deny(f"{fp.name}: frontmatter must be a mapping")
+        name = str(fm.get("name") or fp.parent.name)
+        for fid in fm.get("required_finding_ids") or []:
+            referenced.append((name, str(fid)))
+        for finding in fm.get("findings") or []:
+            if isinstance(finding, dict):
+                fid = str(finding.get("finding_id") or "")
+                if fid:
+                    referenced.append((name, fid))
+        # Discover target version from sibling capabilities.yaml.
+        if target_version is None:
+            cap_yaml = fp.parent.parent.parent / "capabilities.yaml"
+            if cap_yaml.exists():
+                try:
+                    sib = _parse_yaml_subset(cap_yaml.read_text(encoding="utf-8"))
+                    target_version = (sib.get("capability_graph") or {}).get("decision_log_version")
+                except (OSError, ValueError):
+                    pass
+
+    known_findings = _available_finding_ids(ws)
+    bootstrap_allowed = not known_findings and (
+        isinstance(target_version, int) and target_version == 1
+    )
+    known_citations = _available_citation_ids(ws) if bootstrap_allowed else set()
+
+    unresolved: list[str] = []
+    for owner, fid in referenced:
+        if fid in known_findings:
+            continue
+        if bootstrap_allowed and fid in known_citations:
+            continue
+        # Also allow if the citation-id prefix of a finding_id matches a known
+        # citation and we're in bootstrap mode.
+        if bootstrap_allowed and "#" in fid:
+            cite_part = fid.split("#", 1)[0]
+            if cite_part in known_citations:
+                continue
+        unresolved.append(f"{owner}:{fid}")
+
+    if unresolved:
+        return _deny(f"{fp.name}: unresolved finding_ids — " + "; ".join(unresolved[:8]))
+
+    audit(ws, "validate_skill_finding_citations", "PostToolUse", "allow",
+          extra={"file_path": rel, "referenced_count": len(referenced)})
     return {"permissionDecision": "allow"}
 
 

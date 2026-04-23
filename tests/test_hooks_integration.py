@@ -316,6 +316,117 @@ def test_gate_artifact_writes_allows_override_env(tmp_path, monkeypatch):
     assert r.get("permissionDecision") == "allow"
 
 
+def _write_skill_md(scaffold_dir: Path, *, capability_name: str, finding_ids: list[str]) -> Path:
+    skill_dir = scaffold_dir / "skills" / capability_name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    path = skill_dir / "SKILL.md"
+    fm_fids = "\n".join(f"  - {fid}" for fid in finding_ids)
+    fm_findings = "\n".join(
+        f"  - finding_id: {fid}\n    citation_id: {fid.split('#')[0]}\n    seed_path: seeds/x.md\n    locator: {{}}"
+        for fid in finding_ids
+    )
+    path.write_text(
+        f"""---
+name: {capability_name}
+description: test skill
+triggers:
+  - validate decision log schema
+required_finding_ids:
+{fm_fids}
+contract_refs:
+  - contract-test
+verification_hooks:
+  - ver-test-001
+findings:
+{fm_findings}
+---
+
+# Skill: test
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_validate_skill_finding_citations_accepts_known_finding(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    # Write a real finding so the hook sees known IDs.
+    findings = artifacts / "wiki" / "findings"
+    findings.mkdir(parents=True)
+    (findings / "src-decision-seed.json").write_text(
+        json.dumps({
+            "citation_id": "src-decision-seed",
+            "seed_path": "seeds/decision-seed.md",
+            "file_hash": "hashABCDEFGHIJ",
+            "concepts": [],
+            "quotes": [],
+            "claims": [],
+        }),
+        encoding="utf-8",
+    )
+    _write_capabilities_yaml(
+        artifacts / "scaffolds" / "v1",
+        triggers=["validate decision log schema"],
+    )  # we won't use this, but keeping scaffold structure present
+    path = _write_skill_md(
+        artifacts / "scaffolds" / "v1",
+        capability_name="req-001",
+        finding_ids=["src-decision-seed#hashABCDEFGH"],
+    )
+    r = _invoke(
+        "validate_skill_finding_citations",
+        {"hookEventName": "PostToolUse", "tool_input": {"file_path": str(path)}},
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow", r
+
+
+def test_validate_skill_finding_citations_denies_unknown_finding(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    path = _write_skill_md(
+        artifacts / "scaffolds" / "v1",
+        capability_name="req-001",
+        finding_ids=["src-fake#deadbeefdead"],
+    )
+    r = _invoke(
+        "validate_skill_finding_citations",
+        {"hookEventName": "PostToolUse", "tool_input": {"file_path": str(path)}},
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "unresolved" in (r.get("reason") or "")
+
+
+def test_validate_skill_finding_citations_bootstrap_v1_allows_citation_id(tmp_path):
+    """v1 bootstrap: when findings are empty, citation IDs in the SKILL resolve
+    against wiki/citations/index.yaml."""
+    artifacts = tmp_path / "workspace-artifacts"
+    _write(
+        artifacts / "wiki" / "citations" / "index.yaml",
+        "citations_index:\n"
+        "  citations:\n"
+        "    src-decision-seed:\n"
+        "      human: decision seed\n"
+        "      source:\n        type: document\n        path: seeds/x.md\n",
+    )
+    # Sibling capabilities.yaml with decision_log_version: 1
+    _write_capabilities_yaml(
+        artifacts / "scaffolds" / "v1",
+        triggers=["validate decision log schema"],
+    )
+    path = _write_skill_md(
+        artifacts / "scaffolds" / "v1",
+        capability_name="req-001",
+        finding_ids=["src-decision-seed"],
+    )
+    r = _invoke(
+        "validate_skill_finding_citations",
+        {"hookEventName": "PostToolUse", "tool_input": {"file_path": str(path)}},
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow", r
+
+
 def test_gate_artifact_writes_blocks_contract_yaml(tmp_path):
     artifacts = tmp_path / "workspace-artifacts"
     _write_hybrid_manifest(artifacts, stage="2")

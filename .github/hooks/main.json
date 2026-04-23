@@ -121,6 +121,11 @@
           },
           {
             "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
             "timeout": 10
           }
@@ -132,6 +137,11 @@
           {
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_schema",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
             "timeout": 10
           },
           {

@@ -35,6 +35,7 @@ from .stages.migrate_decision_log_stage import (
 from .stages.capability_compile_stage import run_capability_compile
 from .stages.contract_extract_stage import run_contract_extract
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
+from .stages.skill_synthesis_stage import run_skill_synthesis
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
@@ -365,6 +366,21 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Decision log version to extract contracts for (default: latest)",
+    )
+
+    synth_skills_parser = subparsers.add_parser(
+        "synthesize-skills",
+        help=(
+            "Stage 3.3: render scaffolds/v{N}/skills/{name}/SKILL.md files + INDEX.md from "
+            "the capability graph + contract library + findings."
+        ),
+    )
+    _add_common_paths(synth_skills_parser)
+    synth_skills_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to synthesize skills for (default: latest)",
     )
 
     phase4_parser = subparsers.add_parser(
@@ -798,6 +814,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "extract-contracts":
             result = run_contract_extract(
+                artifacts_root=artifacts_root,
+                decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "synthesize-skills":
+            result = run_skill_synthesis(
                 artifacts_root=artifacts_root,
                 decision_log_version=args.decision_log_version,
             )
