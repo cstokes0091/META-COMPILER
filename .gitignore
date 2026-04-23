@@ -7,3 +7,4 @@ __pycache__/
 
 # Meta-compiler hook kill-switch (local only)
 .github/hooks/overrides.json
+.claude/settings.local.json
