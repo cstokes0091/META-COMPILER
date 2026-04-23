@@ -320,6 +320,7 @@ STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
     "compile-capabilities": {"allowed_prior": ["2", "3"], "sets": None},
     "extract-contracts": {"allowed_prior": ["2", "3"], "sets": None},
     "synthesize-skills": {"allowed_prior": ["2", "3"], "sets": None},
+    "workspace-bootstrap": {"allowed_prior": ["2", "3"], "sets": "3"},
     "phase4-finalize": {"allowed_prior": ["3"], "sets": "4"},
     "wiki-update": {"allowed_prior": ["1a", "1b", "1c", "2"], "sets": None},
     "track-seeds": {"allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},

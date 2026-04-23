@@ -36,6 +36,7 @@ from .stages.capability_compile_stage import run_capability_compile
 from .stages.contract_extract_stage import run_contract_extract
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
 from .stages.skill_synthesis_stage import run_skill_synthesis
+from .stages.workspace_bootstrap_stage import run_workspace_bootstrap
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
 from .stages.scaffold_stage import run_scaffold
@@ -381,6 +382,21 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Decision log version to synthesize skills for (default: latest)",
+    )
+
+    bootstrap_parser = subparsers.add_parser(
+        "workspace-bootstrap",
+        help=(
+            "Stage 3.4: wire the static agent palette, verification harness, "
+            "execution/dispatch manifests, and output buckets."
+        ),
+    )
+    _add_common_paths(bootstrap_parser)
+    bootstrap_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to bootstrap (default: latest)",
     )
 
     phase4_parser = subparsers.add_parser(
@@ -820,6 +836,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "synthesize-skills":
             result = run_skill_synthesis(
                 artifacts_root=artifacts_root,
+                decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "workspace-bootstrap":
+            result = run_workspace_bootstrap(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
                 decision_log_version=args.decision_log_version,
             )
         elif args.command == "phase4-finalize":

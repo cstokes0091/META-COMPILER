@@ -25,13 +25,14 @@ WIKI_NAME_SUFFIX: dict[str, str] = {
     "workflow": "Workflow Atlas",
 }
 
-# Stage 4 registry checks: the canonical agent role kinds each project type
-# must include at least one of. Stage 4 finalize raises if missing.
-MIN_OUTPUT_KINDS_BY_TYPE: dict[str, frozenset[str]] = {
-    "algorithm": frozenset({"code"}),
-    "report": frozenset({"document"}),
-    "hybrid": frozenset({"code", "document"}),
-    "workflow": frozenset({"tracked_doc", "comment_reply"}),
+# Empty output buckets that Stage 3 creates under scaffolds/v{N}/ per project
+# type. Buckets stay empty at Stage 3 — Stage 4 populates them. The
+# capability graph is project-type-neutral; only the layout here depends on it.
+_SCAFFOLD_SUBDIRS: dict[str, frozenset[str]] = {
+    "algorithm": frozenset({"code", "tests"}),
+    "report": frozenset({"report", "references"}),
+    "hybrid": frozenset({"code", "tests", "report", "references"}),
+    "workflow": frozenset({"inbox", "outbox", "state", "kb_brief", "tests"}),
 }
 
 
@@ -46,3 +47,13 @@ def requires_code_architecture(project_type: str) -> bool:
 
 def requires_workflow_config(project_type: str) -> bool:
     return project_type in WORKFLOW_CONFIG_REQUIRED_PROJECT_TYPES
+
+
+def scaffold_subdirs_for(project_type: str) -> frozenset[str]:
+    """Return the set of empty output-bucket subdirectories Stage 3 creates.
+
+    Stage 4 fills these. For unknown project types (should never happen —
+    argparse clamps the choice), returns the empty set so the bootstrap
+    stage doesn't create anything speculative.
+    """
+    return _SCAFFOLD_SUBDIRS.get(project_type, frozenset())
