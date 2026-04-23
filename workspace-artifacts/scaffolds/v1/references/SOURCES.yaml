@@ -1,7 +1,0 @@
-sources:
-- citation_id: src-decision-seed
-  status: pending_lookup
-  notes: Populate metadata from citation index in downstream execution phase.
-- citation_id: src-sample-seed
-  status: pending_lookup
-  notes: Populate metadata from citation index in downstream execution phase.

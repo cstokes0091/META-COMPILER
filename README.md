@@ -185,13 +185,18 @@ meta-compiler audit-requirements
 # run-all intentionally stops at the Stage 2 preflight boundary.
 # Review decision_log_v*.yaml and requirements_audit.yaml before scaffold.
 
-# Stage 3: Scaffold
+# Stage 3: Scaffold (capability-driven, four-layer compile)
 meta-compiler scaffold
-# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md)
-# Generated scaffolds now include human-readable summaries, real .github/
-# custom agents, skills, and instructions, plus an execution contract
-# (EXECUTION_MANIFEST.yaml + orchestrator/run_stage4.py) and an initial
-# workspace-artifacts/wiki/provenance/what_i_built.md summary.
+# Thin composer that invokes:
+#   compile-capabilities -> scaffolds/v{N}/capabilities.yaml
+#   extract-contracts    -> scaffolds/v{N}/contracts/
+#   synthesize-skills    -> scaffolds/v{N}/skills/{name}/SKILL.md + INDEX.md
+#   workspace-bootstrap  -> SCAFFOLD_MANIFEST / EXECUTION_MANIFEST /
+#                           DISPATCH_HINTS, verification/{hook_id}.py +
+#                           REQ_TRACE.yaml, empty output buckets per project_type
+# No domain-named agents are generated; execution uses the static repo-level
+# .github/agents/ palette (planner, implementer, reviewer, researcher).
+# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md).
 meta-compiler validate-stage --stage 3
 
 # Stage 4: Execute + pitch
@@ -203,8 +208,9 @@ meta-compiler validate-stage --stage 4
 # Browse the wiki in a local browser window
 meta-compiler wiki-browse
 
-# Run scaffold self-tests
-pytest workspace-artifacts/scaffolds/v1/tests/ -v
+# Run scaffold verification stubs (upgraded from xfail markers by the
+# reviewer agent during Stage 4 execution)
+pytest workspace-artifacts/scaffolds/v1/verification/ -v
 
 # Validate everything
 meta-compiler validate-stage --stage all

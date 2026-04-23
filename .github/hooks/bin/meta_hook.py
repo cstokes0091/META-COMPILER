@@ -507,10 +507,17 @@ def inject_state(payload: dict[str, Any]) -> dict[str, Any]:
         "1a": "Stage 1B: run `/stage-1b-evaluators` (depth via stage-1a2-orchestrator).",
         "1b": "Stage 1C: run `/stage-1c-review` (three-reviewer debate).",
         "1c": "Stage 2: run `/stage-2-dialog` (vision elicitation).",
-        "2": "Stage 3: run `/stage-3-scaffold` (generate executor).",
+        "2": (
+            "Stage 3: run `/stage-3-scaffold` to compile capabilities.yaml, "
+            "contracts/, skills/{name}/SKILL.md, and verification/ from the "
+            "Decision Log + findings."
+        ),
         "2-dialog-started": "Stage 2 preflight complete; open the Stage 2 dialog prompt and converse.",
         "2-reentry-seeded": "Stage 2 re-entry in progress; conduct the scoped dialog, then run `meta-compiler elicit-vision --finalize`.",
-        "3": "Stage 4: run `/stage-4-finalize`.",
+        "3": (
+            "Stage 4: run `/stage-4-finalize`. The planner/implementer/reviewer "
+            "palette executes against the capability graph."
+        ),
         "4": "Pipeline complete. Use `/clean-workspace` or `/stage2-reentry` to iterate.",
     }
 

@@ -24,7 +24,7 @@ Tests:
 pytest tests/ -v                                      # Unit tests for CLI stages
 pytest tests/test_ingest_stage.py -v                  # Single test file
 pytest tests/test_review_stage.py::test_name -v       # Single test case
-pytest workspace-artifacts/scaffolds/v1/tests/ -v     # Scaffold self-tests (only exist after Stage 3)
+pytest workspace-artifacts/scaffolds/v1/verification/ -v  # Scaffold verification stubs (only exist after Stage 3)
 ```
 
 No lint/format/typecheck commands are configured in this repo. Do not introduce them unprompted.
@@ -56,8 +56,12 @@ Each stage operates in **fresh context**. Artifacts pass knowledge forward, not 
 - **Stage 1B** (`depth_stage.py`) — Schema Auditor / Adversarial Questioner / Domain Ontologist debate, producing a merged gap report.
 - **Stage 1C** (`review_stage.py`) — three fresh-context reviewers (Optimistic/Pessimistic/Pragmatic) emit PROCEED or ITERATE verdicts.
 - **Stage 2** (`elicit_stage.py` + `audit_stage.py`) — prompt-as-conductor. `elicit-vision --start` writes a brief + transcript skeleton + `precheck_request.yaml`; the `stage-2-dialog` prompt invokes `@stage2-orchestrator mode=preflight`, conducts the dialog (human + LLM), then calls `elicit-vision --finalize` which parses decision blocks from the transcript and compiles `decision_log_v{N}.yaml`. Postflight is a second `@stage2-orchestrator` invocation (fidelity audit), then `audit-requirements`. `run-all` stops after preflight — the dialog cannot happen in a CLI subprocess. Full spec at `.github/docs/stage-2-hardening.md`. **Stage 2 re-entry** follows the 6-step conductor prompt at `.github/prompts/stage2-reentry.prompt.md`; Step 0 (problem-space re-ingestion) produces `reentry_request.yaml` and is enforced by the non-overridable `gate_reentry_request` hook before any CLI fires.
-- **Stage 3** (`scaffold_stage.py`) — consumes the Decision Log **only** (not the wiki, not seeds, not findings). Produces `.github/agents/*.agent.md`, `.github/skills/*/SKILL.md`, `.github/instructions/*.instructions.md`, an `EXECUTION_MANIFEST.yaml`, and an `orchestrator/run_stage4.py`.
-- **Stage 4** (`phase4_stage.py`) — executes the scaffold-generated orchestrator; emits final deliverables and a real `.pptx` pitch deck.
+- **Stage 3** is a four-layer capability-driven compile. `scaffold_stage.py::run_scaffold` is a thin composer; the real work is in four stages:
+  1. `capability_compile_stage.py` parses the Decision Log + `wiki/findings/*.json` into `workspace-artifacts/scaffolds/v{N}/capabilities.yaml`. Each capability carries `when_to_use` triggers drawn from cited concept vocabulary, `required_finding_ids`, and `requirement_ids` so Stage 2 requirements all map back.
+  2. `contract_extract_stage.py` derives I/O contracts from `agents_needed` / `architecture` / `code_architecture.data_model` rows, dedupes shapes, writes `contracts/{id}.yaml` + `_manifest.yaml`, and rewrites capabilities with real `io_contract_ref` values. Contracts may back multiple skills.
+  3. `skill_synthesis_stage.py` renders one `skills/{capability_name}/SKILL.md` per capability plus `skills/INDEX.md`. Every `## ` section is populated from cited findings — no templated slots.
+  4. `workspace_bootstrap_stage.py` asserts the repo-level static agent palette (`planner`, `implementer`, `reviewer`, `researcher` under `.github/agents/`), emits `EXECUTION_MANIFEST.yaml`, `DISPATCH_HINTS.yaml`, `SCAFFOLD_MANIFEST.yaml`, `verification/REQ_TRACE.yaml`, one `verification/{hook_id}.py` pytest stub per capability, and empty output buckets per `project_types.scaffold_subdirs_for(project_type)`. No domain-named agents are generated anywhere.
+- **Stage 4** (`phase4_stage.py`) — the LLM ralph loop populates `workspace-artifacts/executions/v{N}/work/{capability_id}/` via the planner/implementer/reviewer palette, then `phase4-finalize --finalize` compiles the final manifest and pitch deck. Stage 4 now reads `DISPATCH_HINTS.yaml` (capability-keyed) instead of the legacy `AGENT_REGISTRY.yaml`, and the subprocess-based `orchestrator/run_stage4.py` fallback is gone.
 
 Post-scaffold commands (`stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. Semantic wiki enrichment replaces the legacy `wiki-update` command — see `concept_reconciliation_stage.py` and the §Semantic Wiki Enrichment section below.
 
@@ -93,7 +97,12 @@ workspace-artifacts/
     reviews/search/         # Reviewer-scoped external search artifacts
     provenance/what_i_built.md  # Refreshed at Stage 3 and Stage 4
   decision-logs/            # decision_log_v{N}.yaml + requirements_audit.yaml
-  scaffolds/v{N}/           # Generated project workspaces + tests/
+  scaffolds/v{N}/           # Generated project workspace: capabilities.yaml,
+                            # contracts/, skills/{name}/SKILL.md + INDEX.md,
+                            # verification/{hook_id}.py + REQ_TRACE.yaml,
+                            # SCAFFOLD_MANIFEST.yaml + EXECUTION_MANIFEST.yaml
+                            # + DISPATCH_HINTS.yaml, and empty output buckets
+                            # (code/, tests/, report/, …) per project_type.
   executions/v{N}/          # Stage 4 final outputs
   pitches/                  # Markdown + PPTX decks
   manifests/workspace_manifest.yaml
@@ -136,4 +145,4 @@ These rules are load-bearing for the system to work — do not soften them:
 - **Seeds are immutable** once tracked. Never rewrite or delete files under `workspace-artifacts/seeds/`.
 - **Citation IDs and requirement IDs must survive transformations.** Stage 3 embeds them into generated agents; do not drop or renumber them.
 - **Findings JSON is reusable infrastructure.** Keep it schema-valid. Mark gaps explicitly rather than inventing content to fill them.
-- **Stage 3 consumes the Decision Log only.** Do not pull raw wiki or seed content into scaffold output unless the Decision Log explicitly requires it.
+- **Stage 3 consumes the Decision Log plus the findings it cites.** The capability compiler, contract extractor, and skill synthesizer read `wiki/findings/*.json` and `wiki/citations/index.yaml` to populate capability triggers, contract invariants, and skill bodies from cited concept vocabulary / claim statements / quotes. Do not pull raw seed content or uncited wiki prose into scaffold output.
