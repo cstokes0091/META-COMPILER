@@ -234,10 +234,10 @@ def test_contract_reuse_dedupes_shared_shapes(tmp_path):
             (tmp_path / "scaffolds" / "v1" / "contracts" / "_manifest.yaml").read_text(encoding="utf-8")
         )["contract_manifest"]
     )
-    # Expect 2 contracts: one from the shared agent shape (dedupe) + policy.
     contract_ids = [e.contract_id for e in manifest.entries]
-    assert "contract-policy" in contract_ids
-    # Agent shapes dedupe down to 1 because both agents have the same IO shape.
+    # Agent shapes dedupe: both agents have the same IO shape, so exactly one
+    # agent contract. The test fixture has no conventions, so no policy
+    # contract is emitted.
     non_policy = [c for c in contract_ids if c != "contract-policy"]
     assert len(non_policy) == 1, f"expected shape dedup to 1 agent contract; got {contract_ids}"
 

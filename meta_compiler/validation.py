@@ -950,177 +950,236 @@ def validate_custom_instruction_file(instruction_path: Path) -> list[str]:
     return issues
 
 
+PALETTE_AGENT_NAMES: tuple[str, ...] = ("planner", "implementer", "reviewer", "researcher")
+
+
 def validate_scaffold(scaffold_root: Path) -> list[str]:
+    """Validate a post-dialogue scaffold (Commit 7 shape).
+
+    Runs 11 ordered checks against the capability-driven layout:
+      1. SCAFFOLD_MANIFEST + required top-level files.
+      2. CapabilityGraph Pydantic validation.
+      3. ContractManifest + per-contract validation.
+      4. Finding-citation integrity (with v1 bootstrap exception).
+      5. Skill <-> capability symmetry + no stub sections.
+      6. Trigger specificity.
+      7. Contract reuse (every contract referenced by >=1 capability).
+      8. Capability coverage vs Stage 2 requirements.
+      9. Verification harness presence.
+     10. Repo-level palette sanity.
+     11. Project-type-conditioned empty output buckets.
+    """
+    from .findings_loader import concept_vocabulary, load_all_findings
+    from .artifacts import build_paths
+    from .schemas import Capability, CapabilityGraph, Contract, ContractManifest, SkillFrontmatter
+
     issues: list[str] = []
     if not scaffold_root.exists():
         return [f"scaffold root missing: {scaffold_root}"]
 
-    scaffold_manifest_path = scaffold_root / "SCAFFOLD_MANIFEST.yaml"
-    project_type = None
-    scaffold_meta: dict[str, Any] = {}
+    # ---- 1. Manifest + required files ----
+    manifest_path = scaffold_root / "SCAFFOLD_MANIFEST.yaml"
+    if not manifest_path.exists():
+        return ["scaffold missing file: SCAFFOLD_MANIFEST.yaml"]
+    scaffold_manifest = load_yaml(manifest_path) or {}
+    manifest = scaffold_manifest.get("scaffold")
+    if not isinstance(manifest, dict):
+        return ["scaffold manifest missing scaffold root object"]
+    project_type = manifest.get("project_type")
+    if project_type not in VALID_PROJECT_TYPES:
+        issues.append(
+            f"scaffold manifest project_type must be one of {sorted(VALID_PROJECT_TYPES)}"
+        )
 
-    if not scaffold_manifest_path.exists():
-        issues.append("scaffold missing file: SCAFFOLD_MANIFEST.yaml")
-    else:
-        scaffold_manifest = load_yaml(scaffold_manifest_path)
-        if not isinstance(scaffold_manifest, dict):
-            issues.append("scaffold manifest must be an object")
-        else:
-            payload = scaffold_manifest.get("scaffold")
-            if not isinstance(payload, dict):
-                issues.append("scaffold manifest missing scaffold root object")
-            else:
-                scaffold_meta = payload
-                project_type = payload.get("project_type")
-                if project_type not in VALID_PROJECT_TYPES:
-                    issues.append(
-                        f"scaffold manifest project_type must be one of {sorted(VALID_PROJECT_TYPES)}"
-                    )
+    for rel in (
+        "capabilities.yaml",
+        "EXECUTION_MANIFEST.yaml",
+        "DISPATCH_HINTS.yaml",
+        "contracts/_manifest.yaml",
+        "skills/INDEX.md",
+    ):
+        if not (scaffold_root / rel).exists():
+            issues.append(f"scaffold missing file: {rel}")
 
-    expected_agent_count = scaffold_meta.get("agent_count")
+    if issues:
+        return issues
 
-    required_files = [
-        scaffold_root / "ARCHITECTURE.md",
-        scaffold_root / "CONVENTIONS.md",
-        scaffold_root / "REQUIREMENTS_TRACED.md",
-        scaffold_root / "EXECUTION_MANIFEST.yaml",
-    ]
-    for required in required_files:
-        if not required.exists():
-            issues.append(f"scaffold missing file: {required.name}")
+    # ---- 2. CapabilityGraph ----
+    try:
+        graph = CapabilityGraph.model_validate(
+            (load_yaml(scaffold_root / "capabilities.yaml") or {}).get("capability_graph") or {}
+        )
+    except Exception as exc:  # pydantic ValidationError or missing keys
+        issues.append(f"capabilities.yaml schema invalid: {exc}")
+        return issues
 
-    agents_dir = scaffold_root / "agents"
-    if not agents_dir.exists():
-        issues.append("scaffold missing agents directory")
-    else:
-        agent_specs = sorted(agents_dir.glob("*.md"))
-        if not agent_specs:
-            issues.append("scaffold agents directory has no .md agent specs")
-        else:
-            min_agents_by_type = {
-                "algorithm": 3,
-                "report": 4,
-                "hybrid": 6,
-                "workflow": 6,
-            }
-            if project_type in min_agents_by_type:
-                minimum = min_agents_by_type[project_type]
-                if len(agent_specs) < minimum:
-                    issues.append(
-                        f"scaffold has too few agent specs for {project_type}: {len(agent_specs)} < {minimum}"
-                    )
+    # ---- 3. Contract library ----
+    try:
+        contract_manifest = ContractManifest.model_validate(
+            (load_yaml(scaffold_root / "contracts" / "_manifest.yaml") or {}).get("contract_manifest") or {}
+        )
+    except Exception as exc:
+        issues.append(f"contracts/_manifest.yaml schema invalid: {exc}")
+        return issues
 
-            for agent_spec in agent_specs:
-                text = read_text_safe(agent_spec)
-                if "## Decisions Embedded" not in text:
-                    issues.append(f"agent spec missing decisions section: {agent_spec.name}")
-                if "## Requirement Trace" not in text:
-                    issues.append(f"agent spec missing requirement trace section: {agent_spec.name}")
+    contracts_by_id: dict[str, Contract] = {}
+    for entry in contract_manifest.entries:
+        contract_path = scaffold_root / entry.path
+        if not contract_path.exists():
+            issues.append(f"contracts: file missing for {entry.contract_id} at {entry.path}")
+            continue
+        try:
+            contracts_by_id[entry.contract_id] = Contract.model_validate(
+                (load_yaml(contract_path) or {}).get("contract") or {}
+            )
+        except Exception as exc:
+            issues.append(f"{entry.path}: schema invalid: {exc}")
 
-    docs_dir = scaffold_root / "docs"
-    if not docs_dir.exists():
-        issues.append("scaffold missing docs directory")
+    # ---- 4. Finding-citation integrity ----
+    artifacts_root = scaffold_root.parent.parent  # workspace-artifacts/
+    paths = build_paths(artifacts_root)
+    finding_records = load_all_findings(paths)
+    known_findings = {rec.finding_id for rec in finding_records}
+    bootstrap = (not finding_records) and manifest.get("decision_log_version") == 1
+    if bootstrap:
+        citations_payload = load_yaml(paths.citations_index_path) or {}
+        known_findings = set(
+            (citations_payload.get("citations_index") or {}).get("citations", {}).keys()
+        )
 
-    skills_dir = scaffold_root / "docs" / "skills"
-    if not skills_dir.exists():
-        issues.append("scaffold missing docs/skills directory")
-    else:
-        skill_files = [path for path in skills_dir.glob("*.md") if path.is_file()]
-        if not skill_files:
-            issues.append("scaffold docs/skills directory has no .md skill files")
-
-    instructions_dir = scaffold_root / "docs" / "instructions"
-    if not instructions_dir.exists():
-        issues.append("scaffold missing docs/instructions directory")
-    else:
-        instruction_files = [path for path in instructions_dir.glob("*.md") if path.is_file()]
-        if len(instruction_files) < 2:
-            issues.append("scaffold docs/instructions requires at least 2 instruction files")
-
-    custom_root = scaffold_root / ".github"
-    if not custom_root.exists():
-        issues.append("scaffold missing .github customization directory")
-
-    orchestrator_dir = scaffold_root / "orchestrator"
-    if not orchestrator_dir.exists():
-        issues.append("scaffold missing orchestrator directory")
-    elif not (orchestrator_dir / "run_stage4.py").exists():
-        issues.append("scaffold missing orchestrator/run_stage4.py")
-
-    custom_agents_dir = custom_root / "agents"
-    if not custom_agents_dir.exists():
-        issues.append("scaffold missing .github/agents directory")
-    else:
-        custom_agents = sorted(custom_agents_dir.glob("*.agent.md"))
-        if not custom_agents:
-            issues.append("scaffold .github/agents directory has no .agent.md files")
-        else:
-            for agent_path in custom_agents:
-                issues.extend(validate_custom_agent_file(agent_path))
-            if isinstance(expected_agent_count, int) and expected_agent_count > 0 and len(custom_agents) != expected_agent_count:
-                issues.append(
-                    "scaffold custom agent count mismatch: "
-                    f"expected {expected_agent_count}, found {len(custom_agents)}"
-                )
-
-    custom_skills_dir = custom_root / "skills"
-    if not custom_skills_dir.exists():
-        issues.append("scaffold missing .github/skills directory")
-    else:
-        custom_skills = sorted(custom_skills_dir.glob("*/SKILL.md"))
-        if not custom_skills:
-            issues.append("scaffold .github/skills directory has no SKILL.md files")
-        else:
-            for skill_path in custom_skills:
-                issues.extend(validate_custom_skill_file(skill_path))
-
-    custom_instructions_dir = custom_root / "instructions"
-    if not custom_instructions_dir.exists():
-        issues.append("scaffold missing .github/instructions directory")
-    else:
-        custom_instructions = sorted(custom_instructions_dir.glob("*.instructions.md"))
-        if len(custom_instructions) < 2:
-            issues.append("scaffold .github/instructions requires at least 2 instruction files")
-        else:
-            for instruction_path in custom_instructions:
-                issues.extend(validate_custom_instruction_file(instruction_path))
-
-    requirements_dir = scaffold_root / "requirements"
-    if not requirements_dir.exists():
-        issues.append("scaffold missing requirements directory")
-    elif not (requirements_dir / "REQ_TRACE_MATRIX.md").exists():
-        issues.append("scaffold missing requirements/REQ_TRACE_MATRIX.md")
-
-    if project_type in {"algorithm", "hybrid"}:
-        algorithm_required = [
-            scaffold_root / "code" / "__init__.py",
-            scaffold_root / "code" / "main.py",
-            scaffold_root / "code" / "README.md",
-            scaffold_root / "tests" / "test_requirements_trace.py",
-        ]
-        for required in algorithm_required:
-            if not required.exists():
-                issues.append(f"scaffold missing algorithm artifact: {required.relative_to(scaffold_root)}")
-
-    if project_type in {"report", "hybrid"}:
-        report_required = [
-            scaffold_root / "report" / "OUTLINE.md",
-            scaffold_root / "report" / "DRAFT.md",
-            scaffold_root / "references" / "CITATION_STYLE.md",
-            scaffold_root / "references" / "SOURCES.yaml",
-        ]
-        for required in report_required:
-            if not required.exists():
-                issues.append(f"scaffold missing report artifact: {required.relative_to(scaffold_root)}")
-
-    if isinstance(expected_agent_count, int) and expected_agent_count > 0 and agents_dir.exists():
-        actual = len(list(agents_dir.glob("*.md")))
-        if actual != expected_agent_count:
+    for cap in graph.capabilities:
+        for fid in cap.required_finding_ids:
+            if fid in known_findings:
+                continue
+            if bootstrap and "#" in fid and fid.split("#", 1)[0] in known_findings:
+                continue
             issues.append(
-                f"scaffold manifest agent_count mismatch: expected {expected_agent_count}, found {actual}"
+                f"capability {cap.name}: required_finding_id {fid} has no match "
+                f"in {'wiki/findings/' if not bootstrap else 'wiki/citations/index.yaml (bootstrap)'}"
+            )
+    for contract in contracts_by_id.values():
+        for fref in contract.required_findings:
+            if fref.finding_id in known_findings:
+                continue
+            if bootstrap and fref.citation_id in known_findings:
+                continue
+            issues.append(
+                f"contract {contract.contract_id}: finding {fref.finding_id} not resolvable"
             )
 
+    # ---- 5. Skill <-> capability symmetry ----
+    skills_dir = scaffold_root / "skills"
+    for cap in graph.capabilities:
+        skill_path = skills_dir / cap.name / "SKILL.md"
+        if not skill_path.exists():
+            issues.append(f"skill missing for capability {cap.name}")
+            continue
+        frontmatter, body = parse_frontmatter(read_text_safe(skill_path))
+        try:
+            fm = SkillFrontmatter.model_validate(frontmatter)
+        except Exception as exc:
+            issues.append(f"skill {skill_path.name}: frontmatter invalid ({exc})")
+            continue
+        if fm.name != cap.name:
+            issues.append(f"skill {cap.name}: frontmatter name '{fm.name}' != capability name")
+        if sorted(fm.triggers) != sorted(cap.when_to_use):
+            issues.append(f"skill {cap.name}: triggers drift from capabilities.yaml")
+        # No stub sections: every `## ` heading must have non-empty content.
+        for heading, content in _iter_markdown_sections(body):
+            if not content.strip():
+                issues.append(f"skill {cap.name}: empty section '{heading}'")
+
+    # ---- 6. Trigger specificity ----
+    vocab = concept_vocabulary(finding_records)
+    bootstrap_vocab: set[str] = set()
+    if not vocab:
+        # Bootstrap: derive tokens from the decision log.
+        dlv = manifest.get("decision_log_version")
+        if isinstance(dlv, int):
+            dl_path = paths.decision_logs_dir / f"decision_log_v{dlv}.yaml"
+            if dl_path.exists():
+                from .findings_loader import decision_log_vocabulary
+
+                bootstrap_vocab = decision_log_vocabulary(load_yaml(dl_path) or {})
+    for cap in graph.capabilities:
+        for trig in cap.when_to_use:
+            if _is_generic_trigger(trig, vocab=vocab, bootstrap_vocab=bootstrap_vocab):
+                issues.append(
+                    f"capability {cap.name}: trigger '{trig}' is generic "
+                    "(no domain vocabulary in findings or decision log)"
+                )
+
+    # ---- 7. Contract reuse ----
+    referenced: set[str] = {cap.io_contract_ref for cap in graph.capabilities}
+    for cap in graph.capabilities:
+        for composed_name in cap.composes:
+            other = next((c for c in graph.capabilities if c.name == composed_name), None)
+            if other is not None:
+                referenced.add(other.io_contract_ref)
+    for cid in contracts_by_id:
+        if cid not in referenced:
+            issues.append(
+                f"contract {cid}: unreferenced — every contract must back >=1 capability"
+            )
+
+    # ---- 8. Capability coverage ----
+    dlv = manifest.get("decision_log_version")
+    if isinstance(dlv, int):
+        dl_path = paths.decision_logs_dir / f"decision_log_v{dlv}.yaml"
+        if dl_path.exists():
+            dl = load_yaml(dl_path) or {}
+            req_ids = {
+                row.get("id")
+                for row in (dl.get("decision_log") or {}).get("requirements") or []
+                if isinstance(row, dict) and row.get("id")
+            }
+            covered = {rid for cap in graph.capabilities for rid in cap.requirement_ids}
+            for rid in sorted(req_ids - covered):
+                issues.append(f"requirement {rid}: no capability covers it (coverage gate)")
+
+    # ---- 9. Verification harness presence ----
+    verification_dir = scaffold_root / "verification"
+    for cap in graph.capabilities:
+        for hook_id in cap.verification_hook_ids:
+            stub = verification_dir / f"{hook_id}.py"
+            if not stub.exists():
+                issues.append(
+                    f"verification hook missing: verification/{hook_id}.py (capability {cap.name})"
+                )
+
+    # ---- 10. Palette sanity at repo/workspace level ----
+    workspace_root = artifacts_root.parent
+    palette_dir = workspace_root / ".github" / "agents"
+    for expected in PALETTE_AGENT_NAMES:
+        if not (palette_dir / f"{expected}.agent.md").exists():
+            issues.append(f"workspace palette missing agent: .github/agents/{expected}.agent.md")
+
+    # ---- 11. Empty output buckets ----
+    from .project_types import scaffold_subdirs_for as _subdirs
+    if isinstance(project_type, str):
+        for dname in sorted(_subdirs(project_type)):
+            if not (scaffold_root / dname).is_dir():
+                issues.append(f"scaffold missing output bucket: {dname}")
+
     return issues
+
+
+def _iter_markdown_sections(body: str):
+    """Yield (heading, content) pairs for every `## ` heading. Content is the
+    text between headings (excluding the heading line itself)."""
+    lines = body.splitlines()
+    current_heading: str | None = None
+    current_chunks: list[str] = []
+    for line in lines:
+        if line.startswith("## "):
+            if current_heading is not None:
+                yield current_heading, "\n".join(current_chunks)
+            current_heading = line
+            current_chunks = []
+        else:
+            current_chunks.append(line)
+    if current_heading is not None:
+        yield current_heading, "\n".join(current_chunks)
 
 
 VALID_STAGE2_PRECHECK_VERDICTS = {"PROCEED", "BLOCK"}

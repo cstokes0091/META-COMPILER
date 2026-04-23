@@ -72,10 +72,12 @@ def run_contract_extract(
         if not shape["citations"]:
             shape["citations"] = list(fallback_citations)
     contracts = _shapes_to_contracts(shapes, root, findings_by_citation)
-    # Add a fallback "policy" contract that anchors convention-only capabilities.
-    contracts.append(
-        _policy_contract(root, findings_by_citation)
-    )
+    # Add a fallback "policy" contract only when the decision log actually has
+    # conventions to anchor it; otherwise convention-less workspaces would emit
+    # an orphan policy contract whose citations don't resolve.
+    policy = _policy_contract(root, findings_by_citation)
+    if policy is not None:
+        contracts.append(policy)
     contracts = _dedupe_contracts_by_shape(contracts)
 
     contracts_dir = scaffold_root / "contracts"
@@ -236,12 +238,16 @@ def _shapes_to_contracts(
 def _policy_contract(
     root: dict[str, Any],
     findings_by_citation: dict[str, list[FindingRecord]],
-) -> Contract:
+) -> Contract | None:
+    """Emit the fallback "policy" contract only when the decision log has
+    conventions to anchor it. Returns None for convention-less workspaces so
+    the unreferenced-contract check doesn't false-positive."""
     citations: list[str] = []
     invariants: list[str] = []
-    for row in root.get("conventions") or []:
-        if not isinstance(row, dict):
-            continue
+    conventions = [row for row in (root.get("conventions") or []) if isinstance(row, dict)]
+    if not conventions:
+        return None
+    for row in conventions:
         citations.extend(as_string_list(row.get("citations", [])))
         choice = str(row.get("choice") or "").strip()
         name = str(row.get("name") or "").strip()
@@ -249,7 +255,7 @@ def _policy_contract(
             invariants.append(f"{name}: {choice}")
 
     findings = _findings_for_citations(citations, findings_by_citation)
-    if not findings:
+    if not findings and citations:
         findings = [
             FindingRef(
                 finding_id=cid,
@@ -257,8 +263,10 @@ def _policy_contract(
                 seed_path=f"seeds/{cid}.md",
                 locator={"stage": "bootstrap"},
             )
-            for cid in citations or ["src-conventions"]
+            for cid in citations
         ]
+    if not findings:
+        return None
     if not invariants:
         invariants = ["Decision-log conventions apply."]
     return Contract(
@@ -369,18 +377,20 @@ def _rewrite_capability_refs(
 
 
 def _match_contract(cap: Capability, contract_index: dict[str, Contract]) -> str:
-    # Prefer a contract_id that shares a slug with the capability's name.
-    # e.g., req-req-001-foo -> contract-scaffold-generator? No deterministic
-    # slug match possible without more metadata; use the first non-policy
-    # contract produced from an agent shape as the default, fall back to
-    # contract-policy.
-    if "contract-policy" not in contract_index and contract_index:
-        return next(iter(contract_index))  # first contract
+    # Convention-derived capabilities map to the policy contract when present;
+    # everything else (req-*, arch-*, code-arch-*) maps to the first non-policy
+    # contract. If only the policy contract exists, everyone uses it.
+    has_policy = "contract-policy" in contract_index
+    is_convention_cap = cap.name.startswith("convention-")
+    if is_convention_cap and has_policy:
+        return "contract-policy"
     for cid in contract_index:
         if cid == "contract-policy":
             continue
         return cid
-    return "contract-policy"
+    if contract_index:
+        return next(iter(contract_index))
+    return cap.io_contract_ref
 
 
 def _compose_title(role: str, source: str) -> str:
