@@ -32,6 +32,7 @@ from .stages.migrate_decision_log_stage import (
     run_migrate_decision_log_apply,
     run_migrate_decision_log_plan,
 )
+from .stages.capability_compile_stage import run_capability_compile
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
@@ -323,6 +324,30 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Decision log version to scaffold (default: latest)",
+    )
+
+    compile_caps_parser = subparsers.add_parser(
+        "compile-capabilities",
+        help=(
+            "Stage 3.1: compile decision log + findings into scaffolds/v{N}/capabilities.yaml. "
+            "Runnable standalone for debugging; also invoked by `scaffold` as of Commit 8."
+        ),
+    )
+    _add_common_paths(compile_caps_parser)
+    compile_caps_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to compile (default: latest)",
+    )
+    compile_caps_parser.add_argument(
+        "--allow-empty-findings",
+        action="store_true",
+        help=(
+            "Allow compiling against an empty wiki/findings/ directory. "
+            "Normally permitted only for decision_log_v1 (bootstrap); pass this "
+            "flag when testing against a fixture that intentionally lacks findings."
+        ),
     )
 
     phase4_parser = subparsers.add_parser(
@@ -747,6 +772,12 @@ def main(argv: list[str] | None = None) -> int:
             result = run_scaffold(
                 artifacts_root=artifacts_root,
                 decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "compile-capabilities":
+            result = run_capability_compile(
+                artifacts_root=artifacts_root,
+                decision_log_version=args.decision_log_version,
+                allow_empty_findings=args.allow_empty_findings,
             )
         elif args.command == "phase4-finalize":
             if args.start:

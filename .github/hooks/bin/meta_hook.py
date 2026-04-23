@@ -317,6 +317,7 @@ STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
     "stage2-reentry": {"allowed_prior": ["2"], "sets": "2-reentry-seeded"},
     "finalize-reentry": {"allowed_prior": ["2-reentry-seeded"], "sets": "2"},
     "scaffold": {"allowed_prior": ["2"], "sets": "3"},
+    "compile-capabilities": {"allowed_prior": ["2", "3"], "sets": None},
     "phase4-finalize": {"allowed_prior": ["3"], "sets": "4"},
     "wiki-update": {"allowed_prior": ["1a", "1b", "1c", "2"], "sets": None},
     "track-seeds": {"allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
@@ -456,6 +457,32 @@ def gate_artifact_writes(payload: dict[str, Any]) -> dict[str, Any]:
             "permissionDecision": "deny",
             "reason": "workspace-artifacts/decision-logs/*.yaml is compiled by meta-compiler elicit-vision --finalize. Direct edits desynchronize the source transcript from the YAML.",
             "remediation": "Edit workspace-artifacts/runtime/stage2/transcript.md instead; re-run --finalize to regenerate the YAML.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    # Stage 3 post-dialogue artefacts (capabilities.yaml + contracts/*.yaml).
+    # Both are emitted by `meta-compiler compile-capabilities` / `extract-contracts`
+    # from the Decision Log + findings; hand edits desynchronize them.
+    import re as _re
+    _SCAFFOLD_CAP_RE = _re.compile(r"^workspace-artifacts/scaffolds/v\d+/capabilities\.yaml$")
+    _SCAFFOLD_CONTRACT_RE = _re.compile(
+        r"^workspace-artifacts/scaffolds/v\d+/contracts/.+\.yaml$"
+    )
+    if _SCAFFOLD_CAP_RE.match(rel_posix) or _SCAFFOLD_CONTRACT_RE.match(rel_posix):
+        line = audit(ws, "gate_artifact_writes", "PreToolUse", "deny",
+                     reason="scaffolds/v*/capabilities.yaml and contracts/*.yaml are CLI-compiled",
+                     extra={"file_path": rel_posix})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                "workspace-artifacts/scaffolds/v*/capabilities.yaml and contracts/*.yaml are "
+                "compiled by the post-dialogue stages. Hand edits desynchronize them from the "
+                "Decision Log + findings."
+            ),
+            "remediation": (
+                "Edit the source Decision Log (via stage2-reentry) or the wiki findings, then "
+                "re-run `meta-compiler compile-capabilities` / `extract-contracts`."
+            ),
             "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
         }
 
@@ -1320,6 +1347,436 @@ def validate_repo_map_schema(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {"permissionDecision": "allow"}
 
+
+# ---------------------------------------------------------------------------
+# Stage 3 capability-compile hooks (Commit 3 of Stage-3 rearchitecture)
+# ---------------------------------------------------------------------------
+
+
+# Hand-rolled mirror of meta_compiler.schemas.Capability. Keeps meta_hook.py
+# stdlib-only (its docstring contract) — DO NOT import pydantic here.
+CAPABILITY_REQUIRED_SCALARS: list[str] = [
+    "name",
+    "description",
+    "io_contract_ref",
+    "verification_type",
+]
+CAPABILITY_REQUIRED_LISTS: list[str] = [
+    "when_to_use",
+    "required_finding_ids",
+    "verification_hook_ids",
+    "requirement_ids",
+    "citation_ids",
+]
+CAPABILITY_GRAPH_REQUIRED: list[str] = [
+    "generated_at",
+    "decision_log_version",
+    "project_type",
+    "capabilities",
+]
+VALID_VERIFICATION_TYPES: frozenset[str] = frozenset({
+    "unit_test",
+    "numerical",
+    "regression",
+    "contract_fixture",
+    "static_lint",
+    "human_review",
+})
+
+
+# Stop-word list duplicates meta_compiler.findings_loader.GENERIC_TRIGGER_STOPWORDS
+# (kept in sync manually; validated by tests/test_hooks_integration.py).
+TRIGGER_STOPWORDS: frozenset[str] = frozenset({
+    "use", "when", "implementing", "generating", "producing", "running",
+    "executing", "the", "a", "an", "to", "for", "and", "or", "of", "in",
+    "on", "with", "needed", "required", "any", "every", "this", "that",
+    "is", "are", "be", "it", "at", "by", "as", "from", "into", "task",
+    "work", "item",
+})
+
+
+import re as _hook_re
+
+
+def _tokenize_trigger(text: str) -> set[str]:
+    tokens = _hook_re.split(r"[^a-z0-9]+", text.lower())
+    return {t for t in tokens if t}
+
+
+def _trigger_content_tokens(text: str) -> set[str]:
+    return _tokenize_trigger(text) - TRIGGER_STOPWORDS
+
+
+def _concept_vocabulary_from_findings(findings_dir: Path) -> set[str]:
+    vocab: set[str] = set()
+    if not findings_dir.exists():
+        return vocab
+    for json_path in sorted(findings_dir.glob("*.json")):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        # Doc/code shape: concepts at top-level.
+        for concept in data.get("concepts") or []:
+            if isinstance(concept, dict):
+                name = str(concept.get("name") or "")
+                vocab |= _tokenize_trigger(name)
+                aliases = concept.get("aliases") or []
+                if isinstance(aliases, list):
+                    for alias in aliases:
+                        vocab |= _tokenize_trigger(str(alias))
+        # Legacy shape: findings[].claim text.
+        for row in data.get("findings") or []:
+            if isinstance(row, dict):
+                claim = row.get("claim")
+                if isinstance(claim, str):
+                    vocab |= _tokenize_trigger(claim)
+        for claim in data.get("claims") or []:
+            if isinstance(claim, dict):
+                statement = claim.get("statement")
+                if isinstance(statement, str):
+                    vocab |= _tokenize_trigger(statement)
+    return vocab
+
+
+def _decision_log_vocabulary(decision_log: dict[str, Any]) -> set[str]:
+    # Kept in sync with meta_compiler.findings_loader.decision_log_vocabulary.
+    vocab: set[str] = set()
+    root = decision_log.get("decision_log") or {}
+    for row in root.get("conventions") or []:
+        if isinstance(row, dict):
+            for key in ("name", "choice", "rationale"):
+                vocab |= _tokenize_trigger(str(row.get(key) or ""))
+    for row in root.get("architecture") or []:
+        if isinstance(row, dict):
+            for key in ("component", "approach"):
+                vocab |= _tokenize_trigger(str(row.get(key) or ""))
+    for row in root.get("code_architecture") or []:
+        if isinstance(row, dict):
+            for key in ("aspect", "choice", "rationale"):
+                vocab |= _tokenize_trigger(str(row.get(key) or ""))
+            for lib in row.get("libraries") or []:
+                if isinstance(lib, dict):
+                    for key in ("name", "description"):
+                        vocab |= _tokenize_trigger(str(lib.get(key) or ""))
+    for row in root.get("requirements") or []:
+        if isinstance(row, dict):
+            vocab |= _tokenize_trigger(str(row.get("description") or ""))
+    scope = root.get("scope") or {}
+    for key in ("in_scope", "out_of_scope"):
+        for row in scope.get(key) or []:
+            if isinstance(row, dict):
+                vocab |= _tokenize_trigger(str(row.get("item") or ""))
+    return vocab
+
+
+@register("gate_capability_compile")
+def gate_capability_compile(payload: dict[str, Any]) -> dict[str, Any]:
+    """PreToolUse/Bash precondition for `compile-capabilities` and `scaffold`.
+
+    Denies when:
+    - workspace_manifest.research.last_completed_stage is not '2' (stage ordering).
+    - no decision_log_v*.yaml exists (Stage 2 hasn't finalized).
+    - wiki/findings/ is empty AND the latest decision log is v>1 (only v1
+      bootstraps without findings).
+
+    Operators can override for tests by passing --allow-empty-findings on
+    `compile-capabilities`; that flag is detected in the command string and
+    bypasses the findings check.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+
+    if os.environ.get("META_COMPILER_SKIP_HOOK") == "1":
+        return {"permissionDecision": "allow"}
+
+    sub = _parse_meta_compiler_command(cmd)
+    if sub not in {"compile-capabilities", "scaffold"}:
+        return {"permissionDecision": "allow"}
+
+    m = read_manifest(ws).get("workspace_manifest") or {}
+    stage = (m.get("research") or {}).get("last_completed_stage")
+    if stage != "2" and stage != "3":
+        line = audit(ws, "gate_capability_compile", "PreToolUse", "deny",
+                     reason=f"stage={stage}", extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                f"{sub} requires last_completed_stage='2'; current='{stage}'."
+            ),
+            "remediation": "Complete Stage 2 (elicit-vision --finalize) first.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    decision_logs_dir = ws / "workspace-artifacts" / "decision-logs"
+    logs = sorted(decision_logs_dir.glob("decision_log_v*.yaml")) if decision_logs_dir.exists() else []
+    if not logs:
+        line = audit(ws, "gate_capability_compile", "PreToolUse", "deny",
+                     reason="no decision log", extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "No decision_log_v*.yaml present.",
+            "remediation": "Run `meta-compiler elicit-vision --finalize` to compile Stage 2.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    # Determine latest version by filename.
+    def _version_of(p: Path) -> int:
+        match = _hook_re.match(r"decision_log_v(\d+)\.yaml$", p.name)
+        return int(match.group(1)) if match else -1
+    latest_log = max(logs, key=_version_of)
+    latest_version = _version_of(latest_log)
+
+    if latest_version > 1 and "--allow-empty-findings" not in cmd:
+        findings_dir = ws / "workspace-artifacts" / "wiki" / "findings"
+        any_finding = findings_dir.exists() and any(findings_dir.glob("*.json"))
+        if not any_finding:
+            line = audit(ws, "gate_capability_compile", "PreToolUse", "deny",
+                         reason="empty findings beyond v1", extra={"command": cmd})
+            return {
+                "permissionDecision": "deny",
+                "reason": (
+                    f"wiki/findings/ is empty but decision log is v{latest_version}. "
+                    "Only v1 may bootstrap without findings."
+                ),
+                "remediation": (
+                    "Run `meta-compiler ingest --scope all` to populate findings before "
+                    "compile-capabilities, or pass --allow-empty-findings for testing."
+                ),
+                "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+            }
+
+    return {"permissionDecision": "allow"}
+
+
+def _validate_capability_payload(
+    cap: Any,
+    idx: int,
+    issues: list[str],
+) -> None:
+    if not isinstance(cap, dict):
+        issues.append(f"capabilities[{idx}] is not a mapping")
+        return
+    for field in CAPABILITY_REQUIRED_SCALARS:
+        value = cap.get(field)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(f"capabilities[{idx}].{field} must be a non-empty string")
+    ver = cap.get("verification_type")
+    if isinstance(ver, str) and ver not in VALID_VERIFICATION_TYPES:
+        issues.append(
+            f"capabilities[{idx}].verification_type='{ver}' not in {sorted(VALID_VERIFICATION_TYPES)}"
+        )
+    for field in CAPABILITY_REQUIRED_LISTS:
+        value = cap.get(field)
+        if not isinstance(value, list) or not value:
+            issues.append(f"capabilities[{idx}].{field} must be a non-empty list")
+
+
+@register("validate_capability_schema")
+def validate_capability_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    """PostToolUse/Write on scaffolds/v*/capabilities.yaml.
+
+    Hand-rolled subset validator mirroring meta_compiler.schemas.CapabilityGraph.
+    Rejects missing top-level keys, empty capabilities list, non-string scalars,
+    missing/empty required lists, and unknown verification_type values.
+    """
+    ws = resolve_workspace_root(payload)
+    fp_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not fp_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(fp_str).resolve()
+        rel = fp.relative_to(ws).as_posix()
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+
+    if not _hook_re.match(r"^workspace-artifacts/scaffolds/v\d+/capabilities\.yaml$", rel):
+        return {"permissionDecision": "allow"}
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "validate_capability_schema", "PostToolUse", "deny",
+                     reason=msg, extra={"file_path": rel})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": (
+                "Re-run `meta-compiler compile-capabilities` against a schema-valid decision log."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    try:
+        text = fp.read_text(encoding="utf-8")
+    except OSError as exc:
+        return _deny(f"{fp.name}: unreadable ({exc})")
+    try:
+        data = _parse_yaml_subset(text)
+    except ValueError as exc:
+        return _deny(f"{fp.name}: unparseable YAML ({exc})")
+    if not isinstance(data, dict):
+        return _deny(f"{fp.name}: top-level must be a mapping")
+
+    graph = data.get("capability_graph")
+    if not isinstance(graph, dict):
+        return _deny(f"{fp.name}: missing capability_graph root object")
+
+    issues: list[str] = []
+    for field in CAPABILITY_GRAPH_REQUIRED:
+        if field not in graph:
+            issues.append(f"capability_graph.{field} missing")
+    caps = graph.get("capabilities")
+    if not isinstance(caps, list) or not caps:
+        issues.append("capability_graph.capabilities must be a non-empty list")
+    else:
+        for idx, cap in enumerate(caps):
+            _validate_capability_payload(cap, idx, issues)
+
+    if issues:
+        return _deny(f"{fp.name}: " + "; ".join(issues[:8]))
+
+    audit(ws, "validate_capability_schema", "PostToolUse", "allow",
+          extra={"file_path": rel, "capability_count": len(caps)})
+    return {"permissionDecision": "allow"}
+
+
+@register("validate_trigger_specificity")
+def validate_trigger_specificity(payload: dict[str, Any]) -> dict[str, Any]:
+    """PostToolUse/Write on capabilities.yaml or SKILL.md.
+
+    A trigger passes if, after stripping stop-words, it contains at least one
+    token present in the concept vocabulary from wiki/findings/*.json. If
+    findings are empty, falls back to decision-log vocabulary (bootstrap mode)
+    when the capabilities file targets decision_log_version == 1.
+    """
+    ws = resolve_workspace_root(payload)
+    fp_str = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not fp_str:
+        return {"permissionDecision": "allow"}
+    try:
+        fp = Path(fp_str).resolve()
+        rel = fp.relative_to(ws).as_posix()
+    except (ValueError, OSError):
+        return {"permissionDecision": "allow"}
+
+    is_capabilities = bool(_hook_re.match(
+        r"^workspace-artifacts/scaffolds/v\d+/capabilities\.yaml$", rel
+    ))
+    is_skill = bool(_hook_re.match(
+        r"^workspace-artifacts/scaffolds/v\d+/skills/[^/]+/SKILL\.md$", rel
+    ))
+    if not is_capabilities and not is_skill:
+        return {"permissionDecision": "allow"}
+
+    def _deny(msg: str) -> dict[str, Any]:
+        line = audit(ws, "validate_trigger_specificity", "PostToolUse", "deny",
+                     reason=msg, extra={"file_path": rel})
+        return {
+            "permissionDecision": "deny",
+            "reason": msg,
+            "remediation": (
+                "Rewrite the trigger so it includes at least one token drawn from the "
+                "cited finding's concept names or from the decision-log description."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    findings_dir = ws / "workspace-artifacts" / "wiki" / "findings"
+    vocab = _concept_vocabulary_from_findings(findings_dir)
+    bootstrap_vocab: set[str] = set()
+    target_version: int | None = None
+
+    if is_capabilities:
+        try:
+            data = _parse_yaml_subset(fp.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return _deny(f"{fp.name}: could not parse ({exc})")
+        graph = data.get("capability_graph") if isinstance(data, dict) else None
+        if not isinstance(graph, dict):
+            return {"permissionDecision": "allow"}  # schema hook will flag
+        target_version = graph.get("decision_log_version")
+        triggers_per_cap: list[tuple[str, list[str]]] = []
+        caps = graph.get("capabilities") or []
+        for cap in caps:
+            if not isinstance(cap, dict):
+                continue
+            cap_name = str(cap.get("name") or "<unknown>")
+            trigs = cap.get("when_to_use") or []
+            if isinstance(trigs, list):
+                triggers_per_cap.append((cap_name, [str(t) for t in trigs]))
+    else:
+        # Skill: parse YAML frontmatter between --- ... --- lines.
+        try:
+            text = fp.read_text(encoding="utf-8")
+        except OSError as exc:
+            return _deny(f"{fp.name}: unreadable ({exc})")
+        if not text.startswith("---"):
+            return {"permissionDecision": "allow"}
+        _, _, remainder = text.partition("---")
+        fm_text, _, _ = remainder.partition("---")
+        try:
+            fm = _parse_yaml_subset(fm_text)
+        except ValueError as exc:
+            return _deny(f"{fp.name}: unparseable frontmatter ({exc})")
+        if not isinstance(fm, dict):
+            return _deny(f"{fp.name}: frontmatter is not a mapping")
+        trigs = fm.get("triggers") or []
+        if not isinstance(trigs, list):
+            return _deny(f"{fp.name}: frontmatter.triggers must be a list")
+        triggers_per_cap = [(str(fm.get("name") or fp.parent.name), [str(t) for t in trigs])]
+
+    if not vocab and target_version is None:
+        # Skill files don't carry decision_log_version; look it up from the
+        # sibling capabilities.yaml if possible.
+        cap_yaml = fp.parent.parent.parent / "capabilities.yaml"
+        if cap_yaml.exists():
+            try:
+                sibling = _parse_yaml_subset(cap_yaml.read_text(encoding="utf-8"))
+                target_version = (sibling.get("capability_graph") or {}).get("decision_log_version")
+            except (OSError, ValueError):
+                pass
+
+    if not vocab:
+        # Bootstrap vocabulary from the latest decision log.
+        if target_version:
+            dl_path = ws / "workspace-artifacts" / "decision-logs" / f"decision_log_v{target_version}.yaml"
+            if dl_path.exists():
+                try:
+                    dl_data = _parse_yaml_subset(dl_path.read_text(encoding="utf-8"))
+                    bootstrap_vocab = _decision_log_vocabulary(dl_data)
+                except (OSError, ValueError):
+                    pass
+
+    effective_vocab = vocab or bootstrap_vocab
+    if not effective_vocab:
+        # Degenerate case: no vocabulary available. Only reject pure stopword
+        # triggers — permits bootstraps where the decision log is extremely sparse.
+        pass
+
+    offenders: list[str] = []
+    for cap_name, triggers in triggers_per_cap:
+        for trigger in triggers:
+            content = _trigger_content_tokens(trigger)
+            if not content:
+                offenders.append(f"{cap_name}: '{trigger}' (all stopwords)")
+                continue
+            if not effective_vocab:
+                continue
+            if not (content & effective_vocab):
+                offenders.append(f"{cap_name}: '{trigger}' (no domain tokens in vocabulary)")
+
+    if offenders:
+        return _deny(f"{fp.name}: generic triggers — " + "; ".join(offenders[:6]))
+
+    audit(ws, "validate_trigger_specificity", "PostToolUse", "allow",
+          extra={"file_path": rel, "trigger_count": sum(len(t) for _, t in triggers_per_cap)})
+    return {"permissionDecision": "allow"}
+
+
+# ---------------------------------------------------------------------------
+# Auto-fire chains (existing infrastructure, unchanged below)
+# ---------------------------------------------------------------------------
 
 import subprocess as _subprocess
 

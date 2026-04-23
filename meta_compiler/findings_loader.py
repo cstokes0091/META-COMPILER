@@ -172,25 +172,37 @@ def concept_vocabulary(records: Iterable[FindingRecord]) -> set[str]:
 def decision_log_vocabulary(decision_log: dict[str, Any]) -> set[str]:
     """Bootstrap vocabulary when wiki/findings/ is empty.
 
-    Draws from convention.name, architecture.component, and
-    requirements.description tokens in the decision log. Not as rich as
-    concept_vocabulary, but enough to check a v1 bootstrap run where ingest
-    hasn't produced findings yet.
+    Draws from every text-bearing field on the decision log's top-level
+    sections (conventions, architecture, code_architecture, requirements,
+    scope). Not as rich as concept_vocabulary, but enough to check a v1
+    bootstrap run where ingest hasn't produced findings yet.
     """
     vocab: set[str] = set()
     root = decision_log.get("decision_log") or {}
     for row in root.get("conventions") or []:
         if isinstance(row, dict):
-            vocab |= _tokenize(str(row.get("name") or ""))
-            vocab |= _tokenize(str(row.get("choice") or ""))
-            vocab |= _tokenize(str(row.get("rationale") or ""))
+            for key in ("name", "choice", "rationale"):
+                vocab |= _tokenize(str(row.get(key) or ""))
     for row in root.get("architecture") or []:
         if isinstance(row, dict):
-            vocab |= _tokenize(str(row.get("component") or ""))
-            vocab |= _tokenize(str(row.get("approach") or ""))
+            for key in ("component", "approach"):
+                vocab |= _tokenize(str(row.get(key) or ""))
+    for row in root.get("code_architecture") or []:
+        if isinstance(row, dict):
+            for key in ("aspect", "choice", "rationale"):
+                vocab |= _tokenize(str(row.get(key) or ""))
+            for lib in row.get("libraries") or []:
+                if isinstance(lib, dict):
+                    for key in ("name", "description"):
+                        vocab |= _tokenize(str(lib.get(key) or ""))
     for row in root.get("requirements") or []:
         if isinstance(row, dict):
             vocab |= _tokenize(str(row.get("description") or ""))
+    scope = root.get("scope") or {}
+    for key in ("in_scope", "out_of_scope"):
+        for row in scope.get(key) or []:
+            if isinstance(row, dict):
+                vocab |= _tokenize(str(row.get("item") or ""))
     return vocab
 
 

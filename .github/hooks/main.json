@@ -66,6 +66,11 @@
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_phase4_finalize",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_capability_compile",
+            "timeout": 10
           }
         ]
       },
@@ -102,6 +107,36 @@
           {
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_wiki_search_schema",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_schema",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_schema",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
             "timeout": 10
           }
         ]
