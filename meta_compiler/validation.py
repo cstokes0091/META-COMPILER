@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactPaths, latest_decision_log_path, load_manifest
+from .findings_loader import trigger_content_tokens
 from .io import load_yaml, parse_frontmatter
 from .project_types import (
     CODE_ARCH_REQUIRED_PROJECT_TYPES,
@@ -1422,3 +1423,38 @@ def validate_stage(paths: ArtifactPaths, stage: str) -> list[str]:
         issues.extend(validate_stage_4(paths))
 
     return issues
+
+
+def _is_generic_trigger(
+    trigger: str,
+    vocab: set[str],
+    *,
+    bootstrap_vocab: set[str] | None = None,
+) -> bool:
+    """Return True if `trigger` fails the trigger-specificity rule.
+
+    A trigger passes if, after stripping stop-words, at least one remaining
+    token appears in `vocab` (the primary concept vocabulary from findings).
+    If `vocab` is empty and a `bootstrap_vocab` is provided, fall back to
+    decision-log tokens: require >=1 non-stopword token present in
+    `bootstrap_vocab`.
+
+    The rule rejects triggers like "use when implementing" (stop-words only)
+    and "use when needed" (no domain tokens after stripping). It accepts
+    "validate decision log schema" when the vocabulary knows "schema" or
+    "decision".
+
+    Not yet wired into validate_scaffold (that happens in Commit 7). Exposed
+    here so the Commit 3 capability-compile stage and the
+    validate_trigger_specificity hook can share the implementation.
+    """
+    tokens = trigger_content_tokens(trigger)
+    if not tokens:
+        return True  # nothing but stop-words
+    if vocab:
+        return not (tokens & vocab)
+    if bootstrap_vocab is not None:
+        return not (tokens & bootstrap_vocab)
+    # No vocabulary available at all: only stop-word check applies.
+    return False
+
