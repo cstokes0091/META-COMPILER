@@ -33,6 +33,7 @@ from .stages.migrate_decision_log_stage import (
     run_migrate_decision_log_plan,
 )
 from .stages.capability_compile_stage import run_capability_compile
+from .stages.contract_extract_stage import run_contract_extract
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
 from .stages.review_stage import run_review
 from .stages.run_all_stage import run_all
@@ -348,6 +349,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "Normally permitted only for decision_log_v1 (bootstrap); pass this "
             "flag when testing against a fixture that intentionally lacks findings."
         ),
+    )
+
+    extract_contracts_parser = subparsers.add_parser(
+        "extract-contracts",
+        help=(
+            "Stage 3.2: extract IO contracts from the decision log + capability graph. "
+            "Writes scaffolds/v{N}/contracts/ and rewrites capabilities.yaml with "
+            "real io_contract_ref values."
+        ),
+    )
+    _add_common_paths(extract_contracts_parser)
+    extract_contracts_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to extract contracts for (default: latest)",
     )
 
     phase4_parser = subparsers.add_parser(
@@ -778,6 +795,11 @@ def main(argv: list[str] | None = None) -> int:
                 artifacts_root=artifacts_root,
                 decision_log_version=args.decision_log_version,
                 allow_empty_findings=args.allow_empty_findings,
+            )
+        elif args.command == "extract-contracts":
+            result = run_contract_extract(
+                artifacts_root=artifacts_root,
+                decision_log_version=args.decision_log_version,
             )
         elif args.command == "phase4-finalize":
             if args.start:
