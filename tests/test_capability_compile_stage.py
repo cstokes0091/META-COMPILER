@@ -325,3 +325,100 @@ def test_capability_compile_composition_links_sibling_requirements(tmp_path):
     arch = next(c for c in graph.capabilities if c.name.startswith("arch-"))
     assert any(n.startswith("req-req-001") for n in arch.composes)
     assert any(n.startswith("req-req-002") for n in arch.composes)
+
+
+def test_capability_compile_consumes_plan_extract(tmp_path):
+    """When plan_extract_v{N}.yaml is present, capabilities follow the planner
+    not the per-row fallback — N-to-M REQ/CON mappings, verification_required
+    propagates."""
+    artifacts_root = tmp_path
+    _setup_fixture(artifacts_root, version=1, with_findings=True)
+
+    # Add a constraint to the decision log (the fixture didn't include any).
+    decision_log_path = artifacts_root / "decision-logs" / "decision_log_v1.yaml"
+    payload = yaml.safe_load(decision_log_path.read_text(encoding="utf-8"))
+    payload["decision_log"]["constraints"] = [
+        {
+            "id": "CON-001",
+            "description": "Latency budget < 250ms p95",
+            "kind": "performance_target",
+            "verification_required": True,
+            "citations": ["src-decision-seed"],
+            "rationale": "SLA",
+        }
+    ]
+    _write(decision_log_path, payload)
+
+    # Plan that bundles REQ-001 + REQ-002 into a single capability and adds a
+    # constraint-only capability.
+    plan_path = artifacts_root / "decision-logs" / "plan_extract_v1.yaml"
+    _write(
+        plan_path,
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-22T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 1,
+                "capabilities": [
+                    {
+                        "name": "shared-pipeline",
+                        "description": "Bundle REQ-001 and REQ-002 into one pipeline",
+                        "requirement_ids": ["REQ-001", "REQ-002"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "rationale": "Sibling REQs share the ingest path",
+                    },
+                    {
+                        "name": "latency-gate",
+                        "description": "Enforce CON-001 at runtime",
+                        "requirement_ids": [],
+                        "constraint_ids": ["CON-001"],
+                        "verification_required": False,
+                        "composes": [],
+                        "rationale": "Policy-only — runtime check, no pytest stub",
+                    },
+                ],
+            }
+        },
+    )
+
+    run_capability_compile(artifacts_root)
+    out = yaml.safe_load(
+        (tmp_path / "scaffolds" / "v1" / "capabilities.yaml").read_text(encoding="utf-8")
+    )
+    graph = CapabilityGraph.model_validate(out["capability_graph"])
+    by_name = {c.name: c for c in graph.capabilities}
+    assert set(by_name) == {"shared-pipeline", "latency-gate"}
+
+    # N-to-M REQ mapping preserved.
+    assert sorted(by_name["shared-pipeline"].requirement_ids) == ["REQ-001", "REQ-002"]
+    assert by_name["shared-pipeline"].verification_required is True
+
+    # Constraint-only capability has empty requirement_ids and no verification.
+    latency = by_name["latency-gate"]
+    assert latency.requirement_ids == []
+    assert latency.constraint_ids == ["CON-001"]
+    assert latency.verification_required is False
+    # Hook ID is allocated for traceability even when no pytest stub will be
+    # written; workspace_bootstrap is what gates stub generation on
+    # verification_required.
+    assert latency.verification_hook_ids == ["ver-latency-gate-001"]
+
+
+def test_capability_compile_falls_back_when_plan_extract_absent(tmp_path):
+    """No plan_extract_v{N}.yaml → legacy 1-to-1 row mapping is used."""
+    artifacts_root = tmp_path
+    _setup_fixture(artifacts_root, version=1, with_findings=True)
+    # No plan_extract written — should use legacy path.
+    run_capability_compile(artifacts_root)
+    out = yaml.safe_load(
+        (tmp_path / "scaffolds" / "v1" / "capabilities.yaml").read_text(encoding="utf-8")
+    )
+    graph = CapabilityGraph.model_validate(out["capability_graph"])
+    # Each REQ produced its own capability (legacy 1-to-1 path).
+    req_caps = [c for c in graph.capabilities if c.name.startswith("req-req-")]
+    assert len(req_caps) == 2
+    for cap in req_caps:
+        assert len(cap.requirement_ids) == 1

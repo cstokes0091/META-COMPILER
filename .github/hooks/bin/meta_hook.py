@@ -1031,23 +1031,156 @@ def gate_reconcile_request(payload: dict[str, Any]) -> dict[str, Any]:
 
     reports_dir = ws / "workspace-artifacts" / "wiki" / "reports"
     proposals = sorted(reports_dir.glob("concept_reconciliation_v*.yaml")) if reports_dir.exists() else []
-    if not proposals:
+    subagent_returns_dir = (
+        ws / "workspace-artifacts" / "runtime" / "wiki_reconcile" / "subagent_returns"
+    )
+    has_returns = subagent_returns_dir.exists() and any(
+        subagent_returns_dir.glob("*.json")
+    )
+    if not proposals and not has_returns:
         line = audit(ws, "gate_reconcile_request", "PreToolUse", "deny",
-                     reason="no concept_reconciliation_v*.yaml proposal",
+                     reason="no concept_reconciliation_v*.yaml proposal and no subagent_returns",
                      extra={"command": cmd})
         return {
             "permissionDecision": "deny",
-            "reason": "No concept_reconciliation_v*.yaml proposal was written by the orchestrator.",
+            "reason": (
+                "No concept_reconciliation_v*.yaml proposal and no subagent JSON "
+                "returns were written by the orchestrator."
+            ),
             "remediation": (
-                "Invoke the `wiki-concept-reconciliation` prompt (it writes the "
-                "proposal to workspace-artifacts/wiki/reports/) before running "
+                "Invoke the `wiki-concept-reconciliation` prompt — it writes "
+                "per-bucket JSON to workspace-artifacts/runtime/wiki_reconcile/"
+                "subagent_returns/ — before running "
                 "`meta-compiler wiki-apply-reconciliation`."
             ),
             "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
         }
 
+    if proposals:
+        try:
+            import sys
+
+            repo_root = Path(__file__).resolve().parents[3]
+            if str(repo_root) not in sys.path:
+                sys.path.insert(0, str(repo_root))
+            from meta_compiler.io import load_yaml as _load_yaml
+            from meta_compiler.validation import (
+                validate_concept_reconciliation_proposal as _validate_proposal,
+            )
+
+            issues = _validate_proposal(_load_yaml(proposals[-1]) or {})
+        except Exception as exc:  # noqa: BLE001
+            audit(ws, "gate_reconcile_request", "PreToolUse", "error",
+                  reason=str(exc), extra={"command": cmd})
+            return {
+                "permissionDecision": "allow",
+                "systemMessage": (
+                    f"gate_reconcile_request: validator raised "
+                    f"{exc.__class__.__name__}: {exc}. Allowing the apply step "
+                    "to surface the error inline."
+                ),
+            }
+        if issues:
+            line = audit(ws, "gate_reconcile_request", "PreToolUse", "deny",
+                         reason="proposal failed schema validation",
+                         extra={"command": cmd, "issues": issues[:5]})
+            return {
+                "permissionDecision": "deny",
+                "reason": (
+                    f"{proposals[-1].name} failed schema validation: "
+                    + "; ".join(issues[:5])
+                ),
+                "remediation": (
+                    "Re-invoke the `wiki-concept-reconciliation` prompt — the "
+                    "orchestrator's compile step has a bug or a subagent return "
+                    "was malformed."
+                ),
+                "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+            }
+
     audit(ws, "gate_reconcile_request", "PreToolUse", "allow",
-          extra={"command": cmd, "proposal_count": len(proposals)})
+          extra={"command": cmd, "proposal_count": len(proposals),
+                 "subagent_returns": has_returns})
+    return {"permissionDecision": "allow"}
+
+
+@register("gate_cross_source_synthesis_returns")
+def gate_cross_source_synthesis_returns(payload: dict[str, Any]) -> dict[str, Any]:
+    """Block `meta-compiler wiki-apply-cross-source-synthesis` unless the
+    Phase B preflight has run AND at least one subagent return exists.
+
+    The workflow is:
+      1. `wiki-cross-source-synthesize` (writes work_plan + cross_source_request)
+      2. `wiki-cross-source-synthesis` prompt fan-out (writes per-page JSON
+         to runtime/wiki_cross_source/subagent_returns/)
+      3. `wiki-apply-cross-source-synthesis` (rewrites v2 pages) — this gate.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    if "wiki-apply-cross-source-synthesis" not in cmd or not cmd.strip().startswith(
+        "meta-compiler"
+    ):
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_cross_source_synthesis_returns", ws)
+    if disabled:
+        audit(ws, "gate_cross_source_synthesis_returns", "PreToolUse",
+              "allow_override", reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": (
+                f"gate_cross_source_synthesis_returns disabled by override: {ov_reason}"
+            ),
+        }
+
+    work_plan_path = (
+        ws / "workspace-artifacts" / "runtime" / "wiki_cross_source" / "work_plan.yaml"
+    )
+    if not work_plan_path.exists():
+        line = audit(ws, "gate_cross_source_synthesis_returns", "PreToolUse",
+                     "deny", reason="work_plan.yaml missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                "wiki_cross_source/work_plan.yaml is missing — Phase B preflight "
+                "did not run."
+            ),
+            "remediation": (
+                "Run `meta-compiler wiki-cross-source-synthesize --version 2` "
+                "first, then invoke the wiki-cross-source-synthesis prompt, "
+                "then retry this CLI."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    returns_dir = (
+        ws / "workspace-artifacts" / "runtime" / "wiki_cross_source" / "subagent_returns"
+    )
+    return_files = list(returns_dir.glob("*.json")) if returns_dir.exists() else []
+    if not return_files:
+        line = audit(ws, "gate_cross_source_synthesis_returns", "PreToolUse",
+                     "deny", reason="no subagent JSON returns",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                "No subagent JSON returns at "
+                "runtime/wiki_cross_source/subagent_returns/ — the orchestrator "
+                "fan-out has not produced any output yet."
+            ),
+            "remediation": (
+                "Invoke the `wiki-cross-source-synthesis` prompt — it writes "
+                "per-page JSON to runtime/wiki_cross_source/subagent_returns/ — "
+                "before running `meta-compiler wiki-apply-cross-source-synthesis`."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_cross_source_synthesis_returns", "PreToolUse", "allow",
+          extra={"command": cmd, "subagent_return_count": len(return_files)})
     return {"permissionDecision": "allow"}
 
 
@@ -1645,6 +1778,111 @@ def gate_capability_compile(payload: dict[str, Any]) -> dict[str, Any]:
                 "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
             }
 
+    # Stage 2.5 plan-extract gate. Plan-implementation is OPTIONAL for v1
+    # bootstrap (legacy 1-to-1 capability compile still works); when a plan
+    # extract DOES exist it must be consistent with the decision log.
+    if sub == "compile-capabilities" and "--allow-no-plan" not in cmd:
+        plan_extract_path = (
+            ws
+            / "workspace-artifacts"
+            / "decision-logs"
+            / f"plan_extract_v{latest_version}.yaml"
+        )
+        plan_md_path = (
+            ws
+            / "workspace-artifacts"
+            / "decision-logs"
+            / f"implementation_plan_v{latest_version}.md"
+        )
+        if plan_md_path.exists() and not plan_extract_path.exists():
+            line = audit(ws, "gate_capability_compile", "PreToolUse", "deny",
+                         reason="plan markdown present but extract missing",
+                         extra={"command": cmd})
+            return {
+                "permissionDecision": "deny",
+                "reason": (
+                    f"{plan_md_path.name} exists but {plan_extract_path.name} "
+                    "has not been generated."
+                ),
+                "remediation": (
+                    "Run `meta-compiler plan-implementation --finalize` to "
+                    "extract the capability_plan, or pass --allow-no-plan to "
+                    "fall back to the legacy 1-to-1 capability mapping."
+                ),
+                "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+            }
+
+    return {"permissionDecision": "allow"}
+
+
+@register("gate_implementation_plan")
+def gate_implementation_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    """PreToolUse gate for `meta-compiler plan-implementation --finalize`.
+
+    Denies when:
+    - The decision log is missing.
+    - `decision-logs/implementation_plan_v{N}.md` is missing for the latest
+      decision log version (the agent hasn't written it yet).
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    sub = _parse_meta_compiler_command(cmd)
+    if sub != "plan-implementation" or "--finalize" not in cmd:
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_implementation_plan", ws)
+    if disabled:
+        audit(ws, "gate_implementation_plan", "PreToolUse", "allow_override",
+              reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": f"gate_implementation_plan disabled by override: {ov_reason}",
+        }
+
+    decision_logs_dir = ws / "workspace-artifacts" / "decision-logs"
+    logs = (
+        sorted(decision_logs_dir.glob("decision_log_v*.yaml"))
+        if decision_logs_dir.exists()
+        else []
+    )
+    if not logs:
+        line = audit(ws, "gate_implementation_plan", "PreToolUse", "deny",
+                     reason="no decision log", extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": "No decision_log_v*.yaml present — Stage 2 has not finalized.",
+            "remediation": "Run `meta-compiler elicit-vision --finalize` first.",
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    def _vof(p: Path) -> int:
+        m = _hook_re.match(r"decision_log_v(\d+)\.yaml$", p.name)
+        return int(m.group(1)) if m else -1
+
+    latest_version = _vof(max(logs, key=_vof))
+    plan_path = decision_logs_dir / f"implementation_plan_v{latest_version}.md"
+    if not plan_path.exists():
+        line = audit(ws, "gate_implementation_plan", "PreToolUse", "deny",
+                     reason="implementation_plan markdown missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                f"{plan_path.name} is missing — the implementation-planner "
+                "agent has not written the plan."
+            ),
+            "remediation": (
+                "Run `meta-compiler plan-implementation --start` to render the "
+                "brief, then invoke @implementation-planner. The agent must "
+                f"write decision-logs/{plan_path.name} before --finalize can run."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_implementation_plan", "PreToolUse", "allow",
+          extra={"command": cmd, "decision_log_version": latest_version})
     return {"permissionDecision": "allow"}
 
 

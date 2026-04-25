@@ -152,6 +152,10 @@ def _write_verification_stubs(
     written: list[Path] = []
     seen: set[str] = set()
     for cap in capabilities:
+        # Skip capabilities the planner marked as policy/config — they have no
+        # verification hooks to honor and the test stub would be vacuous.
+        if not cap.verification_required:
+            continue
         contract = contracts_by_id.get(cap.io_contract_ref)
         for hook_id in cap.verification_hook_ids:
             if hook_id in seen:
@@ -222,9 +226,24 @@ def _write_req_trace(verification_dir: Path, capabilities: list[Capability]) -> 
                 "capability": cap.name,
                 "contract": cap.io_contract_ref,
                 "verification_type": cap.verification_type.value,
+                "verification_required": cap.verification_required,
                 "hook_ids": list(cap.verification_hook_ids),
                 "citation_ids": list(cap.citation_ids),
             })
+        for con_id in cap.constraint_ids:
+            entry = {
+                "capability": cap.name,
+                "contract": cap.io_contract_ref,
+                "verification_type": cap.verification_type.value,
+                "verification_required": cap.verification_required,
+                "hook_ids": (
+                    list(cap.verification_hook_ids)
+                    if cap.verification_required
+                    else []
+                ),
+                "citation_ids": list(cap.citation_ids),
+            }
+            trace.setdefault(con_id, []).append(entry)
     path = verification_dir / "REQ_TRACE.yaml"
     dump_yaml(path, {
         "requirement_trace": {

@@ -28,6 +28,14 @@ VALID_CODE_ARCH_ASPECTS = {
     "runtime",
 }
 VALID_AUTHOR_ROLES = {"external", "user_authored"}
+VALID_CONSTRAINT_KINDS = {
+    "tooling",
+    "regulatory",
+    "performance_target",
+    "infrastructure",
+    "resource",
+    "timeline",
+}
 VALID_WORKFLOW_TRIGGERS = {"inbox_watch", "manual", "webhook", "schedule"}
 VALID_WORKFLOW_IO_KINDS = {
     "tracked_doc",
@@ -305,6 +313,192 @@ def validate_alias_page(markdown_path: Path) -> list[str]:
     # rewritten.
     if len(body_lines) > 8:
         issues.append(f"{name}: alias page body is longer than expected")
+
+    return issues
+
+
+def validate_concept_reconciliation_return(
+    payload: dict[str, Any],
+    *,
+    bucket_key: str,
+    expected_citation_ids: set[str],
+) -> list[str]:
+    """Validate one concept-reconciler subagent's JSON return.
+
+    The orchestrator persists each subagent's return to
+    `runtime/wiki_reconcile/subagent_returns/{bucket_key}.json`. Before the
+    apply CLI synthesizes a proposal from those returns, each return is
+    checked to ensure:
+
+    * Required top-level keys (`alias_groups`, `distinct_concepts`) exist.
+    * Every `members[*].source_citation_id` is in `expected_citation_ids`
+      (i.e. came from the bucket the orchestrator handed the subagent).
+    * Every member carries `name`, `evidence_locator` (object), and a
+      non-empty `definition_excerpt`.
+
+    Returns a list of issue strings prefixed with the bucket key. Empty
+    list means the return is well-formed.
+    """
+    issues: list[str] = []
+    prefix = f"concept_reconciliation_return[{bucket_key}]"
+
+    if not isinstance(payload, dict):
+        return [f"{prefix}: must be an object"]
+
+    alias_groups = payload.get("alias_groups")
+    if alias_groups is None:
+        issues.append(f"{prefix}.alias_groups: missing (use [] when no merges)")
+    elif not isinstance(alias_groups, list):
+        issues.append(f"{prefix}.alias_groups: must be a list")
+        alias_groups = []
+
+    distinct_concepts = payload.get("distinct_concepts")
+    if distinct_concepts is None:
+        issues.append(f"{prefix}.distinct_concepts: missing (use [] when none)")
+    elif not isinstance(distinct_concepts, list):
+        issues.append(f"{prefix}.distinct_concepts: must be a list")
+
+    for idx, group in enumerate(alias_groups or []):
+        gp = f"{prefix}.alias_groups[{idx}]"
+        if not isinstance(group, dict):
+            issues.append(f"{gp}: must be an object")
+            continue
+        canonical = group.get("canonical_name")
+        if not isinstance(canonical, str) or not canonical.strip():
+            issues.append(f"{gp}.canonical_name: must be a non-empty string")
+        members = group.get("members")
+        if not isinstance(members, list) or len(members) < 2:
+            issues.append(f"{gp}.members: must be a list with >=2 entries")
+            members = members if isinstance(members, list) else []
+        seen_citations: set[str] = set()
+        for m_idx, member in enumerate(members):
+            mp = f"{gp}.members[{m_idx}]"
+            if not isinstance(member, dict):
+                issues.append(f"{mp}: must be an object")
+                continue
+            name = member.get("name")
+            if not isinstance(name, str) or not name.strip():
+                issues.append(f"{mp}.name: must be a non-empty string")
+            citation = member.get("source_citation_id")
+            if not isinstance(citation, str) or not citation.strip():
+                issues.append(f"{mp}.source_citation_id: must be a non-empty string")
+            elif expected_citation_ids and citation not in expected_citation_ids:
+                issues.append(
+                    f"{mp}.source_citation_id: {citation!r} not in bucket "
+                    f"source_citation_ids"
+                )
+            else:
+                seen_citations.add(citation)
+            locator = member.get("evidence_locator")
+            if not isinstance(locator, dict):
+                issues.append(f"{mp}.evidence_locator: must be an object")
+            excerpt = member.get("definition_excerpt")
+            if not isinstance(excerpt, str) or not excerpt.strip():
+                issues.append(f"{mp}.definition_excerpt: must be a non-empty string")
+        if len(seen_citations) < 2 and members:
+            issues.append(
+                f"{gp}: alias group spans only {len(seen_citations)} citation(s) — "
+                "demote to distinct_concepts (require >=2 distinct sources)"
+            )
+
+    for idx, entry in enumerate(distinct_concepts or []):
+        dp = f"{prefix}.distinct_concepts[{idx}]"
+        if not isinstance(entry, dict):
+            issues.append(f"{dp}: must be an object")
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            issues.append(f"{dp}.name: must be a non-empty string")
+        citation = entry.get("source_citation_id")
+        if not isinstance(citation, str) or not citation.strip():
+            issues.append(f"{dp}.source_citation_id: must be a non-empty string")
+        elif expected_citation_ids and citation not in expected_citation_ids:
+            issues.append(
+                f"{dp}.source_citation_id: {citation!r} not in bucket "
+                f"source_citation_ids"
+            )
+
+    return issues
+
+
+def validate_cross_source_synthesis_return(
+    payload: dict[str, Any],
+    *,
+    page_id: str,
+    expected_citation_ids: set[str],
+) -> list[str]:
+    """Validate one cross-source-synthesizer subagent's JSON return.
+
+    The orchestrator persists each subagent's return to
+    `runtime/wiki_cross_source/subagent_returns/{page_id}.json`. Each return
+    must satisfy:
+
+    * Non-empty `definition`, `key_claims`, `open_questions` strings.
+    * `citations_used` is a list with >=2 entries, all in
+      `expected_citation_ids`.
+    * The `definition` text references >=2 distinct citation IDs from
+      `expected_citation_ids` (so the prose actually surfaces multi-source
+      reconciliation, not a single-source paraphrase).
+    * `inter_source_divergences` is a list (may be empty).
+    """
+    issues: list[str] = []
+    prefix = f"cross_source_synthesis_return[{page_id}]"
+
+    if not isinstance(payload, dict):
+        return [f"{prefix}: must be an object"]
+
+    for field in ("definition", "key_claims", "open_questions"):
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(f"{prefix}.{field}: must be a non-empty string")
+
+    citations_used = payload.get("citations_used")
+    if not isinstance(citations_used, list):
+        issues.append(f"{prefix}.citations_used: must be a list")
+        citations_used = []
+    else:
+        if len(citations_used) < 2:
+            issues.append(
+                f"{prefix}.citations_used: must list >=2 sources "
+                "(this pass exists to surface cross-source divergence)"
+            )
+        for idx, cid in enumerate(citations_used):
+            if not isinstance(cid, str) or not cid.strip():
+                issues.append(f"{prefix}.citations_used[{idx}]: must be a non-empty string")
+                continue
+            if expected_citation_ids and cid not in expected_citation_ids:
+                issues.append(
+                    f"{prefix}.citations_used[{idx}]: {cid!r} not in page "
+                    "source_citation_ids"
+                )
+
+    definition = payload.get("definition") or ""
+    if isinstance(definition, str) and expected_citation_ids:
+        mentioned = {cid for cid in expected_citation_ids if cid in definition}
+        if len(mentioned) < 2:
+            issues.append(
+                f"{prefix}.definition: must reference >=2 distinct citations inline "
+                f"(found {sorted(mentioned)})"
+            )
+
+    divergences = payload.get("inter_source_divergences")
+    if divergences is None:
+        # Treat absence as empty list — explicit unanimous agreement.
+        pass
+    elif not isinstance(divergences, list):
+        issues.append(f"{prefix}.inter_source_divergences: must be a list when present")
+    else:
+        for idx, row in enumerate(divergences):
+            dp = f"{prefix}.inter_source_divergences[{idx}]"
+            if not isinstance(row, dict):
+                issues.append(f"{dp}: must be an object")
+                continue
+            for field in ("topic", "summary"):
+                if not isinstance(row.get(field), str) or not row.get(field).strip():
+                    issues.append(f"{dp}.{field}: must be a non-empty string")
+            sources = row.get("sources")
+            if not isinstance(sources, list) or not sources:
+                issues.append(f"{dp}.sources: must be a non-empty list")
 
     return issues
 
@@ -668,6 +862,86 @@ def validate_decision_log(payload: dict[str, Any]) -> list[str]:
                 issues.append(f"decision_log.requirements[{idx}].id: duplicate {req_id}")
             else:
                 seen_ids.add(req_id)
+
+    # Constraints are optional for back-compat (v1 logs predate this section).
+    # When present, every row must satisfy id/description/kind/citations and
+    # CON-NNN must be unique. Free-text "constraints_applied" entries on
+    # architecture/code_architecture/agents_needed continue to be accepted —
+    # entries that look like CON-NNN refs are cross-checked against the table.
+    constraints_table = root.get("constraints")
+    constraint_ids: set[str] = set()
+    if constraints_table is None:
+        constraints_table = []
+    if not isinstance(constraints_table, list):
+        issues.append("decision_log.constraints: must be a list when present")
+    else:
+        for idx, row in enumerate(constraints_table):
+            prefix = f"decision_log.constraints[{idx}]"
+            if not isinstance(row, dict):
+                issues.append(f"{prefix}: must be an object")
+                continue
+            _require_fields(
+                row, ["id", "description", "kind", "citations"], prefix, issues
+            )
+            con_id = row.get("id")
+            if not isinstance(con_id, str) or not re.fullmatch(r"CON-\d{3}", con_id):
+                issues.append(f"{prefix}.id: must match CON-NNN")
+            elif con_id in constraint_ids:
+                issues.append(f"{prefix}.id: duplicate {con_id}")
+            else:
+                constraint_ids.add(con_id)
+            kind = row.get("kind")
+            if kind is not None and kind not in VALID_CONSTRAINT_KINDS:
+                issues.append(
+                    f"{prefix}.kind: must be one of {sorted(VALID_CONSTRAINT_KINDS)} "
+                    f"(got {kind!r})"
+                )
+            verification_required = row.get("verification_required")
+            if verification_required is not None and not isinstance(verification_required, bool):
+                issues.append(
+                    f"{prefix}.verification_required: must be a boolean when present"
+                )
+
+    # Cross-reference: any constraints_applied / key_constraints entry that
+    # matches CON-NNN must resolve to a constraints[] row. Free-text entries
+    # are accepted (legacy v1 behaviour preserved).
+    _CON_REF_RE = re.compile(r"^CON-\d{3}$")
+
+    def _check_con_refs(items: Any, prefix: str) -> None:
+        if not isinstance(items, list):
+            return
+        for j, entry in enumerate(items):
+            if not isinstance(entry, str):
+                continue
+            if _CON_REF_RE.fullmatch(entry) and entry not in constraint_ids:
+                issues.append(
+                    f"{prefix}[{j}]: unresolved CON-NNN ref {entry!r}"
+                )
+
+    architecture_rows = root.get("architecture", [])
+    if isinstance(architecture_rows, list):
+        for idx, row in enumerate(architecture_rows):
+            if isinstance(row, dict):
+                _check_con_refs(
+                    row.get("constraints_applied"),
+                    f"decision_log.architecture[{idx}].constraints_applied",
+                )
+    code_arch_rows = root.get("code_architecture")
+    if isinstance(code_arch_rows, list):
+        for idx, row in enumerate(code_arch_rows):
+            if isinstance(row, dict):
+                _check_con_refs(
+                    row.get("constraints_applied"),
+                    f"decision_log.code_architecture[{idx}].constraints_applied",
+                )
+    agents_rows = root.get("agents_needed", [])
+    if isinstance(agents_rows, list):
+        for idx, row in enumerate(agents_rows):
+            if isinstance(row, dict):
+                _check_con_refs(
+                    row.get("key_constraints"),
+                    f"decision_log.agents_needed[{idx}].key_constraints",
+                )
 
     open_items = root.get("open_items", [])
     if not isinstance(open_items, list):
@@ -1140,6 +1414,9 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
     # ---- 9. Verification harness presence ----
     verification_dir = scaffold_root / "verification"
     for cap in graph.capabilities:
+        if not cap.verification_required:
+            # Constraint-only / policy capabilities deliberately skip stubs.
+            continue
         for hook_id in cap.verification_hook_ids:
             stub = verification_dir / f"{hook_id}.py"
             if not stub.exists():

@@ -1,9 +1,10 @@
 """Edit-tracking manifest for v2 wiki pages.
 
-Stage 1B's `_sync_v1_to_v2` and the Phase C enrichment passes write through
-this module. Each system write records the post-write SHA-256 of the page so a
-later sync can distinguish "system wrote it last; safe to overwrite" from
-"user (or another LLM pass) edited it; preserve".
+Stage 1B's `_sync_v1_to_v2`, the wiki linker, the relationship mapper, and the
+semantic wiki enrichment passes (concept reconciliation, cross-source
+synthesis) write through this module. Each system write records the post-write
+SHA-256 of the page so a later sync can distinguish "system wrote it last;
+safe to overwrite" from "user (or another LLM pass) edited it; preserve".
 
 The manifest lives at `<artifacts_root>/wiki/v2/edit_manifest.yaml` and has the
 shape:
@@ -14,7 +15,7 @@ shape:
       pages:
         <page_filename>:
           last_system_write_sha: <hex>
-          source: depth_baseline | enrichment | wiki_linker | relationship_mapper
+          source: depth_baseline | wiki_linker | relationship_mapper
                 | gap_remediation | concept_reconciliation | cross_source_synthesis
           last_system_write_at: <iso>
 
@@ -33,7 +34,6 @@ from .utils import iso_now, sha256_file
 
 VALID_SOURCES = {
     "depth_baseline",
-    "enrichment",
     "wiki_linker",
     "relationship_mapper",
     "gap_remediation",

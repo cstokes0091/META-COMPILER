@@ -515,6 +515,166 @@ def test_gate_artifact_writes_blocks_contract_yaml(tmp_path):
     assert r.get("permissionDecision") == "deny"
 
 
+def test_gate_reconcile_request_denies_without_request_or_returns(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    artifacts.mkdir()
+    cmd = _bash("meta-compiler wiki-apply-reconciliation --version 2")
+    r = _invoke("gate_reconcile_request", cmd, tmp_path)
+    assert r.get("permissionDecision") == "deny"
+    assert "reconcile_request.yaml" in r.get("reason", "")
+
+
+def test_gate_reconcile_request_denies_when_proposal_malformed(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    runtime = artifacts / "runtime" / "wiki_reconcile"
+    runtime.mkdir(parents=True)
+    (runtime / "reconcile_request.yaml").write_text(
+        "wiki_reconcile_request:\n  version: 2\n"
+    )
+    reports = artifacts / "wiki" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "concept_reconciliation_v2.yaml").write_text(
+        "concept_reconciliation_proposal:\n"
+        "  generated_at: 't'\n"
+        "  version: 2\n"
+        "  alias_groups:\n"
+        "    - canonical_name: 'Foo'\n"
+        "      justification: 'j'\n"
+        "      members:\n"
+        "        - name: 'a'\n"  # missing source_citation_id, evidence_locator, definition_excerpt
+    )
+    r = _invoke(
+        "gate_reconcile_request",
+        _bash("meta-compiler wiki-apply-reconciliation --version 2"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "schema validation" in r.get("reason", "")
+
+
+def test_gate_reconcile_request_allows_with_subagent_returns(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    runtime = artifacts / "runtime" / "wiki_reconcile"
+    returns_dir = runtime / "subagent_returns"
+    returns_dir.mkdir(parents=True)
+    (runtime / "reconcile_request.yaml").write_text(
+        "wiki_reconcile_request:\n  version: 2\n"
+    )
+    (returns_dir / "noise.json").write_text(
+        '{"bucket_key": "noise", "alias_groups": [], "distinct_concepts": []}'
+    )
+    r = _invoke(
+        "gate_reconcile_request",
+        _bash("meta-compiler wiki-apply-reconciliation --version 2"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow"
+
+
+def test_gate_cross_source_synthesis_returns_denies_without_workplan(tmp_path):
+    r = _invoke(
+        "gate_cross_source_synthesis_returns",
+        _bash("meta-compiler wiki-apply-cross-source-synthesis --version 2"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "work_plan.yaml" in r.get("reason", "")
+
+
+def test_gate_cross_source_synthesis_returns_denies_without_returns(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    runtime = artifacts / "runtime" / "wiki_cross_source"
+    runtime.mkdir(parents=True)
+    (runtime / "work_plan.yaml").write_text(
+        "wiki_cross_source_work_plan:\n  version: 2\n  work_items: []\n"
+    )
+    r = _invoke(
+        "gate_cross_source_synthesis_returns",
+        _bash("meta-compiler wiki-apply-cross-source-synthesis --version 2"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "subagent" in r.get("reason", "")
+
+
+def test_gate_cross_source_synthesis_returns_allows_when_returns_present(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    runtime = artifacts / "runtime" / "wiki_cross_source"
+    returns_dir = runtime / "subagent_returns"
+    returns_dir.mkdir(parents=True)
+    (runtime / "work_plan.yaml").write_text(
+        "wiki_cross_source_work_plan:\n  version: 2\n  work_items: []\n"
+    )
+    (returns_dir / "concept-foo.json").write_text("{}")
+    r = _invoke(
+        "gate_cross_source_synthesis_returns",
+        _bash("meta-compiler wiki-apply-cross-source-synthesis --version 2"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow"
+
+
+def test_gate_implementation_plan_denies_without_decision_log(tmp_path):
+    r = _invoke(
+        "gate_implementation_plan",
+        _bash("meta-compiler plan-implementation --finalize"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "decision_log" in r.get("reason", "")
+
+
+def test_gate_implementation_plan_denies_without_plan_md(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    decision_logs = artifacts / "decision-logs"
+    decision_logs.mkdir(parents=True)
+    (decision_logs / "decision_log_v1.yaml").write_text(
+        "decision_log:\n  meta:\n    version: 1\n"
+    )
+    r = _invoke(
+        "gate_implementation_plan",
+        _bash("meta-compiler plan-implementation --finalize"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "implementation_plan_v1.md" in r.get("reason", "")
+
+
+def test_gate_implementation_plan_allows_when_plan_md_present(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    decision_logs = artifacts / "decision-logs"
+    decision_logs.mkdir(parents=True)
+    (decision_logs / "decision_log_v1.yaml").write_text(
+        "decision_log:\n  meta:\n    version: 1\n"
+    )
+    (decision_logs / "implementation_plan_v1.md").write_text("# Plan\n")
+    r = _invoke(
+        "gate_implementation_plan",
+        _bash("meta-compiler plan-implementation --finalize"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "allow"
+
+
+def test_gate_capability_compile_denies_when_plan_md_present_but_extract_missing(tmp_path):
+    artifacts = tmp_path / "workspace-artifacts"
+    _write_hybrid_manifest(artifacts, stage="2")
+    decision_logs = artifacts / "decision-logs"
+    decision_logs.mkdir(parents=True, exist_ok=True)
+    (decision_logs / "decision_log_v1.yaml").write_text(
+        "decision_log:\n  meta:\n    version: 1\n"
+    )
+    (decision_logs / "implementation_plan_v1.md").write_text("# Plan\n")
+    # plan_extract_v1.yaml deliberately not written.
+    r = _invoke(
+        "gate_capability_compile",
+        _bash("meta-compiler compile-capabilities"),
+        tmp_path,
+    )
+    assert r.get("permissionDecision") == "deny"
+    assert "plan_extract_v1.yaml" in r.get("reason", "")
+
+
 def test_gate_wiki_search_apply_denies_without_topic_files(tmp_path):
     """gate_wiki_search_apply blocks --apply when results dir is empty."""
     artifacts = tmp_path / "workspace-artifacts"

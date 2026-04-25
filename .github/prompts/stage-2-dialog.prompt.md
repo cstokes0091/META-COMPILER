@@ -136,6 +136,7 @@ When a decision actually lands, write a **decision block** in this exact format:
 | `scope-in` | Item |
 | `scope-out` | Item, Revisit if |
 | `requirements` | Source (user\|derived), Description (EARS-phrased), Verification, Lens |
+| `constraints` | Description, Kind (tooling\|regulatory\|performance_target\|infrastructure\|resource\|timeline). Optional: `Verification required: true\|false` (default false). |
 | `open_items` | Description, Deferred to (implementation\|future_work), Owner |
 | `agents_needed` | Role, Responsibility, Inputs (typed sublist), Outputs (typed sublist), Key constraints. Inputs and Outputs use `  - <name>: <modality>` entries with `modality ∈ {document, code}` (see Inputs/Outputs format below). |
 
@@ -208,12 +209,45 @@ For each in-scope item captured, walk the lens matrix before finalizing:
 | security | What auth, authorization, or data protection is required? |
 | maintainability | What code or doc structure makes ongoing work feasible? |
 | portability | What environments must this support? |
-| constraint | What regulatory, legal, or resource limits apply? |
+| constraint | What regulatory, legal, or resource limits apply? *(prefer the dedicated `constraints` section instead — see below)* |
 | data | What inputs, outputs, or schemas are required? |
 | interface | What APIs or protocols with other components are required? |
 | business-rule | What domain invariants must hold? |
 
 If a lens does not apply to an item, note why in prose and move on — do not skip silently.
+
+**Constraints vs. requirements.** A *requirement* is something the system
+*does* (a behaviour to verify). A *constraint* is something that bounds
+*how* the system is built (a regulatory limit, a performance budget, a
+tooling pin). Constraints belong in their own decision blocks under
+`Section: constraints` — not in the requirements lens matrix. The
+constraint section produces `CON-NNN` ids and never gets a verification
+hook unless `Verification required: true` is set. Stage 3 reads the
+constraints separately so they don't pollute the capability graph.
+
+#### Constraint block format example
+
+```
+### Decision: latency-budget
+- Section: constraints
+- Description: System response < 250 ms p95
+- Kind: performance_target
+- Verification required: true
+- Rationale: Customer SLA per src-perf-spec
+- Citations: src-perf-spec
+
+### Decision: python-version-pin
+- Section: constraints
+- Description: Python 3.11 only (no 3.12)
+- Kind: tooling
+- Rationale: existing toolchain, no testing on 3.12
+- Citations: (none)
+```
+
+The first constraint above is testable (a perf benchmark can verify it),
+so `Verification required: true` produces a `verify_*` capability in
+Stage 3. The second is a tooling decision — Stage 3 records it in
+`REQ_TRACE.yaml` for traceability but does not generate a pytest stub.
 
 Phrase every requirement decision block's `Description:` using one of the EARS forms:
 "When `<trigger>`, the `<system>` shall `<response>`." / "While `<state>`, the `<system>` shall `<response>`." / "If `<condition>`, then the `<system>` shall `<response>`." / "Where `<feature>`, the `<system>` shall `<response>`." / "The `<system>` shall `<response>`."

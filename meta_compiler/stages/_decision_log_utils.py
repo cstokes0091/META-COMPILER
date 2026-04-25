@@ -44,6 +44,14 @@ def resolve_decision_log(
     if issues:
         raise RuntimeError("Decision Log validation failed:\n" + "\n".join(issues))
 
+    # Back-compat shim: v1 decision logs predate the constraints[] section.
+    # Inject an empty list so downstream consumers (capability_compile_stage,
+    # workspace_bootstrap_stage, stage2_reentry) can rely on the field being
+    # present.
+    decision_log = payload.get("decision_log") if isinstance(payload, dict) else None
+    if isinstance(decision_log, dict) and decision_log.get("constraints") is None:
+        decision_log["constraints"] = []
+
     return version, path, payload
 
 
@@ -72,7 +80,13 @@ def ordered_unique(values: list[str]) -> list[str]:
 def collect_citation_ids(root: dict[str, Any]) -> list[str]:
     """Collect citation IDs from a decision-log root (the inner `decision_log` dict)."""
     citations: list[str] = []
-    for section in ("conventions", "architecture", "code_architecture", "requirements"):
+    for section in (
+        "conventions",
+        "architecture",
+        "code_architecture",
+        "requirements",
+        "constraints",
+    ):
         for row in root.get(section, []) or []:
             if not isinstance(row, dict):
                 continue

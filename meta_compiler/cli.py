@@ -10,7 +10,6 @@ from .stages.audit_stage import run_audit_requirements
 from .stages.breadth_stage import run_research_breadth
 from .stages.clean_stage import run_clean_workspace
 from .stages.depth_stage import run_research_depth
-from .stages.enrichment_stage import run_enrich_wiki
 from .stages.relationship_stage import (
     run_apply_relationships,
     run_propose_relationships,
@@ -35,6 +34,11 @@ from .stages.migrate_decision_log_stage import (
 from .stages.capability_compile_stage import run_capability_compile
 from .stages.contract_extract_stage import run_contract_extract
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
+from .stages.plan_implementation_stage import (
+    run_plan_implementation_finalize,
+    run_plan_implementation_start,
+)
+from .stages.wiki_update_stage import run_wiki_update
 from .stages.skill_synthesis_stage import run_skill_synthesis
 from .stages.workspace_bootstrap_stage import run_workspace_bootstrap
 from .stages.review_stage import run_review
@@ -43,6 +47,7 @@ from .stages.scaffold_stage import run_scaffold
 from .stages.seed_tracker import check_and_update_seeds
 from .stages.stage2_reentry import run_finalize_reentry, run_stage2_reentry
 from .stages.concept_reconciliation_stage import (
+    run_wiki_apply_cross_source_synthesis,
     run_wiki_apply_reconciliation,
     run_wiki_cross_source_synthesize,
     run_wiki_reconcile_concepts,
@@ -99,6 +104,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
     breadth_parser = subparsers.add_parser("research-breadth", help="Run Stage 1A breadth research")
     _add_common_paths(breadth_parser)
+
+    wiki_update_parser = subparsers.add_parser(
+        "wiki-update",
+        help=(
+            "Refresh the wiki index after new seeds land. "
+            "Chains `ingest --scope new` + `research-breadth`."
+        ),
+    )
+    _add_common_paths(wiki_update_parser)
+    wiki_update_parser.add_argument(
+        "--scope",
+        default="new",
+        choices=["all", "new"],
+        help="Seed scope to scan during the ingest preflight (default: new)",
+    )
+    wiki_update_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Run research-breadth even when ingest reports new work items "
+            "pending the orchestrator. Refreshes the index from existing "
+            "findings without waiting for extraction."
+        ),
+    )
 
     ingest_parser = subparsers.add_parser(
         "ingest",
@@ -228,19 +257,6 @@ def _build_parser() -> argparse.ArgumentParser:
     review_parser = subparsers.add_parser("review", help="Run Stage 1C review panel")
     _add_common_paths(review_parser)
 
-    enrich_parser = subparsers.add_parser(
-        "enrich-wiki",
-        help="Prepare a work plan for the wiki-synthesizer agent (v2 only)",
-    )
-    _add_common_paths(enrich_parser)
-    enrich_parser.add_argument(
-        "--version",
-        type=int,
-        default=2,
-        choices=[2],
-        help="Wiki version to enrich. Only 2 is supported (v1 stays templated).",
-    )
-
     wiki_link_parser = subparsers.add_parser(
         "wiki-link",
         help="Insert inline links between v2 concept pages (deterministic, idempotent)",
@@ -283,6 +299,35 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Decision log version to audit (default: latest)",
+    )
+
+    plan_parser = subparsers.add_parser(
+        "plan-implementation",
+        help=(
+            "Stage 2.5: bundle planning brief (--start) or extract the plan "
+            "markdown (--finalize) for Stage 3 capability compile"
+        ),
+    )
+    _add_common_paths(plan_parser)
+    plan_mode_group = plan_parser.add_mutually_exclusive_group(required=True)
+    plan_mode_group.add_argument(
+        "--start",
+        action="store_true",
+        help="Preflight: render runtime/plan/brief.md from the decision log",
+    )
+    plan_mode_group.add_argument(
+        "--finalize",
+        action="store_true",
+        help=(
+            "Postflight: validate decision-logs/implementation_plan_v{N}.md "
+            "and extract the capability_plan YAML"
+        ),
+    )
+    plan_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version to plan against (default: latest)",
     )
 
     elicit_parser = subparsers.add_parser(
@@ -567,6 +612,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wiki version. Only 2 is supported.",
     )
 
+    apply_cross_source_parser = subparsers.add_parser(
+        "wiki-apply-cross-source-synthesis",
+        help=(
+            "Phase B postflight: validate per-page subagent JSON returns and rewrite v2 "
+            "Definition / Key Claims / Open Questions sections deterministically"
+        ),
+    )
+    _add_common_paths(apply_cross_source_parser)
+    apply_cross_source_parser.add_argument(
+        "--version",
+        type=int,
+        default=2,
+        choices=[2],
+        help="Wiki version. Only 2 is supported.",
+    )
+
     style_corpus_parser = subparsers.add_parser(
         "wiki-build-style-corpus",
         help="Scan user_authored seeds + findings; emit wiki/style/style_corpus.md",
@@ -767,6 +828,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "research-breadth":
             result = run_research_breadth(artifacts_root=artifacts_root, workspace_root=workspace_root)
+        elif args.command == "wiki-update":
+            result = run_wiki_update(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                scope=args.scope,
+                force=args.force,
+            )
         elif args.command == "research-depth":
             result = run_research_depth(
                 artifacts_root=artifacts_root,
@@ -775,12 +843,6 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "review":
             result = run_review(artifacts_root=artifacts_root)
-        elif args.command == "enrich-wiki":
-            result = run_enrich_wiki(
-                artifacts_root=artifacts_root,
-                workspace_root=workspace_root,
-                version=args.version,
-            )
         elif args.command == "wiki-link":
             result = run_wiki_link(
                 artifacts_root=artifacts_root,
@@ -804,6 +866,19 @@ def main(argv: list[str] | None = None) -> int:
                 workspace_root=workspace_root,
                 decision_log_version=args.decision_log_version,
             )
+        elif args.command == "plan-implementation":
+            if args.start:
+                result = run_plan_implementation_start(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    decision_log_version=args.decision_log_version,
+                )
+            else:
+                result = run_plan_implementation_finalize(
+                    artifacts_root=artifacts_root,
+                    workspace_root=workspace_root,
+                    decision_log_version=args.decision_log_version,
+                )
         elif args.command == "elicit-vision":
             if args.start:
                 result = run_elicit_vision_start(
@@ -886,6 +961,12 @@ def main(argv: list[str] | None = None) -> int:
                 )
         elif args.command == "wiki-cross-source-synthesize":
             result = run_wiki_cross_source_synthesize(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                version=args.version,
+            )
+        elif args.command == "wiki-apply-cross-source-synthesis":
+            result = run_wiki_apply_cross_source_synthesis(
                 artifacts_root=artifacts_root,
                 workspace_root=workspace_root,
                 version=args.version,

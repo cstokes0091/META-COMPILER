@@ -315,7 +315,7 @@ def _write_debate_transcript(
 
 
 def _sync_v1_to_v2(paths, force_regenerate: bool = False) -> dict[str, Any]:
-    """Sync v1 baseline pages into v2, preserving user/enrichment edits.
+    """Sync v1 baseline pages into v2, preserving user and downstream-pass edits.
 
     A v2 page is overwritten only when it does not exist, or when its current
     SHA matches the recorded `last_system_write_sha` in the edit manifest
@@ -551,7 +551,8 @@ def run_research_depth(
                     "pages": sync_result["preserved_pages"],
                     "note": (
                         "These v2 pages were modified after the last system write "
-                        "(by enrichment, linker, relationship-mapper, or human edit) "
+                        "(by linker, relationship-mapper, concept-reconciliation, "
+                        "cross-source-synthesis, or human edit) "
                         "and were preserved during this Stage 1B re-run. Pass "
                         "--force-regenerate-v2 to wipe them on the next run."
                     ),

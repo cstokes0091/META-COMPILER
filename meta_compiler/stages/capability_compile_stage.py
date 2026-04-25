@@ -36,7 +36,7 @@ from ..findings_loader import (
     load_all_findings,
     trigger_content_tokens,
 )
-from ..io import dump_yaml
+from ..io import dump_yaml, load_yaml
 from ..schemas import Capability, CapabilityGraph, VerificationType
 from ..utils import iso_now, slugify
 from ..validation import _is_generic_trigger
@@ -71,8 +71,12 @@ def run_capability_compile(
             "(or pass allow_empty_findings=True for testing)."
         )
 
-    capabilities = _extract_capabilities(root, findings, version)
-    capabilities = _merge_compositions(capabilities)
+    plan_extract = _load_plan_extract(paths, version)
+    capabilities = _extract_capabilities(
+        root, findings, version, plan_extract=plan_extract
+    )
+    if plan_extract is None:
+        capabilities = _merge_compositions(capabilities)
 
     graph = CapabilityGraph(
         generated_at=iso_now(),
@@ -99,15 +103,44 @@ def run_capability_compile(
     }
 
 
+def _load_plan_extract(paths: ArtifactPaths, version: int) -> dict[str, Any] | None:
+    """Load `decision-logs/plan_extract_v{N}.yaml` when present.
+
+    Returns the inner `plan_extract` dict, or None when the file is missing
+    (legacy/bootstrap path).
+    """
+    extract_path = paths.plan_extract_path(version)
+    if not extract_path.exists():
+        return None
+    payload = load_yaml(extract_path) or {}
+    inner = payload.get("plan_extract")
+    if not isinstance(inner, dict):
+        return None
+    return inner
+
+
 def _extract_capabilities(
     root: dict[str, Any],
     findings: list[FindingRecord],
     decision_log_version: int,
+    *,
+    plan_extract: dict[str, Any] | None = None,
 ) -> list[Capability]:
     findings_by_citation = _index_findings_by_citation(findings)
     vocab_primary = concept_vocabulary(findings)
     vocab_bootstrap = decision_log_vocabulary({"decision_log": root}) if not findings else None
     bootstrap_mode = not findings
+
+    if plan_extract is not None:
+        return _capabilities_from_plan_extract(
+            plan_extract,
+            root=root,
+            findings_by_citation=findings_by_citation,
+            vocab_primary=vocab_primary,
+            vocab_bootstrap=vocab_bootstrap,
+            decision_log_version=decision_log_version,
+            bootstrap_mode=bootstrap_mode,
+        )
 
     capabilities: list[Capability] = []
     used_names: set[str] = set()
@@ -191,6 +224,194 @@ def _index_findings_by_citation(records: list[FindingRecord]) -> dict[str, list[
     for rec in records:
         out.setdefault(rec.citation_id, []).append(rec)
     return out
+
+
+def _capabilities_from_plan_extract(
+    plan_extract: dict[str, Any],
+    *,
+    root: dict[str, Any],
+    findings_by_citation: dict[str, list[FindingRecord]],
+    vocab_primary: set[str],
+    vocab_bootstrap: set[str] | None,
+    decision_log_version: int,
+    bootstrap_mode: bool,
+) -> list[Capability]:
+    """Plan-driven capability compile.
+
+    Reads each entry in `plan_extract.capabilities` and constructs a
+    Capability whose `requirement_ids` / `constraint_ids` come from the
+    plan (N-to-M with REQs/CONs), citations are the union of REQ + CON
+    citations, and `verification_required` propagates from the plan.
+    """
+    requirements_by_id = {
+        str(row.get("id")): row
+        for row in root.get("requirements") or []
+        if isinstance(row, dict) and row.get("id")
+    }
+    constraints_by_id = {
+        str(row.get("id")): row
+        for row in root.get("constraints") or []
+        if isinstance(row, dict) and row.get("id")
+    }
+
+    capabilities: list[Capability] = []
+    used_names: set[str] = set()
+    plan_capabilities = plan_extract.get("capabilities") or []
+    for entry in plan_capabilities:
+        if not isinstance(entry, dict):
+            continue
+        cap = _capability_from_plan_entry(
+            entry,
+            requirements_by_id=requirements_by_id,
+            constraints_by_id=constraints_by_id,
+            findings_by_citation=findings_by_citation,
+            vocab_primary=vocab_primary,
+            vocab_bootstrap=vocab_bootstrap,
+            decision_log_version=decision_log_version,
+            used_names=used_names,
+            bootstrap_mode=bootstrap_mode,
+        )
+        if cap is not None:
+            capabilities.append(cap)
+    if not capabilities:
+        raise RuntimeError(
+            "Plan extract produced zero capabilities. "
+            "Re-run `meta-compiler plan-implementation --finalize` to refresh "
+            "decision-logs/plan_extract_v*.yaml."
+        )
+    return capabilities
+
+
+def _capability_from_plan_entry(
+    entry: dict[str, Any],
+    *,
+    requirements_by_id: dict[str, dict[str, Any]],
+    constraints_by_id: dict[str, dict[str, Any]],
+    findings_by_citation: dict[str, list[FindingRecord]],
+    vocab_primary: set[str],
+    vocab_bootstrap: set[str] | None,
+    decision_log_version: int,
+    used_names: set[str],
+    bootstrap_mode: bool,
+) -> Capability | None:
+    raw_name = str(entry.get("name") or "").strip()
+    description = str(entry.get("description") or "").strip()
+    if not raw_name or not description:
+        return None
+    requirement_ids = [
+        str(rid) for rid in entry.get("requirement_ids") or [] if isinstance(rid, str)
+    ]
+    constraint_ids = [
+        str(cid) for cid in entry.get("constraint_ids") or [] if isinstance(cid, str)
+    ]
+    verification_required = bool(entry.get("verification_required", True))
+    composes = [
+        str(c) for c in entry.get("composes") or [] if isinstance(c, str)
+    ]
+
+    # Citations are the union of every referenced REQ + CON's citations.
+    citations: list[str] = []
+    for rid in requirement_ids:
+        row = requirements_by_id.get(rid)
+        if isinstance(row, dict):
+            citations.extend(as_string_list(row.get("citations", [])))
+    for cid in constraint_ids:
+        row = constraints_by_id.get(cid)
+        if isinstance(row, dict):
+            citations.extend(as_string_list(row.get("citations", [])))
+    citations = ordered_unique(citations)
+
+    name = _unique_name(raw_name, used_names)
+    description_truncated = _truncate(description, MAX_DESCRIPTION_LENGTH)
+
+    findings_for_row = [
+        rec for cid in citations for rec in findings_by_citation.get(cid, [])
+    ]
+    if findings_for_row:
+        required_finding_ids = ordered_unique(
+            [rec.finding_id for rec in findings_for_row]
+        )
+    elif bootstrap_mode and citations:
+        required_finding_ids = list(citations)
+    else:
+        required_finding_ids = []
+
+    if not citations:
+        raise RuntimeError(
+            f"Capability {name!r}: every plan capability must trace to >=1 "
+            "citation via its REQ_ids or CON_ids. The planner should refuse "
+            "to emit floating capabilities — add citations to the underlying "
+            "REQ/CON rows or merge this entry into a cap that already has them."
+        )
+
+    try:
+        triggers = _derive_triggers(
+            description_truncated,
+            findings_for_row,
+            vocab_primary,
+            vocab_bootstrap,
+            {"description": description_truncated},
+        )
+    except RuntimeError:
+        triggers = []
+    if not triggers:
+        triggers = [description_truncated]
+
+    if not required_finding_ids:
+        if bootstrap_mode:
+            required_finding_ids = list(citations)
+        elif verification_required:
+            raise RuntimeError(
+                f"Capability {name!r}: verification_required=True and "
+                f"citations {citations} resolve to zero findings. Run "
+                "ingest first or mark the plan entry "
+                "verification_required=false."
+            )
+        else:
+            # Policy-only cap whose CON citations didn't yield findings
+            # (the citation_id appears in the index but has no extracted
+            # findings yet). Fall back to the citation IDs themselves so
+            # downstream stages have something to display.
+            required_finding_ids = list(citations)
+
+    verification_hook_ids = [f"ver-{name}-001"]
+
+    verification_type = _infer_verification_type_from_plan(entry, requirements_by_id)
+
+    return Capability(
+        name=name,
+        description=description_truncated,
+        when_to_use=triggers,
+        required_finding_ids=required_finding_ids,
+        io_contract_ref=f"contract-{name}",
+        verification_type=verification_type,
+        verification_hook_ids=verification_hook_ids,
+        requirement_ids=requirement_ids,
+        constraint_ids=constraint_ids,
+        citation_ids=citations,
+        composes=composes,
+        verification_required=verification_required,
+    )
+
+
+def _infer_verification_type_from_plan(
+    entry: dict[str, Any],
+    requirements_by_id: dict[str, dict[str, Any]],
+) -> VerificationType:
+    """Pick a verification type for a planner-driven capability.
+
+    If the plan covers any REQ-NNN with a `verification` hint, prefer that.
+    Otherwise default to unit_test for verification-required capabilities and
+    static_lint for non-verification capabilities (a sensible placeholder
+    even though no stub is generated).
+    """
+    for rid in entry.get("requirement_ids") or []:
+        row = requirements_by_id.get(str(rid))
+        if isinstance(row, dict) and row.get("verification"):
+            return _infer_verification_type(row.get("verification"))
+    if entry.get("verification_required") is False:
+        return VerificationType.static_lint
+    return VerificationType.unit_test
 
 
 def _capability_from_requirement(

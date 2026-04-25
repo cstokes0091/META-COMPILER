@@ -54,6 +54,11 @@
           },
           {
             "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_cross_source_synthesis_returns",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_wiki_search_apply",
             "timeout": 10
           },
@@ -70,6 +75,11 @@
           {
             "type": "command",
             "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_capability_compile",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_implementation_plan",
             "timeout": 10
           },
           {

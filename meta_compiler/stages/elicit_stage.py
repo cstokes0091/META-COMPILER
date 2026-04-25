@@ -41,6 +41,7 @@ VALID_SECTIONS = {
     "scope-in",
     "scope-out",
     "requirements",
+    "constraints",
     "open_items",
     "agents_needed",
 }
@@ -55,6 +56,14 @@ VALID_CODE_ARCH_ASPECTS = {
     "module_layout",
     "build_tooling",
     "runtime",
+}
+VALID_CONSTRAINT_KINDS = {
+    "tooling",
+    "regulatory",
+    "performance_target",
+    "infrastructure",
+    "resource",
+    "timeline",
 }
 CODE_ARCH_PROJECT_TYPES = {"algorithm", "hybrid"}
 
@@ -84,6 +93,7 @@ _REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "scope-in": ("item",),
     "scope-out": ("item", "revisit_if"),
     "requirements": ("source", "description", "verification", "lens"),
+    "constraints": ("description", "kind"),
     "open_items": ("description", "deferred_to", "owner"),
     "agents_needed": ("role", "responsibility", "inputs", "outputs", "key_constraints"),
 }
@@ -324,6 +334,13 @@ def _parse_single_block(block_lines: list[str], source_line: int) -> DecisionBlo
                         f"entry '{entry.get('name', '<unknown>') if isinstance(entry, dict) else entry}' "
                         f"modality '{modality}' must be one of {sorted(VALID_AGENT_MODALITIES)}"
                     )
+    elif section == "constraints":
+        kind = fields.get("kind", "")
+        if kind not in VALID_CONSTRAINT_KINDS:
+            raise DecisionBlockParseError(
+                f"line {source_line}: decision block '{name}' Kind '{kind}' must be one of "
+                f"{sorted(VALID_CONSTRAINT_KINDS)}"
+            )
     elif section == "code-architecture":
         aspect = fields.get("aspect", "")
         if aspect not in VALID_CODE_ARCH_ASPECTS:
@@ -522,6 +539,35 @@ def _compile_requirements(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
     return entries
 
 
+def _coerce_bool(raw: Any, *, default: bool = False) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"true", "yes", "y", "1"}
+    if raw is None:
+        return default
+    return bool(raw)
+
+
+def _compile_constraints(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for idx, block in enumerate(blocks, start=1):
+        verification_required = _coerce_bool(
+            block.fields.get("verification_required"), default=False
+        )
+        entries.append(
+            {
+                "id": f"CON-{idx:03d}",
+                "description": block.fields["description"],
+                "kind": block.fields["kind"],
+                "verification_required": verification_required,
+                "citations": list(block.citations),
+                "rationale": block.rationale,
+            }
+        )
+    return entries
+
+
 def _compile_open_items(blocks: list[DecisionBlock]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for block in blocks:
@@ -597,6 +643,7 @@ def compile_decision_log(
             out_blocks=by_section["scope-out"],
         ),
         "requirements": _compile_requirements(by_section["requirements"]),
+        "constraints": _compile_constraints(by_section["constraints"]),
         "open_items": _compile_open_items(by_section["open_items"]),
         "agents_needed": _compile_agents(by_section["agents_needed"]),
     }
@@ -640,6 +687,7 @@ def mechanical_fidelity_checks(
         + len(root.get("scope", {}).get("in_scope", []) or [])
         + len(root.get("scope", {}).get("out_of_scope", []) or [])
         + len(root.get("requirements", []))
+        + len(root.get("constraints", []) or [])
         + len(root.get("open_items", []))
         + len(root.get("agents_needed", []))
     )

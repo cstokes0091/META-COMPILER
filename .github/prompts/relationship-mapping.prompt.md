@@ -75,4 +75,3 @@ Print: `Relationships applied — N additions across M pages, K rejected. Wiki g
 
 - Mapper agent: `.github/agents/relationship-mapper.agent.md`
 - Linker (run before this): `meta-compiler wiki-link --version 2`
-- Synthesizer (run before linker): `meta-compiler enrich-wiki --version 2`

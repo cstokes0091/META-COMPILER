@@ -71,12 +71,18 @@ class ArtifactPaths:
     phase4_pitch_request_path: Path
     # Semantic wiki enrichment runtime artifacts.
     # Phase A reconciles concept aliases across findings; Phase B synthesizes
-    # cross-source definitions for canonical concept pages.
+    # cross-source definitions for canonical concept pages. Subagent returns
+    # are persisted as per-bucket / per-page JSON so the CLI postflight can
+    # validate and assemble outputs deterministically (no LLM in the apply
+    # step).
     wiki_reconcile_runtime_dir: Path
     wiki_reconcile_work_plan_path: Path
     wiki_reconcile_request_path: Path
+    wiki_reconcile_subagent_returns_dir: Path
     wiki_cross_source_runtime_dir: Path
     wiki_cross_source_work_plan_path: Path
+    wiki_cross_source_request_path: Path
+    wiki_cross_source_subagent_returns_dir: Path
     # Stage 2 wiki-search runtime artifacts.
     # Auto-fired as Step 0 of `elicit-vision --start` so the dialog opens with
     # a populated "Wiki Evidence" section. Mirrors the concept-reconciliation
@@ -87,6 +93,18 @@ class ArtifactPaths:
     wiki_search_work_plan_path: Path
     wiki_search_request_path: Path
     wiki_search_results_path: Path
+    # Stage 2.5 implementation-planning runtime artifacts. The brief is the
+    # input the implementation-planner agent reads before drafting the plan.
+    # The plan markdown lives under decision-logs/ alongside the decision log
+    # so version history is preserved together.
+    plan_runtime_dir: Path
+    plan_brief_path: Path
+
+    def implementation_plan_path(self, version: int) -> Path:
+        return self.decision_logs_dir / f"implementation_plan_v{version}.md"
+
+    def plan_extract_path(self, version: int) -> Path:
+        return self.decision_logs_dir / f"plan_extract_v{version}.yaml"
 
 
 def build_paths(root: Path) -> ArtifactPaths:
@@ -100,6 +118,7 @@ def build_paths(root: Path) -> ArtifactPaths:
     wiki_reconcile_runtime_dir = runtime_dir / "wiki_reconcile"
     wiki_cross_source_runtime_dir = runtime_dir / "wiki_cross_source"
     wiki_search_runtime_dir = stage2_runtime_dir / "wiki_search"
+    plan_runtime_dir = runtime_dir / "plan"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -149,14 +168,19 @@ def build_paths(root: Path) -> ArtifactPaths:
         wiki_reconcile_runtime_dir=wiki_reconcile_runtime_dir,
         wiki_reconcile_work_plan_path=wiki_reconcile_runtime_dir / "work_plan.yaml",
         wiki_reconcile_request_path=wiki_reconcile_runtime_dir / "reconcile_request.yaml",
+        wiki_reconcile_subagent_returns_dir=wiki_reconcile_runtime_dir / "subagent_returns",
         wiki_cross_source_runtime_dir=wiki_cross_source_runtime_dir,
         wiki_cross_source_work_plan_path=wiki_cross_source_runtime_dir / "work_plan.yaml",
+        wiki_cross_source_request_path=wiki_cross_source_runtime_dir / "cross_source_request.yaml",
+        wiki_cross_source_subagent_returns_dir=wiki_cross_source_runtime_dir / "subagent_returns",
         wiki_search_runtime_dir=wiki_search_runtime_dir,
         wiki_search_results_dir=wiki_search_runtime_dir / "results",
         wiki_search_inline_dir=wiki_search_runtime_dir / "inline",
         wiki_search_work_plan_path=wiki_search_runtime_dir / "work_plan.yaml",
         wiki_search_request_path=wiki_search_runtime_dir / "wiki_search_request.yaml",
         wiki_search_results_path=wiki_search_runtime_dir / "results.yaml",
+        plan_runtime_dir=plan_runtime_dir,
+        plan_brief_path=plan_runtime_dir / "brief.md",
     )
 
 
@@ -184,7 +208,9 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.runtime_repo_map_dir,
         paths.phase4_runtime_dir,
         paths.wiki_reconcile_runtime_dir,
+        paths.wiki_reconcile_subagent_returns_dir,
         paths.wiki_cross_source_runtime_dir,
+        paths.wiki_cross_source_subagent_returns_dir,
         paths.wiki_search_runtime_dir,
         paths.wiki_search_results_dir,
         paths.wiki_search_inline_dir,

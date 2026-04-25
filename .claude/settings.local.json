@@ -7,7 +7,13 @@
       "Bash(python3:*)",
       "Bash(pip3 install:*)",
       "WebSearch",
-      "Bash(pip index *)"
+      "Bash(pip index *)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -E \"\\\\.py$|\\\\.md$\")",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//Users/christianstokes/.claude/plans/**)",
+      "Read(//Users/christianstokes/.claude/**)"
     ]
   }
 }

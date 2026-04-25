@@ -33,6 +33,11 @@ from .. import wiki_edit_manifest
 from ..artifacts import ArtifactPaths, build_paths, ensure_layout
 from ..io import dump_yaml, load_yaml, parse_frontmatter, render_frontmatter
 from ..utils import iso_now, read_text_safe, slugify
+from ..validation import (
+    validate_concept_reconciliation_proposal,
+    validate_concept_reconciliation_return,
+    validate_cross_source_synthesis_return,
+)
 
 
 RELATIONSHIPS_TEMPLATE = [
@@ -267,24 +272,118 @@ def run_wiki_reconcile_concepts(
 
 
 def _load_proposal(paths: ArtifactPaths, version: int) -> dict[str, Any]:
+    """Load and validate the reconciliation proposal.
+
+    Tries the canonical YAML at `wiki/reports/concept_reconciliation_v{N}.yaml`
+    first. If absent, synthesizes a proposal from per-bucket subagent JSON
+    returns under `runtime/wiki_reconcile/subagent_returns/` and writes the
+    synthesized proposal back to the canonical location for audit. Either
+    way, the resulting proposal is validated via
+    `validate_concept_reconciliation_proposal`; malformed proposals raise
+    `ValueError` aggregating the validator's issues.
+    """
     proposal_path = paths.reports_dir / f"concept_reconciliation_v{version}.yaml"
-    if not proposal_path.exists():
-        raise FileNotFoundError(
-            f"Reconciliation proposal missing: {proposal_path}. "
-            "Run the wiki-concept-reconciliation prompt first."
-        )
-    payload = load_yaml(proposal_path)
-    if not isinstance(payload, dict):
+    payload: dict[str, Any] | None = None
+
+    if proposal_path.exists():
+        loaded = load_yaml(proposal_path)
+        if isinstance(loaded, dict):
+            payload = loaded
+    if payload is None:
+        payload = _synthesize_proposal_from_subagent_returns(paths, version)
+        if payload is None:
+            raise FileNotFoundError(
+                f"Reconciliation proposal missing: {proposal_path}. "
+                "Either run the wiki-concept-reconciliation prompt (which "
+                "writes the proposal) or persist subagent returns to "
+                f"{paths.wiki_reconcile_subagent_returns_dir} for the CLI "
+                "to assemble."
+            )
+        # Persist the synthesized proposal so the audit trail includes it.
+        proposal_path.parent.mkdir(parents=True, exist_ok=True)
+        dump_yaml(proposal_path, payload)
+
+    issues = validate_concept_reconciliation_proposal(payload)
+    if issues:
         raise ValueError(
-            f"Reconciliation proposal has no root object: {proposal_path}"
+            "concept_reconciliation_proposal is malformed:\n  - "
+            + "\n  - ".join(issues)
         )
+
     root = payload.get("concept_reconciliation_proposal")
-    if not isinstance(root, dict):
-        raise ValueError(
-            f"Reconciliation proposal missing root key "
-            f"'concept_reconciliation_proposal': {proposal_path}"
-        )
+    assert isinstance(root, dict)  # validator guarantees this
     return root
+
+
+def _synthesize_proposal_from_subagent_returns(
+    paths: ArtifactPaths, version: int
+) -> dict[str, Any] | None:
+    """Assemble a proposal payload from per-bucket subagent JSON returns.
+
+    Returns None when there is no work plan or no subagent_returns to
+    consume. Validates each return before merging; raises ValueError with
+    aggregated issues if any return is malformed.
+    """
+    if not paths.wiki_reconcile_work_plan_path.exists():
+        return None
+    plan = load_yaml(paths.wiki_reconcile_work_plan_path) or {}
+    work_plan = plan.get("wiki_concept_reconciliation_work_plan") or {}
+    work_items = work_plan.get("work_items") or []
+    if not paths.wiki_reconcile_subagent_returns_dir.exists():
+        return None
+    return_files = sorted(paths.wiki_reconcile_subagent_returns_dir.glob("*.json"))
+    if not return_files:
+        return None
+
+    bucket_expected: dict[str, set[str]] = {}
+    for item in work_items:
+        if not isinstance(item, dict):
+            continue
+        bucket_key = str(item.get("bucket_key") or "").strip()
+        citations = item.get("source_citation_ids") or []
+        bucket_expected[bucket_key] = {
+            str(c) for c in citations if isinstance(c, str)
+        }
+
+    aggregated_alias_groups: list[dict[str, Any]] = []
+    aggregated_distinct: list[dict[str, Any]] = []
+    issues: list[str] = []
+
+    for return_file in return_files:
+        try:
+            payload = json.loads(return_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            issues.append(f"{return_file.name}: unreadable ({exc})")
+            continue
+        if not isinstance(payload, dict):
+            issues.append(f"{return_file.name}: must be a JSON object")
+            continue
+        bucket_key = str(payload.get("bucket_key") or return_file.stem)
+        expected = bucket_expected.get(bucket_key, set())
+        return_issues = validate_concept_reconciliation_return(
+            payload, bucket_key=bucket_key, expected_citation_ids=expected
+        )
+        if return_issues:
+            issues.extend(return_issues)
+            continue
+        aggregated_alias_groups.extend(payload.get("alias_groups") or [])
+        aggregated_distinct.extend(payload.get("distinct_concepts") or [])
+
+    if issues:
+        raise ValueError(
+            "subagent returns failed validation:\n  - " + "\n  - ".join(issues)
+        )
+
+    return {
+        "concept_reconciliation_proposal": {
+            "generated_at": iso_now(),
+            "version": version,
+            "alias_groups": aggregated_alias_groups,
+            "distinct_concepts": aggregated_distinct,
+            "source": "synthesized_from_subagent_returns",
+            "subagent_return_count": len(return_files),
+        }
+    }
 
 
 def _resolve_member_page(
@@ -721,15 +820,238 @@ def run_wiki_cross_source_synthesize(
             "work_items": work_items,
             "edit_manifest_path": str(wiki_edit_manifest.manifest_path(paths)),
             "edit_manifest_source": "cross_source_synthesis",
+            "subagent_returns_dir": str(paths.wiki_cross_source_subagent_returns_dir),
         }
     }
     dump_yaml(paths.wiki_cross_source_work_plan_path, plan)
 
+    request = {
+        "wiki_cross_source_request": {
+            "generated_at": generated_at,
+            "version": resolved_version,
+            "work_plan_path": str(paths.wiki_cross_source_work_plan_path),
+            "subagent_returns_dir": str(paths.wiki_cross_source_subagent_returns_dir),
+            "work_item_count": len(work_items),
+        }
+    }
+    dump_yaml(paths.wiki_cross_source_request_path, request)
+
     return {
         "status": "ready_for_orchestrator" if work_items else "no_candidates",
         "work_plan_path": str(paths.wiki_cross_source_work_plan_path),
+        "request_path": str(paths.wiki_cross_source_request_path),
         "work_item_count": len(work_items),
         "skipped_single_source": sorted(set(skipped_single_source)),
         "skipped_user_edited": sorted(set(skipped_user_edited)),
         "skipped_no_findings": sorted(set(skipped_no_findings)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase B postflight: apply-cross-source-synthesis
+# ---------------------------------------------------------------------------
+
+
+def _replace_section(body: str, heading: str, new_content: str) -> str:
+    """Replace the body of `## {heading}` with `new_content`.
+
+    Idempotent — re-applying the same content yields the same body. If the
+    heading is missing, append it as a new section at the end of the body.
+    Sub-headings (`### ...`) inside the section are preserved up to the
+    next `## ` marker.
+    """
+    marker = f"## {heading}"
+    new_text = new_content.rstrip()
+    if marker not in body:
+        suffix = "" if body.endswith("\n") else "\n"
+        return f"{body}{suffix}\n{marker}\n{new_text}\n"
+
+    start = body.index(marker)
+    after_heading = body.index("\n", start) + 1
+    next_idx = body.find("\n## ", after_heading)
+    if next_idx == -1:
+        return body[:after_heading] + new_text + "\n"
+    # Preserve a single blank line between sections.
+    return body[:after_heading] + new_text + "\n" + body[next_idx + 1 :]
+
+
+def _render_synthesis_body(existing_body: str, payload: dict[str, Any]) -> str:
+    """Replace Definition / Key Claims / Open Questions sections with the
+    synthesizer's prose, preserving every other section (Formalism,
+    Relationships, Source Notes including any `### Alias Sources`
+    subsection)."""
+    body = existing_body
+    body = _replace_section(body, "Definition", str(payload.get("definition") or "").strip())
+    body = _replace_section(body, "Key Claims", str(payload.get("key_claims") or "").strip())
+    body = _replace_section(
+        body, "Open Questions", str(payload.get("open_questions") or "").strip()
+    )
+    return body
+
+
+def _load_cross_source_work_plan(paths: ArtifactPaths) -> dict[str, Any]:
+    if not paths.wiki_cross_source_work_plan_path.exists():
+        raise FileNotFoundError(
+            f"Cross-source work plan missing: {paths.wiki_cross_source_work_plan_path}. "
+            "Run `meta-compiler wiki-cross-source-synthesize` first."
+        )
+    payload = load_yaml(paths.wiki_cross_source_work_plan_path) or {}
+    plan = payload.get("wiki_cross_source_work_plan")
+    if not isinstance(plan, dict):
+        raise ValueError(
+            "Cross-source work plan missing root key 'wiki_cross_source_work_plan'"
+        )
+    return plan
+
+
+def _load_cross_source_returns(paths: ArtifactPaths) -> dict[str, dict[str, Any]]:
+    """Read every subagent JSON return as `{page_id: payload}`.
+
+    Falls back to the file stem when a payload omits `page_id`.
+    """
+    returns: dict[str, dict[str, Any]] = {}
+    if not paths.wiki_cross_source_subagent_returns_dir.exists():
+        return returns
+    for return_file in sorted(paths.wiki_cross_source_subagent_returns_dir.glob("*.json")):
+        try:
+            payload = json.loads(return_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        page_id = str(payload.get("page_id") or return_file.stem).strip()
+        if not page_id:
+            continue
+        returns[page_id] = payload
+    return returns
+
+
+def run_wiki_apply_cross_source_synthesis(
+    artifacts_root: Path,
+    workspace_root: Path,
+    version: int | None = 2,
+) -> dict[str, Any]:
+    """Phase B postflight. Apply cross-source synthesizer JSON returns to v2 pages.
+
+    Reads every `runtime/wiki_cross_source/subagent_returns/*.json`,
+    validates each against the page's expected citation IDs from the work
+    plan, and rewrites the Definition / Key Claims / Open Questions
+    sections of the canonical concept page. Pages that have been edited
+    after the last system write (per `wiki_edit_manifest`) are skipped.
+    Writes a `wiki/reports/cross_source_synthesis_applied_v{N}.yaml`
+    report.
+    """
+    resolved_version = _coerce_version(version)
+    paths = build_paths(artifacts_root)
+    ensure_layout(paths)
+
+    plan = _load_cross_source_work_plan(paths)
+    work_items = plan.get("work_items") or []
+    if not isinstance(work_items, list):
+        raise ValueError("wiki_cross_source_work_plan.work_items must be a list")
+
+    returns = _load_cross_source_returns(paths)
+    if not returns:
+        raise FileNotFoundError(
+            f"No cross-source subagent returns found at "
+            f"{paths.wiki_cross_source_subagent_returns_dir}. "
+            "Invoke the wiki-cross-source-synthesis prompt before running "
+            "wiki-apply-cross-source-synthesis."
+        )
+
+    pages_synthesized: list[dict[str, Any]] = []
+    skipped_user_edited: list[str] = []
+    skipped_no_return: list[str] = []
+    validation_issues: list[str] = []
+    writes: list[tuple[Path, str]] = []
+
+    for item in work_items:
+        if not isinstance(item, dict):
+            continue
+        page_id = str(item.get("page_id") or "").strip()
+        page_file = str(item.get("page_file") or "").strip()
+        if not page_id or not page_file:
+            continue
+
+        page_path = paths.wiki_v2_pages_dir / page_file
+        if not page_path.exists():
+            skipped_no_return.append(page_file)
+            continue
+
+        if wiki_edit_manifest.is_user_edited(paths, page_path):
+            skipped_user_edited.append(page_file)
+            continue
+
+        payload = returns.get(page_id)
+        if payload is None:
+            skipped_no_return.append(page_file)
+            continue
+
+        expected_citations = {
+            str(c)
+            for c in item.get("source_citation_ids") or []
+            if isinstance(c, str)
+        }
+        issues = validate_cross_source_synthesis_return(
+            payload,
+            page_id=page_id,
+            expected_citation_ids=expected_citations,
+        )
+        if issues:
+            validation_issues.extend(issues)
+            continue
+
+        loaded = _load_page(page_path)
+        if loaded is None:
+            skipped_no_return.append(page_file)
+            continue
+        frontmatter, existing_body = loaded
+        new_body = _render_synthesis_body(existing_body, payload)
+        _write_page(page_path, frontmatter, new_body)
+        writes.append((page_path, "cross_source_synthesis"))
+
+        divergences = payload.get("inter_source_divergences") or []
+        pages_synthesized.append(
+            {
+                "page_id": page_id,
+                "page_file": page_file,
+                "citations_used": list(payload.get("citations_used") or []),
+                "inter_source_divergences_flagged": (
+                    len(divergences) if isinstance(divergences, list) else 0
+                ),
+            }
+        )
+
+    if validation_issues:
+        raise ValueError(
+            "cross-source synthesis returns failed validation:\n  - "
+            + "\n  - ".join(validation_issues)
+        )
+
+    if writes:
+        wiki_edit_manifest.record_writes(paths, writes)
+
+    report_payload = {
+        "cross_source_synthesis_applied": {
+            "generated_at": iso_now(),
+            "version": resolved_version,
+            "work_plan_path": str(paths.wiki_cross_source_work_plan_path),
+            "pages_considered": len(work_items),
+            "pages_synthesized": pages_synthesized,
+            "pages_synthesized_count": len(pages_synthesized),
+            "skipped_user_edited": sorted(set(skipped_user_edited)),
+            "skipped_no_return": sorted(set(skipped_no_return)),
+            "writes": len(writes),
+        }
+    }
+    report_path = paths.reports_dir / f"cross_source_synthesis_applied_v{resolved_version}.yaml"
+    paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    dump_yaml(report_path, report_payload)
+
+    return {
+        "status": "applied" if pages_synthesized else "nothing_applied",
+        "pages_synthesized_count": len(pages_synthesized),
+        "skipped_user_edited": sorted(set(skipped_user_edited)),
+        "skipped_no_return": sorted(set(skipped_no_return)),
+        "report_path": str(report_path),
     }

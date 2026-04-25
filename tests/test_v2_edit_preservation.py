@@ -188,10 +188,11 @@ def test_sync_does_not_delete_orphan_v2_pages(tmp_path: Path):
     _, _, paths = _bootstrap_workspace(tmp_path)
     _seed_v1_page(paths, "concept-a.md")
 
-    # Pre-existing v2-only page (e.g. from enrichment that proposed a new concept)
-    orphan = paths.wiki_v2_pages_dir / "concept-enrichment-only.md"
+    # Pre-existing v2-only page (e.g. from concept reconciliation that promoted
+    # an alias to a new canonical page)
+    orphan = paths.wiki_v2_pages_dir / "concept-reconciled-only.md"
     orphan.write_text("# Synthesized concept", encoding="utf-8")
-    wiki_edit_manifest.record_write(paths, orphan, "enrichment")
+    wiki_edit_manifest.record_write(paths, orphan, "concept_reconciliation")
 
     _sync_v1_to_v2(paths)
 

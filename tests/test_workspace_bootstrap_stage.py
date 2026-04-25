@@ -290,3 +290,78 @@ def test_scaffold_subdirs_for_workflow(tmp_path):
 
 def test_scaffold_subdirs_for_unknown_returns_empty(tmp_path):
     assert scaffold_subdirs_for("unknown_type") == frozenset()
+
+
+def test_bootstrap_skips_stubs_for_verification_required_false(tmp_path):
+    """Constraint-only / policy capabilities (verification_required=False) get
+    no pytest stub but are still recorded in REQ_TRACE.yaml."""
+    ws_root = tmp_path
+    artifacts = _setup_fixture(ws_root)
+    # Add a constraint and a constraint-only plan capability so the planner
+    # path emits a verification_required=False entry.
+    decision_log_path = artifacts / "decision-logs" / "decision_log_v1.yaml"
+    payload = yaml.safe_load(decision_log_path.read_text(encoding="utf-8"))
+    payload["decision_log"]["constraints"] = [
+        {
+            "id": "CON-001",
+            "description": "Python 3.11 only",
+            "kind": "tooling",
+            "verification_required": False,
+            "citations": ["src-decision-seed"],
+            "rationale": "toolchain",
+        }
+    ]
+    _write(decision_log_path, payload)
+    _write(
+        artifacts / "decision-logs" / "plan_extract_v1.yaml",
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-22T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 1,
+                "capabilities": [
+                    {
+                        "name": "shared-pipeline",
+                        "description": "Cover REQ-001",
+                        "requirement_ids": ["REQ-001"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "rationale": "primary work",
+                    },
+                    {
+                        "name": "python-pin",
+                        "description": "Tooling pin from CON-001",
+                        "requirement_ids": [],
+                        "constraint_ids": ["CON-001"],
+                        "verification_required": False,
+                        "composes": [],
+                        "rationale": "policy only",
+                    },
+                ],
+            }
+        },
+    )
+    _write_palette(ws_root)
+
+    # Re-run capability compile + downstream stages to pick up the plan.
+    run_capability_compile(artifacts)
+    run_contract_extract(artifacts)
+    run_skill_synthesis(artifacts)
+    run_workspace_bootstrap(artifacts, workspace_root=ws_root)
+
+    verification = artifacts / "scaffolds" / "v1" / "verification"
+    # Stub exists for the verification_required=True cap, not the False one.
+    assert (verification / "ver-shared-pipeline-001.py").exists()
+    assert not (verification / "ver-python-pin-001.py").exists()
+
+    # REQ_TRACE includes both REQ-001 and CON-001 entries; the CON entry has
+    # empty hook_ids and verification_required=False.
+    trace = yaml.safe_load((verification / "REQ_TRACE.yaml").read_text(encoding="utf-8"))
+    entries = {e["requirement_id"]: e["coverage"] for e in trace["requirement_trace"]["entries"]}
+    assert "REQ-001" in entries
+    assert "CON-001" in entries
+    con_row = entries["CON-001"][0]
+    assert con_row["verification_required"] is False
+    assert con_row["hook_ids"] == []

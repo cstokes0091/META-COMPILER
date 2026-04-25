@@ -45,15 +45,19 @@ meta-compiler elicit-vision --start        # write Stage 2 brief + transcript sk
 # (LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md)
 meta-compiler elicit-vision --finalize     # compile transcript → decision_log_v{N}.yaml
 meta-compiler audit-requirements
+meta-compiler plan-implementation --start    # Stage 2.5 preflight: render planning brief
+# (LLM runs implementation-planner.agent.md → writes implementation_plan_v{N}.md)
+meta-compiler plan-implementation --finalize # Stage 2.5 postflight: extract plan_extract_v{N}.yaml
 meta-compiler scaffold
 meta-compiler phase4-finalize
 
 # Post-scaffold
 meta-compiler wiki-reconcile-concepts        # Phase A preflight: cluster alias candidates
-# (LLM runs wiki-concept-reconciliation.prompt.md → writes the proposal)
+# (LLM runs wiki-concept-reconciliation.prompt.md → writes per-bucket subagent JSON)
 meta-compiler wiki-apply-reconciliation      # Phase A postflight: merge aliases into canonical pages
 meta-compiler wiki-cross-source-synthesize   # Phase B preflight: cross-source definition work plan
-# (LLM runs wiki-cross-source-synthesis.prompt.md → rewrites Definition/Key Claims)
+# (LLM runs wiki-cross-source-synthesis.prompt.md → writes per-page subagent JSON)
+meta-compiler wiki-apply-cross-source-synthesis  # Phase B postflight: rewrite v2 page sections
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -63,6 +67,7 @@ meta-compiler add-code-seed --repo https://github.com/org/widget-lib --ref v1.2.
 meta-compiler bind-code-seed --path seeds/code/already-cloned
 
 # Utility commands
+meta-compiler wiki-update                        # Convenience: ingest --scope new + research-breadth
 meta-compiler track-seeds                        # Auto-detect and ingest new seeds
 meta-compiler clean-workspace --target-stage 0   # Reset to any stage
 

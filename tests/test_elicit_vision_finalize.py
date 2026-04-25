@@ -402,6 +402,147 @@ def test_finalize_v2_sets_parent_version(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+CONSTRAINT_TRANSCRIPT = """\
+# Stage 2 Transcript — v1
+
+## Decision Area: Code Architecture
+
+### Decision: language-choice
+- Section: code-architecture
+- Aspect: language
+- Choice: Python 3.11
+- Constraints applied: CON-002
+- Rationale: matches the workspace toolchain
+- Citations: src-test
+
+### Decision: libraries-choice
+- Section: code-architecture
+- Aspect: libraries
+- Choice: pyyaml + pytest
+- Libraries:
+  - pyyaml: config serialization (>=6.0)
+  - pytest: unit tests (>=8.0)
+- Rationale: stable
+- Citations: src-test
+
+## Decision Area: Constraints
+
+### Decision: latency-budget
+- Section: constraints
+- Description: System response < 250 ms p95
+- Kind: performance_target
+- Verification required: true
+- Rationale: customer SLA
+- Citations: src-test
+
+### Decision: python-pin
+- Section: constraints
+- Description: Python 3.11 only
+- Kind: tooling
+- Rationale: existing toolchain
+- Citations: (none)
+"""
+
+
+def test_finalize_compiles_constraints_section_with_con_ids(tmp_path):
+    workspace_root = _seed_workspace(tmp_path)
+    artifacts_root = workspace_root / "workspace-artifacts"
+    paths = build_paths(artifacts_root)
+
+    run_elicit_vision_start(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        skip_wiki_search=True,
+    )
+    paths.stage2_transcript_path.write_text(CONSTRAINT_TRANSCRIPT, encoding="utf-8")
+
+    result = run_elicit_vision_finalize(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+    )
+    assert result["status"] == "compiled"
+
+    with (paths.decision_logs_dir / "decision_log_v1.yaml").open(
+        "r", encoding="utf-8"
+    ) as handle:
+        payload = yaml.safe_load(handle)
+    constraints = payload["decision_log"]["constraints"]
+    assert len(constraints) == 2
+    assert constraints[0]["id"] == "CON-001"
+    assert constraints[0]["kind"] == "performance_target"
+    assert constraints[0]["verification_required"] is True
+    assert constraints[1]["id"] == "CON-002"
+    assert constraints[1]["kind"] == "tooling"
+    assert constraints[1]["verification_required"] is False
+    # constraints_applied on code_architecture[0] references CON-002.
+    assert payload["decision_log"]["code_architecture"][0]["constraints_applied"] == ["CON-002"]
+
+
+def test_finalize_rejects_unknown_constraint_kind(tmp_path):
+    workspace_root = _seed_workspace(tmp_path)
+    artifacts_root = workspace_root / "workspace-artifacts"
+    paths = build_paths(artifacts_root)
+
+    run_elicit_vision_start(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        skip_wiki_search=True,
+    )
+    bad = (
+        "# Stage 2 Transcript — v1\n\n"
+        "## Decision Area: Constraints\n\n"
+        "### Decision: bogus\n"
+        "- Section: constraints\n"
+        "- Description: anything\n"
+        "- Kind: nonsense_kind\n"
+        "- Rationale: x\n"
+        "- Citations: (none)\n"
+    )
+    paths.stage2_transcript_path.write_text(bad, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Kind 'nonsense_kind'"):
+        run_elicit_vision_finalize(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+        )
+
+
+def test_finalize_rejects_unresolved_con_ref(tmp_path):
+    workspace_root = _seed_workspace(tmp_path)
+    artifacts_root = workspace_root / "workspace-artifacts"
+    paths = build_paths(artifacts_root)
+
+    run_elicit_vision_start(
+        artifacts_root=artifacts_root,
+        workspace_root=workspace_root,
+        skip_wiki_search=True,
+    )
+    bad = (
+        "# Stage 2 Transcript — v1\n\n"
+        "## Decision Area: Code Architecture\n\n"
+        "### Decision: language-choice\n"
+        "- Section: code-architecture\n"
+        "- Aspect: language\n"
+        "- Choice: Python 3.11\n"
+        "- Constraints applied: CON-999\n"
+        "- Rationale: x\n"
+        "- Citations: src-test\n\n"
+        "### Decision: libraries-choice\n"
+        "- Section: code-architecture\n"
+        "- Aspect: libraries\n"
+        "- Choice: pyyaml\n"
+        "- Libraries:\n"
+        "  - pyyaml: x (>=6.0)\n"
+        "- Rationale: stable\n"
+        "- Citations: src-test\n"
+    )
+    paths.stage2_transcript_path.write_text(bad, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="CON-999"):
+        run_elicit_vision_finalize(
+            artifacts_root=artifacts_root,
+            workspace_root=workspace_root,
+        )
+
+
 def test_finalize_extracts_use_case_from_frontmatter(tmp_path):
     workspace_root = _seed_workspace(tmp_path)
     artifacts_root = workspace_root / "workspace-artifacts"
