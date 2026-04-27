@@ -200,11 +200,12 @@ def _render_skill_body(
     findings: list[FindingRef],
     finding_index: dict[str, FindingRecord],
 ) -> str:
+    goal = cap.objective or cap.description
     lines: list[str] = [
         f"# Skill: {cap.description}",
         "",
         "## Goal",
-        cap.description,
+        goal,
         "",
         "## Procedure",
     ]
@@ -224,6 +225,11 @@ def _render_skill_body(
     lines.extend(_render_invariants(contract))
     lines.extend([
         "",
+        "## Acceptance Criteria",
+    ])
+    lines.extend(_render_acceptance_criteria(cap))
+    lines.extend([
+        "",
         "## Evidence",
     ])
     lines.extend(_render_evidence(findings, finding_index))
@@ -237,16 +243,23 @@ def _render_procedure(cap: Capability, contract: Contract) -> list[str]:
         f"1. Load inputs per `contracts/{contract.contract_id}.yaml` "
         "(see the Inputs and Outputs section)."
     )
-    steps.append(
-        "2. Apply the capability with the domain vocabulary "
-        f"drawn from the cited findings: {', '.join(cap.citation_ids)}."
-    )
+    next_step = 2
+    if cap.implementation_steps:
+        for planned_step in cap.implementation_steps:
+            steps.append(f"{next_step}. {planned_step.rstrip('.')}.")
+            next_step += 1
+    else:
+        steps.append(
+            f"{next_step}. Apply the capability with the domain vocabulary "
+            f"drawn from the cited findings: {', '.join(cap.citation_ids)}."
+        )
+        next_step += 1
     if cap.composes:
         steps.append(
-            "3. Invoke composed skills where their triggers match the sub-task: "
+            f"{next_step}. Invoke composed skills where their triggers match the sub-task: "
             + ", ".join(f"`{n}`" for n in cap.composes) + "."
         )
-    next_step = 4 if cap.composes else 3
+        next_step += 1
     steps.append(
         f"{next_step}. Produce outputs per the contract and annotate every claim "
         "with its citation ID."
@@ -257,6 +270,15 @@ def _render_procedure(cap: Capability, contract: Contract) -> list[str]:
         + "."
     )
     return steps
+
+
+def _render_acceptance_criteria(cap: Capability) -> list[str]:
+    if cap.acceptance_criteria:
+        return [f"- {criterion}" for criterion in cap.acceptance_criteria]
+    return [
+        "- Outputs satisfy every contract invariant.",
+        "- Each generated claim or decision is traceable to the required findings.",
+    ]
 
 
 def _render_invariants(contract: Contract) -> list[str]:

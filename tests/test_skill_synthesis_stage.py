@@ -204,6 +204,56 @@ def test_skill_body_has_domain_terms_not_placeholders(tmp_path):
         assert placeholder.lower() not in lowered
 
 
+def test_skill_body_uses_planner_steps_when_plan_extract_exists(tmp_path):
+    _setup_fixture(tmp_path)
+    _write(
+        tmp_path / "decision-logs" / "plan_extract_v1.yaml",
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-22T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 2,
+                "capabilities": [
+                    {
+                        "name": "schema-dispatch",
+                        "phase": "dispatch",
+                        "objective": "Produce citation-traced schema dispatch outputs.",
+                        "description": "Compile schema dispatch outputs from the decision log.",
+                        "requirement_ids": ["REQ-001"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "explicit_triggers": ["decision log schema workflow"],
+                        "evidence_refs": ["src-decision-seed"],
+                        "implementation_steps": [
+                            "Load the decision log and cited finding records",
+                            "Write schema dispatch output with citation trace metadata",
+                        ],
+                        "acceptance_criteria": [
+                            "Output includes citation trace metadata for REQ-001",
+                        ],
+                        "parallelizable": False,
+                        "rationale": "The planner provided concrete execution guidance.",
+                    }
+                ],
+            }
+        },
+    )
+    run_capability_compile(tmp_path)
+    run_contract_extract(tmp_path)
+    run_skill_synthesis(tmp_path)
+
+    skill_path = tmp_path / "scaffolds" / "v1" / "skills" / "schema-dispatch" / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "Produce citation-traced schema dispatch outputs." in text
+    assert "Load the decision log and cited finding records." in text
+    assert "Write schema dispatch output with citation trace metadata." in text
+    assert "## Acceptance Criteria" in text
+    assert "Output includes citation trace metadata for REQ-001" in text
+
+
 def test_skill_frontmatter_roundtrip(tmp_path):
     _setup_fixture(tmp_path)
     run_capability_compile(tmp_path)

@@ -3,33 +3,33 @@
     "SessionStart": [
       {
         "type": "command",
-        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py inject_state",
+        "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py inject_state",
         "timeout": 10
       }
     ],
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py inject_state",
+        "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py inject_state",
         "timeout": 10
       },
       {
         "type": "command",
-        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py user_prompt_submit_dispatch",
+        "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py user_prompt_submit_dispatch",
         "timeout": 60
       }
     ],
     "SubagentStop": [
       {
         "type": "command",
-        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py subagent_stop_dispatch",
+        "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py subagent_stop_dispatch",
         "timeout": 120
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py nudge_finalize",
+        "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py nudge_finalize",
         "timeout": 5
       }
     ],
@@ -39,52 +39,52 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_cli",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_cli",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_reentry_request",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_reentry_request",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_reconcile_request",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_reconcile_request",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_cross_source_synthesis_returns",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_cross_source_synthesis_returns",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_wiki_search_apply",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_wiki_search_apply",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_migration_request",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_migration_request",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_phase4_finalize",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_phase4_finalize",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_capability_compile",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_capability_compile",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_implementation_plan",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_implementation_plan",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_coverage",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_capability_coverage",
             "timeout": 10
           }
         ]
@@ -94,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_artifact_writes",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_artifact_writes",
             "timeout": 5
           }
         ]
@@ -104,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py gate_artifact_writes",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_artifact_writes",
             "timeout": 5
           }
         ]
@@ -116,12 +116,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py capture_output",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py capture_output",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_wiki_search_schema",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_wiki_search_schema",
             "timeout": 10
           }
         ]
@@ -131,17 +131,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_schema",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_capability_schema",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
             "timeout": 10
           }
         ]
@@ -151,17 +151,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_capability_schema",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_capability_schema",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_skill_finding_citations",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 ${workspaceFolder}/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py validate_trigger_specificity",
             "timeout": 10
           }
         ]

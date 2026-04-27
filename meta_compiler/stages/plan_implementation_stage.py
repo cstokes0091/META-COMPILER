@@ -24,6 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from ..artifacts import build_paths, ensure_layout
+from ..findings_loader import (
+    FindingRecord,
+    concept_vocabulary,
+    decision_log_vocabulary,
+    load_all_findings,
+    trigger_content_tokens,
+)
 from ..io import dump_yaml, load_yaml
 from ..utils import iso_now
 from ._decision_log_utils import resolve_decision_log
@@ -141,6 +148,112 @@ def _format_citations(citation_index: dict[str, Any]) -> list[str]:
     return out or ["_No citations registered._"]
 
 
+def _as_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _known_citation_ids(decision_log: dict[str, Any]) -> set[str]:
+    inner = decision_log.get("decision_log") if "decision_log" in decision_log else decision_log
+    if not isinstance(inner, dict):
+        return set()
+    citations: set[str] = set()
+    for section in (
+        "conventions",
+        "architecture",
+        "requirements",
+        "constraints",
+        "agents_needed",
+        "code_architecture",
+    ):
+        for row in inner.get(section) or []:
+            if isinstance(row, dict):
+                citations.update(_as_string_list(row.get("citations")))
+    return citations
+
+
+def _index_findings_by_citation(records: list[FindingRecord]) -> dict[str, list[FindingRecord]]:
+    indexed: dict[str, list[FindingRecord]] = {}
+    for record in records:
+        indexed.setdefault(record.citation_id, []).append(record)
+    return indexed
+
+
+def _summarize_finding(record: FindingRecord) -> str:
+    concepts = [str(row.get("name") or "").strip() for row in record.concepts]
+    concepts = [name for name in concepts if name]
+    claims = [str(row.get("statement") or "").strip() for row in record.claims]
+    claims = [claim for claim in claims if claim]
+    parts: list[str] = []
+    if concepts:
+        parts.append("concepts: " + ", ".join(concepts[:4]))
+    if claims:
+        claim = claims[0]
+        if len(claim) > 160:
+            claim = claim[:157].rstrip() + "..."
+        parts.append("claim: " + claim)
+    return "; ".join(parts) or "finding available"
+
+
+def _format_row_evidence(row: dict[str, Any], findings_by_citation: dict[str, list[FindingRecord]]) -> list[str]:
+    citations = _as_string_list(row.get("citations"))
+    if not citations:
+        return ["  - _No citations on this row._"]
+    lines: list[str] = []
+    for citation_id in citations[:6]:
+        records = findings_by_citation.get(citation_id) or []
+        if not records:
+            lines.append(f"  - `{citation_id}`: citation present; no extracted findings loaded yet.")
+            continue
+        for record in records[:2]:
+            lines.append(
+                f"  - `{record.finding_id}` (`{citation_id}`): {_summarize_finding(record)}"
+            )
+    return lines
+
+
+def _format_planner_evidence_context(
+    paths,
+    decision_log: dict[str, Any],
+) -> list[str]:
+    """Compact evidence pack for the implementation planner.
+
+    The planner needs concrete domain nouns and cited claims before it writes
+    capability triggers and steps. This section is intentionally extractive and
+    short; raw seed reading remains outside the deterministic CLI.
+    """
+    findings = load_all_findings(paths)
+    findings_by_citation = _index_findings_by_citation(findings)
+    inner = decision_log.get("decision_log") if "decision_log" in decision_log else decision_log
+    if not isinstance(inner, dict):
+        return ["_Decision log payload missing._"]
+
+    vocab = sorted((concept_vocabulary(findings) | decision_log_vocabulary(decision_log)) - {""})
+    lines: list[str] = []
+    if vocab:
+        lines.append("Available trigger vocabulary (prefer these nouns in `explicit_triggers`):")
+        lines.append("- " + ", ".join(vocab[:80]))
+    else:
+        lines.append("_No trigger vocabulary available yet; use precise nouns from the REQ/CON descriptions._")
+
+    lines.append("")
+    lines.append("Cited evidence by REQ/CON:")
+    row_count = 0
+    for section, id_prefix in (("requirements", "REQ"), ("constraints", "CON")):
+        for row in inner.get(section) or []:
+            if not isinstance(row, dict):
+                continue
+            row_id = str(row.get("id") or f"{id_prefix}-???")
+            desc = str(row.get("description") or "").strip()
+            lines.append(f"- **{row_id}**: {desc}")
+            lines.extend(_format_row_evidence(row, findings_by_citation))
+            row_count += 1
+    if row_count == 0:
+        lines.append("- _No REQ/CON rows to map._")
+    return lines
+
+
 def _wiki_evidence_lines(paths) -> list[str]:
     """Top concept pages by source count, with their first-paragraph summary."""
     if not paths.wiki_v2_pages_dir.exists():
@@ -215,6 +328,9 @@ def render_planning_brief(
     sections.append("## Wiki evidence")
     sections.extend(_wiki_evidence_lines(paths))
     sections.append("")
+    sections.append("## Planner evidence context")
+    sections.extend(_format_planner_evidence_context(paths, decision_log))
+    sections.append("")
     sections.append("## Citation inventory")
     sections.extend(_format_citations(citation_index))
     sections.append("")
@@ -236,14 +352,23 @@ def render_planning_brief(
     sections.append("")
     sections.append("```yaml")
     sections.append("capability_plan:")
-    sections.append("  version: 1")
+    sections.append("  version: 2")
     sections.append("  capabilities:")
     sections.append("    - name: <slug>")
+    sections.append("      phase: <short phase name>")
+    sections.append("      objective: <one concrete outcome this capability achieves>")
     sections.append("      description: <one sentence>")
     sections.append("      requirement_ids: [REQ-NNN, ...]    # may be empty")
     sections.append("      constraint_ids: [CON-NNN, ...]     # may be empty")
     sections.append("      verification_required: true|false")
     sections.append("      composes: [<other capability names>]")
+    sections.append("      explicit_triggers: [<domain-specific trigger phrase>, ...]")
+    sections.append("      evidence_refs: [<finding_id or citation_id>, ...]")
+    sections.append("      implementation_steps:")
+    sections.append("        - <imperative implementation step>")
+    sections.append("      acceptance_criteria:")
+    sections.append("        - <observable pass/fail criterion>")
+    sections.append("      parallelizable: true|false")
     sections.append("      rationale: <one sentence>")
     sections.append("```")
     sections.append("")
@@ -270,6 +395,13 @@ def render_planning_brief(
     sections.append(
         "- `composes` names other capabilities in this same plan. No "
         "self-loops, no dangling refs."
+    )
+    sections.append(
+        "- For `capability_plan.version: 2`, each verification-required capability "
+        "must include concrete `implementation_steps`, `acceptance_criteria`, "
+        "`explicit_triggers`, and `evidence_refs`. Write the markdown plan as "
+        "the human-readable step-by-step source of truth; the YAML is the "
+        "machine-readable extract."
     )
     return "\n".join(sections) + "\n"
 
@@ -378,6 +510,99 @@ def _slug_re_check(name: str) -> bool:
     return bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name))
 
 
+def _non_empty_string_list(value: Any) -> bool:
+    return isinstance(value, list) and any(
+        isinstance(item, str) and item.strip() for item in value
+    )
+
+
+def _string_list_issues(value: Any, field_name: str, prefix: str) -> list[str]:
+    issues: list[str] = []
+    if value is None:
+        return issues
+    if not isinstance(value, list):
+        return [f"{prefix}.{field_name}: must be a list"]
+    for item_idx, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            issues.append(f"{prefix}.{field_name}[{item_idx}]: must be a non-empty string")
+    return issues
+
+
+def _validate_v2_capability_fields(
+    cap: dict[str, Any],
+    *,
+    prefix: str,
+    known_citations: set[str],
+    decision_vocab: set[str],
+) -> list[str]:
+    issues: list[str] = []
+    verification_required = cap.get("verification_required") is not False
+
+    for field_name in (
+        "implementation_steps",
+        "acceptance_criteria",
+        "explicit_triggers",
+        "evidence_refs",
+    ):
+        issues.extend(_string_list_issues(cap.get(field_name), field_name, prefix))
+
+    if "phase" in cap and not isinstance(cap.get("phase"), str):
+        issues.append(f"{prefix}.phase: must be a string when provided")
+    if "objective" in cap and not isinstance(cap.get("objective"), str):
+        issues.append(f"{prefix}.objective: must be a string when provided")
+    if "parallelizable" in cap and not isinstance(cap.get("parallelizable"), bool):
+        issues.append(f"{prefix}.parallelizable: must be a boolean when provided")
+
+    if not verification_required:
+        return issues
+
+    for field_name in (
+        "implementation_steps",
+        "acceptance_criteria",
+        "explicit_triggers",
+        "evidence_refs",
+    ):
+        if not _non_empty_string_list(cap.get(field_name)):
+            issues.append(
+                f"{prefix}.{field_name}: must include at least one concrete entry "
+                "when verification_required is true"
+            )
+
+    trigger_values = [
+        str(item).strip()
+        for item in cap.get("explicit_triggers") or []
+        if isinstance(item, str) and item.strip()
+    ]
+    effective_vocab = decision_vocab or set()
+    for trigger_idx, trigger in enumerate(trigger_values):
+        tokens = trigger_content_tokens(trigger)
+        if not tokens:
+            issues.append(
+                f"{prefix}.explicit_triggers[{trigger_idx}]: must contain at least one "
+                "domain noun after stop-word stripping"
+            )
+            continue
+        if effective_vocab and not (tokens & effective_vocab):
+            issues.append(
+                f"{prefix}.explicit_triggers[{trigger_idx}]: {trigger!r} does not overlap "
+                "the decision-log trigger vocabulary"
+            )
+
+    evidence_refs = [
+        str(item).strip()
+        for item in cap.get("evidence_refs") or []
+        if isinstance(item, str) and item.strip()
+    ]
+    for ref_idx, ref in enumerate(evidence_refs):
+        citation_id = ref.split("#", 1)[0]
+        if known_citations and citation_id not in known_citations:
+            issues.append(
+                f"{prefix}.evidence_refs[{ref_idx}]: {ref!r} does not resolve to a "
+                "citation used by the decision log"
+            )
+    return issues
+
+
 def validate_plan_extract(
     payload: dict[str, Any],
     *,
@@ -398,10 +623,17 @@ def validate_plan_extract(
     if not isinstance(capabilities, list) or not capabilities:
         issues.append("plan_extract.capability_plan.capabilities: must be a non-empty list")
         return issues
+    try:
+        plan_version = int(plan.get("version") or 1)
+    except (TypeError, ValueError):
+        issues.append("plan_extract.capability_plan.version: must be an integer when provided")
+        plan_version = 1
 
     inner = decision_log.get("decision_log") if "decision_log" in decision_log else decision_log
     if not isinstance(inner, dict):
         return ["plan_extract: decision log payload missing root"]
+    known_citations = _known_citation_ids(inner)
+    decision_vocab = decision_log_vocabulary({"decision_log": inner})
 
     valid_req_ids = {
         str(row.get("id"))
@@ -474,6 +706,16 @@ def validate_plan_extract(
         composes = cap.get("composes") or []
         if not isinstance(composes, list):
             issues.append(f"{prefix}.composes: must be a list")
+
+        if plan_version >= 2:
+            issues.extend(
+                _validate_v2_capability_fields(
+                    cap,
+                    prefix=prefix,
+                    known_citations=known_citations,
+                    decision_vocab=decision_vocab,
+                )
+            )
 
     # Two-pass: composes must point to other declared cap names, no self-loops.
     for idx, cap in enumerate(capabilities):

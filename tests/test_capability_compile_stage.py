@@ -359,15 +359,27 @@ def test_capability_compile_consumes_plan_extract(tmp_path):
                 "generated_at": "2026-04-22T00:00:00+00:00",
                 "decision_log_version": 1,
                 "source": "decision-logs/implementation_plan_v1.md",
-                "version": 1,
+                "version": 2,
                 "capabilities": [
                     {
                         "name": "shared-pipeline",
+                        "phase": "pipeline",
+                        "objective": "Compile the shared decision-log pipeline output.",
                         "description": "Bundle REQ-001 and REQ-002 into one pipeline",
                         "requirement_ids": ["REQ-001", "REQ-002"],
                         "constraint_ids": [],
                         "verification_required": True,
                         "composes": [],
+                        "explicit_triggers": ["decision log schema workflow orchestrator"],
+                        "evidence_refs": ["src-decision-seed"],
+                        "implementation_steps": [
+                            "Load decision-log rows and normalize citation fields",
+                            "Write the shared pipeline output with requirement trace metadata",
+                        ],
+                        "acceptance_criteria": [
+                            "The output records REQ-001 and REQ-002 trace metadata",
+                        ],
+                        "parallelizable": True,
                         "rationale": "Sibling REQs share the ingest path",
                     },
                     {
@@ -395,6 +407,21 @@ def test_capability_compile_consumes_plan_extract(tmp_path):
     # N-to-M REQ mapping preserved.
     assert sorted(by_name["shared-pipeline"].requirement_ids) == ["REQ-001", "REQ-002"]
     assert by_name["shared-pipeline"].verification_required is True
+    assert by_name["shared-pipeline"].phase == "pipeline"
+    assert by_name["shared-pipeline"].objective == "Compile the shared decision-log pipeline output."
+    assert by_name["shared-pipeline"].implementation_steps == [
+        "Load decision-log rows and normalize citation fields",
+        "Write the shared pipeline output with requirement trace metadata",
+    ]
+    assert by_name["shared-pipeline"].acceptance_criteria == [
+        "The output records REQ-001 and REQ-002 trace metadata",
+    ]
+    assert by_name["shared-pipeline"].explicit_triggers == [
+        "decision log schema workflow orchestrator",
+    ]
+    assert by_name["shared-pipeline"].when_to_use[0] == "decision log schema workflow orchestrator"
+    assert by_name["shared-pipeline"].evidence_refs == ["src-decision-seed"]
+    assert by_name["shared-pipeline"].parallelizable is True
 
     # Constraint-only capability has empty requirement_ids and no verification.
     latency = by_name["latency-gate"]

@@ -198,6 +198,10 @@ def decision_log_vocabulary(decision_log: dict[str, Any]) -> set[str]:
     for row in root.get("requirements") or []:
         if isinstance(row, dict):
             vocab |= _tokenize(str(row.get("description") or ""))
+    for row in root.get("constraints") or []:
+        if isinstance(row, dict):
+            for key in ("description", "kind", "rationale"):
+                vocab |= _tokenize(str(row.get(key) or ""))
     scope = root.get("scope") or {}
     for key in ("in_scope", "out_of_scope"):
         for row in scope.get(key) or []:

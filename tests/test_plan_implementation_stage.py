@@ -156,11 +156,23 @@ def _decision_log_dict() -> dict:
     return {
         "decision_log": {
             "requirements": [
-                {"id": "REQ-001"},
-                {"id": "REQ-002"},
+                {
+                    "id": "REQ-001",
+                    "description": "Decision log schema must validate citation traces.",
+                    "citations": ["src-test"],
+                },
+                {
+                    "id": "REQ-002",
+                    "description": "Scaffold dispatch must preserve capability outputs.",
+                    "citations": ["src-test"],
+                },
             ],
             "constraints": [
-                {"id": "CON-001"},
+                {
+                    "id": "CON-001",
+                    "description": "Planner output must be auditable.",
+                    "citations": ["src-test"],
+                },
             ],
         }
     }
@@ -257,6 +269,68 @@ def test_validate_plan_extract_rejects_self_loop():
     }
     issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
     assert any("self-loop" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_requires_concrete_execution_fields():
+    payload = {
+        "capability_plan": {
+            "version": 2,
+            "capabilities": [
+                {
+                    "name": "schema-dispatch",
+                    "description": "Validate schema dispatch.",
+                    "requirement_ids": ["REQ-001", "REQ-002"],
+                    "constraint_ids": ["CON-001"],
+                    "verification_required": True,
+                    "composes": [],
+                    "rationale": "Keeps planning auditable.",
+                }
+            ],
+        }
+    }
+
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+
+    assert any("implementation_steps" in issue for issue in issues)
+    assert any("acceptance_criteria" in issue for issue in issues)
+    assert any("explicit_triggers" in issue for issue in issues)
+    assert any("evidence_refs" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_accepts_step_by_step_capability():
+    payload = {
+        "capability_plan": {
+            "version": 2,
+            "capabilities": [
+                {
+                    "name": "schema-dispatch",
+                    "phase": "dispatch",
+                    "objective": "Compile a citation-traced dispatch artifact.",
+                    "description": "Compile schema-valid dispatch outputs with citation traces.",
+                    "requirement_ids": ["REQ-001", "REQ-002"],
+                    "constraint_ids": ["CON-001"],
+                    "verification_required": True,
+                    "composes": [],
+                    "explicit_triggers": ["schema dispatch citation traces"],
+                    "evidence_refs": ["src-test"],
+                    "implementation_steps": [
+                        "Load the decision log requirements and dispatch contract",
+                        "Write the dispatch artifact with citation trace fields",
+                    ],
+                    "acceptance_criteria": [
+                        "Dispatch artifact validates against the schema",
+                        "Every output row includes a citation trace",
+                    ],
+                    "parallelizable": False,
+                    "rationale": "The same output proves both requirements.",
+                }
+            ],
+        }
+    }
+
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+
+    assert issues == []
 
 
 def test_validate_plan_extract_rejects_dangling_compose():

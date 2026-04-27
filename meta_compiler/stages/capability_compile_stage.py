@@ -308,6 +308,18 @@ def _capability_from_plan_entry(
     composes = [
         str(c) for c in entry.get("composes") or [] if isinstance(c, str)
     ]
+    explicit_triggers = _string_list(entry.get("explicit_triggers"))
+    implementation_steps = _string_list(entry.get("implementation_steps"))
+    acceptance_criteria = _string_list(entry.get("acceptance_criteria"))
+    evidence_refs = _string_list(entry.get("evidence_refs"))
+    phase = _optional_string(entry.get("phase"))
+    objective = _optional_string(entry.get("objective"))
+    rationale = _optional_string(entry.get("rationale"))
+    parallelizable = (
+        entry.get("parallelizable")
+        if isinstance(entry.get("parallelizable"), bool)
+        else None
+    )
 
     # Citations are the union of every referenced REQ + CON's citations.
     citations: list[str] = []
@@ -344,16 +356,22 @@ def _capability_from_plan_entry(
             "REQ/CON rows or merge this entry into a cap that already has them."
         )
 
-    try:
-        triggers = _derive_triggers(
-            description_truncated,
-            findings_for_row,
-            vocab_primary,
-            vocab_bootstrap,
-            {"description": description_truncated},
-        )
-    except RuntimeError:
-        triggers = []
+    triggers = _triggers_from_plan(
+        explicit_triggers,
+        vocab_primary=vocab_primary,
+        vocab_bootstrap=vocab_bootstrap,
+    )
+    if not triggers:
+        try:
+            triggers = _derive_triggers(
+                description_truncated,
+                findings_for_row,
+                vocab_primary,
+                vocab_bootstrap,
+                {"description": description_truncated, "objective": objective or ""},
+            )
+        except RuntimeError:
+            triggers = []
     if not triggers:
         triggers = [description_truncated]
 
@@ -391,7 +409,64 @@ def _capability_from_plan_entry(
         citation_ids=citations,
         composes=composes,
         verification_required=verification_required,
+        phase=phase,
+        objective=objective,
+        implementation_steps=implementation_steps,
+        acceptance_criteria=acceptance_criteria,
+        explicit_triggers=explicit_triggers,
+        evidence_refs=evidence_refs or required_finding_ids,
+        parallelizable=parallelizable,
+        rationale=rationale,
     )
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _optional_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _triggers_from_plan(
+    explicit_triggers: list[str],
+    *,
+    vocab_primary: set[str],
+    vocab_bootstrap: set[str] | None,
+) -> list[str]:
+    triggers: list[str] = []
+    seen: set[str] = set()
+    effective_vocab = vocab_primary or vocab_bootstrap or set()
+    for trigger in explicit_triggers:
+        candidate = trigger.strip().rstrip(":").strip()
+        if not candidate:
+            continue
+        normalized = candidate.lower()
+        if normalized in seen:
+            continue
+        if _is_generic_trigger(
+            candidate,
+            vocab=vocab_primary,
+            bootstrap_vocab=vocab_bootstrap,
+        ):
+            tokens = trigger_content_tokens(candidate)
+            tokens_in_vocab = tokens & effective_vocab if effective_vocab else tokens
+            if not tokens_in_vocab:
+                continue
+            candidate = " ".join(sorted(tokens_in_vocab))
+            normalized = candidate.lower()
+            if normalized in seen:
+                continue
+        triggers.append(candidate)
+        seen.add(normalized)
+        if len(triggers) >= MAX_TRIGGERS_PER_CAPABILITY:
+            break
+    return triggers
 
 
 def _infer_verification_type_from_plan(

@@ -53,13 +53,17 @@ harness.
 
    Skipping clarifying questions is flagged stale by the postflight.
 3. **Propose phases ordered by dependency.** A phase is a coherent slice
-   the implementer can finish before the next phase starts. Phases are
-   how the planner injects sequencing — Stage 3 will respect the
-   `composes` graph but won't infer phase boundaries on its own.
+    the implementer can finish before the next phase starts. Write this
+    like a Claude Code implementation plan: concrete steps, required
+    inputs, expected outputs, blocking dependencies, parallelizable work,
+    and explicit acceptance checks. The markdown is the human-readable
+    source of truth; the YAML block is the machine-readable extract.
 4. **Propose capabilities with explicit N-to-M mappings.** A capability
-   may absorb multiple REQs (one cap covers REQ-001 + REQ-004) or one
-   REQ may split into multiple capabilities. Constraint-only
-   capabilities are valid (e.g. a CI gate that enforces CON-002).
+    may absorb multiple REQs (one cap covers REQ-001 + REQ-004) or one
+    REQ may split into multiple capabilities. Constraint-only
+    capabilities are valid (e.g. a CI gate that enforces CON-002). Avoid
+    abstract catalog entries such as "data pipeline" unless the YAML also
+    names the actual implementation steps and pass/fail criteria.
 5. **Decide `verification_required` honestly per capability.**
    Performance budgets, schema invariants, and behavioural contracts ARE
    testable — set `verification_required: true`. Tooling pins,
@@ -78,9 +82,13 @@ harness.
    - `## Risks`
    - `## Open Questions`
 
-   The `## Capabilities` section MUST end with one fenced ```yaml```
-   block whose top-level key is `capability_plan:` — see the brief for
-   the exact schema. The CLI postflight extracts this block to
+    The `## Capabilities` section MUST end with one fenced ```yaml```
+    block whose top-level key is `capability_plan:` — see the brief for
+    the exact schema. For `capability_plan.version: 2`, every
+    verification-required capability must include `phase`, `objective`,
+    `implementation_steps`, `acceptance_criteria`, `explicit_triggers`,
+    `evidence_refs`, `parallelizable`, and `rationale`. The CLI
+    postflight extracts this block to
    `decision-logs/plan_extract_v{N}.yaml`.
 
 ## Constraints
@@ -92,6 +100,16 @@ harness.
   Plans drafted with no chat are flagged stale by the postflight.
 - Every REQ-NNN in the decision log MUST be covered by ≥1 capability's
   `requirement_ids`. Uncovered CONs warn but don't block.
+- Every `explicit_triggers` entry should use concrete domain nouns from
+  the brief's Planner Evidence Context. Do not write generic triggers
+  like "implement feature" or "process data".
+- Every `implementation_steps` item should be an imperative action an
+  implementer can execute or verify. Avoid generic steps like "build the
+  module" unless the next words name the concrete module boundary and
+  output.
+- Every `acceptance_criteria` item must be observable: a file exists, a
+  schema validates, a fixture passes, a citation appears, or a reviewer
+  can inspect a named artifact.
 
 ## Output Format
 

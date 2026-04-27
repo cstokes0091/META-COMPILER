@@ -21,6 +21,14 @@ class Capability(BaseModel):
     citation_ids: list[str] = Field(default_factory=list)
     composes: list[str] = Field(default_factory=list)
     verification_required: bool = True
+    phase: str | None = None
+    objective: str | None = None
+    implementation_steps: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    explicit_triggers: list[str] = Field(default_factory=list)
+    evidence_refs: list[str] = Field(default_factory=list)
+    parallelizable: bool | None = None
+    rationale: str | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "Capability":

@@ -46,7 +46,8 @@ meta-compiler elicit-vision --start        # write Stage 2 brief + transcript sk
 meta-compiler elicit-vision --finalize     # compile transcript → decision_log_v{N}.yaml
 meta-compiler audit-requirements
 meta-compiler plan-implementation --start    # Stage 2.5 preflight: render planning brief
-# (LLM runs implementation-planner.agent.md → writes implementation_plan_v{N}.md)
+# (LLM runs implementation-planner.agent.md → writes a step-by-step
+#  implementation_plan_v{N}.md plus capability_plan.version: 2 YAML)
 meta-compiler plan-implementation --finalize # Stage 2.5 postflight: extract plan_extract_v{N}.yaml
 meta-compiler scaffold
 meta-compiler phase4-finalize
@@ -191,6 +192,12 @@ meta-compiler audit-requirements
 # Review decision_log_v*.yaml and requirements_audit.yaml before scaffold.
 
 # Stage 3: Scaffold (capability-driven, four-layer compile)
+meta-compiler plan-implementation --start
+# LLM writes decision-logs/implementation_plan_v{N}.md. The markdown is the
+# human-readable plan; the YAML extract can preserve phase, objective,
+# implementation_steps, acceptance_criteria, explicit_triggers, evidence_refs,
+# and parallelizable for downstream skills.
+meta-compiler plan-implementation --finalize
 meta-compiler scaffold
 # Thin composer that invokes:
 #   compile-capabilities -> scaffolds/v{N}/capabilities.yaml
@@ -206,6 +213,9 @@ meta-compiler validate-stage --stage 3
 
 # Stage 4: Execute + pitch
 # Use prompts/stage-4-finalize.prompt.md
+#   phase4-finalize --start writes dispatch_plan.yaml
+#   @execution-orchestrator validates preflight/postflight boundaries
+#   planner/implementer/reviewer/researcher agents populate executions/v{N}/work/
 meta-compiler phase4-finalize
 meta-compiler validate-stage --stage 4
 # This writes final execution outputs plus a markdown pitch and a real .pptx deck.
