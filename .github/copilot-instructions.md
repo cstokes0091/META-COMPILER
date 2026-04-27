@@ -68,7 +68,7 @@ Each stage operates in **fresh context**. Artifacts pass knowledge forward, not 
 - **Stage 3** is a four-layer capability-driven compile: capability compile → contract extract → skill synthesis → workspace bootstrap. It consumes the Decision Log plus cited findings; when a Stage 2.5 plan extract exists, capabilities preserve N-to-M REQ/CON mappings, planner `explicit_triggers`, concrete `implementation_steps`, acceptance criteria, and evidence refs. Skills render those steps into `SKILL.md` instead of falling back to generic procedures.
 - **Stage 4** (`phase4_stage.py`) — the LLM ralph loop uses `@execution-orchestrator` plus the static planner/implementer/reviewer/researcher palette to populate `workspace-artifacts/executions/v{N}/work/{capability_id}/`, then `phase4-finalize --finalize` compiles the final manifest and pitch deck. Stage 4 reads `DISPATCH_HINTS.yaml`; the legacy `orchestrator/run_stage4.py` fallback is gone.
 
-Post-scaffold commands (`concept_reconciliation_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. The legacy `wiki-update` command was replaced by a two-phase semantic wiki enrichment pipeline (see CLAUDE.md §Semantic Wiki Enrichment).
+Post-scaffold commands (`concept_reconciliation_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. Use `/wiki-enrich` as the single chat entry point for semantic wiki enrichment; it refreshes new findings when needed, runs alias reconciliation and cross-source synthesis, applies validated CLI rewrites, and relinks aliases (see CLAUDE.md §Semantic Wiki Enrichment).
 
 ### Hook-enforced determinism
 
@@ -139,7 +139,7 @@ Binary seed pre-extraction and final deliverable writing use dedicated scripts:
   3. `meta-compiler ingest-validate`
   4. `meta-compiler research-breadth`
 - Stage 3 consumes the Decision Log only. Do not pull raw wiki or seed content directly into scaffold output unless the Decision Log explicitly requires it.
-- When new seeds arrive after Stage 3, run `meta-compiler track-seeds` to report the handoff, then `ingest --scope new` → `research-breadth` → `wiki-reconcile-concepts` + `wiki-apply-reconciliation` + `wiki-cross-source-synthesize`. Recommend Stage 2 re-entry when new evidence changes scope, architecture, or requirements.
+- When new seeds arrive after Stage 3, run `meta-compiler track-seeds` to report the handoff, then invoke `/wiki-enrich --scope new` to refresh findings, reconcile aliases, synthesize cross-source pages, apply validated rewrites, and run `wiki-link`. Recommend Stage 2 re-entry when new evidence changes scope, architecture, or requirements.
 
 ## Evidence Quality Rules
 

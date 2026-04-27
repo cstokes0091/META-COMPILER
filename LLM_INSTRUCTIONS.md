@@ -63,6 +63,7 @@ meta-compiler phase4-finalize
 meta-compiler wiki-reconcile-concepts
 meta-compiler wiki-apply-reconciliation
 meta-compiler wiki-cross-source-synthesize
+meta-compiler wiki-apply-cross-source-synthesis
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -321,8 +322,17 @@ Stage 4 should:
 ### Post-Scaffold: Semantic Wiki Enrichment
 
 When new seed documents arrive after scaffolding, the old `wiki-update`
-command is replaced by a two-phase semantic enrichment pipeline. First
-re-ingest the new seeds, then reconcile concepts across sources:
+command is a low-level refresh wrapper, while `/wiki-enrich` is the preferred
+single chat entry point for semantic enrichment. It refreshes new seed findings
+when needed, reconciles aliases, synthesizes cross-source concept pages, applies
+validated rewrites, and refreshes alias-aware links:
+
+```text
+/wiki-enrich --scope new
+```
+
+The lower-level manual equivalent remains available when the operator wants to
+step through each handoff:
 
 ```bash
 # 1. Extract the new seeds into findings JSON
@@ -339,13 +349,16 @@ meta-compiler wiki-apply-reconciliation
 # 3. Phase B — cross-source definition synthesis
 meta-compiler wiki-cross-source-synthesize
 # (LLM invokes .github/prompts/wiki-cross-source-synthesis.prompt.md)
+meta-compiler wiki-apply-cross-source-synthesis
 
 # 4. Alias-aware lexical linker refresh
 meta-compiler wiki-link
 ```
 
-If new seeds substantially change the problem space, recommend Stage 2
-re-entry before re-scaffolding.
+`/wiki-enrich` treats empty alias buckets or empty cross-source work plans as a
+successful no-op. If enriched evidence substantially changes the problem space,
+recommend Stage 2 re-entry before re-scaffolding; do not trigger re-entry
+automatically.
 
 ### Post-Scaffold: Seed Detection
 
@@ -413,6 +426,9 @@ executing each stage. The prompt set includes:
 - `stage-2-dialog.prompt.md` — vision elicitation dialog
 - `stage-3-scaffold.prompt.md` — scaffold review
 - `stage-4-finalize.prompt.md` — execute + pitch
+- `wiki-enrich.prompt.md` — single-prompt semantic wiki enrichment
+- `wiki-concept-reconciliation.prompt.md` — alias reconciliation fan-out
+- `wiki-cross-source-synthesis.prompt.md` — cross-source concept synthesis fan-out
 
 Workspace custom agents (including `academic-researcher.agent.md`), reusable
 prompts, and skills are provisioned in `.github/`.

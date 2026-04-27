@@ -53,12 +53,8 @@ meta-compiler scaffold
 meta-compiler phase4-finalize
 
 # Post-scaffold
-meta-compiler wiki-reconcile-concepts        # Phase A preflight: cluster alias candidates
-# (LLM runs wiki-concept-reconciliation.prompt.md → writes per-bucket subagent JSON)
-meta-compiler wiki-apply-reconciliation      # Phase A postflight: merge aliases into canonical pages
-meta-compiler wiki-cross-source-synthesize   # Phase B preflight: cross-source definition work plan
-# (LLM runs wiki-cross-source-synthesis.prompt.md → writes per-page subagent JSON)
-meta-compiler wiki-apply-cross-source-synthesis  # Phase B postflight: rewrite v2 page sections
+# Prompt-led semantic enrichment: /wiki-enrich --scope new
+# (LLM refreshes new findings if needed, reconciles aliases, synthesizes cross-source pages, then runs wiki-link)
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -234,13 +230,22 @@ meta-compiler validate-stage --stage all
 
 ## Post-Scaffold Operations
 
+Enrich the wiki after new findings land, or any time v2 needs semantic refresh.
+This single chat prompt refreshes new seeds if needed, reconciles aliases,
+synthesizes cross-source concept pages, applies validated rewrites, and relinks:
+
+```text
+/wiki-enrich --scope new
+```
+
 ```bash
-# When new seed documents arrive, re-run ingest → research-breadth, then:
+# Lower-level manual equivalent when you need to step through the two phases:
 meta-compiler wiki-reconcile-concepts         # cluster any new alias candidates
 # (LLM runs wiki-concept-reconciliation.prompt.md)
 meta-compiler wiki-apply-reconciliation       # merge into canonical pages
 meta-compiler wiki-cross-source-synthesize    # surface inter-source divergence
 # (LLM runs wiki-cross-source-synthesis.prompt.md)
+meta-compiler wiki-apply-cross-source-synthesis
 meta-compiler wiki-link                       # alias-aware link pass
 
 # Detect new seeds and report the handoff
