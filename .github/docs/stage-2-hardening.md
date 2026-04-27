@@ -155,6 +155,8 @@ Your dialog is asymmetric:
   > "The wiki shows approaches A (citing `src-smith2024-psf §3.2`) and B (citing `src-jones2023-orbital eq.14`). A optimizes for X; B optimizes for Y. Which fits your constraint that Z?"
 - Avoid yes/no ladders. Avoid forms. Avoid schema-shaped questions. "What are your conventions?" is a form; "the wiki has no committed notation for this concept — does your existing code use <A> or <B>?" is a conversation.
 
+Apply the `grill-me` skill during Step 3. Treat each decision area as a small design tree: ask one focused question at a time, provide your recommended answer or strongest researched options with trade-offs, resolve dependencies between choices before committing a block, and explore available artifacts instead of asking the human for raw information already present in the workspace. Do not land a decision block until relevant branches are resolved and the section's probe floor is met.
+
 ### Writing to the transcript
 
 Append turn-by-turn prose to `transcript.md` under the appropriate `## Decision Area:` heading. Prose captures thinking; decision blocks capture commitments.
@@ -659,12 +661,13 @@ stage2_postcheck_request:
 - For each decision block → YAML entry pair: does the YAML paraphrase preserve meaning? Flag any `choice` / `description` that drops, adds, or reverses information.
 - Are any rationales truncated or lost in compile?
 - For `Section: requirements`: does the `verification` field match the block's `Verification` text without semantic drift?
+- Does each new transcript block show the `grill-me` discipline from the conductor prompt: one focused question at a time, recommended answers or researched options with trade-offs, explicit branch/dependency resolution, and artifact exploration before asking the human for information already present in the workspace? Flag shallow acceptance or unresolved alternatives with `name: grill_me_discipline` and `severity: REVISE`.
 - Does the Decision Log have internal contradictions? (e.g., a convention that conflicts with an architecture decision; an in_scope item with no corresponding requirement; an out_of_scope item referenced by an in_scope requirement.)
 - For re-entry runs (`parent_version != null`): are the carried-forward decisions from the prior version still consistent with the new ones?
 
 **Output.** `workspace-artifacts/runtime/stage2/postcheck_verdict.yaml`.
 
-**Verdict logic.** Any semantic drift that changes the meaning of a decision → `verdict: REVISE`. Any contradiction → `REVISE`. Otherwise `PROCEED`.
+**Verdict logic.** Any semantic drift that changes the meaning of a decision → `verdict: REVISE`. Any contradiction → `REVISE`. Missing substantive `grill-me` branch resolution on a new block → `REVISE`. Otherwise `PROCEED`.
 
 ### 8.3 Shared verdict schema
 
@@ -715,7 +718,7 @@ Body sections: `## Purpose`, `## Modes` (preflight + postflight contracts), `## 
 - `meta_compiler/cli.py`: delete `--use-case`, `--resume`, `--non-interactive`, `--context-note` from the `elicit-vision` subparser. Add mutually exclusive `--start` / `--finalize` group. Add `--override-iterate "<reason>"` as an optional escape hatch for preflight.
 - `.github/agents/stage2-orchestrator.agent.md`: rewrite per §8.4.
 - `.github/prompts/stage-2-dialog.prompt.md`: replace wholesale per §4.
-- `prompts/stage-2-dialog.prompt.md`: same replacement (root mirror; see §13).
+- `prompts/stage-2-dialog.prompt.md`: generated mirror in initialized target workspaces; see §13 before editing source-tree mirrors manually.
 - `.github/agents/requirement-deriver.agent.md`: **delete**. The deriver's role (fan-out requirements per in-scope item) is replaced by the LLM conducting the lens matrix directly inside Step 3 of the prompt. If we want fan-out parallelism later, it re-enters as a runtime fan-out concern (separate roadmap item).
 
 ### 9.2 Files to add
@@ -813,7 +816,7 @@ Each step should be a separate commit. The system should remain runnable end-to-
 
 ## 13. Open Questions and Migration
 
-**Dual prompt source (root `prompts/` vs `.github/prompts/`).** The current code provisions both during `meta-init` (`_provision_workspace_prompts` copies root `prompts/` to target `prompts/`; `_provision_workspace_customizations` copies the whole `.github/` tree). For a downstream project workspace where meta-compiler is the orchestrator, both end up in the target. For meta-compiler itself (source = target), the copies are no-ops. Question: is the dual source intentional (one for Copilot Chat's `.github/prompts/`, one for humans/non-Copilot runtimes that read `prompts/`), or legacy? This spec updates both. We should decide whether to consolidate on `.github/prompts/` only in a follow-up.
+**Prompt source policy (`.github/prompts/` vs root `prompts/`).** The current code treats `.github/prompts/` as the canonical source. During `meta-init`, `_provision_workspace_prompts` copies those canonical prompts into both target `.github/prompts/` and target root `prompts/` for runtimes that still read the root mirror. Source-tree edits should update `.github/prompts/` first; root `prompts/` files are generated mirrors in initialized target workspaces.
 
 **How does the prompt runtime actually invoke `@stage2-orchestrator`?** Different LLM runtimes handle custom-agent invocation differently. Copilot Chat supports `@agent-name`; Claude Code uses the `Agent` tool; other runtimes may need explicit prompt engineering. The spec assumes the invocation mechanism exists; actual behavior across runtimes is validated at implementation step 12.
 

@@ -134,7 +134,7 @@ In the wiki, code findings render `type: code` pages (per file), and each regist
 
 ### Provisioned `.github/` Assets
 
-`meta-init` writes workspace customization assets into `.github/agents/`, `.github/prompts/`, `.github/skills/`, and `.github/instructions/`. Stage 1A2 delegating agents must expose the `agent` tool and include `explore` and `research` in their `agents:` allowlist (unless the Decision Log explicitly narrows it). When you change a stage's behavior, update both the root `prompts/*.prompt.md` and the corresponding `.github/` asset so provisioned workspaces match the orchestrator.
+`meta-init` writes workspace customization assets into `.github/agents/`, `.github/prompts/`, `.github/skills/`, and `.github/instructions/`. Stage 1A2 delegating agents must expose the `agent` tool and include `explore` and `research` in their `agents:` allowlist (unless the Decision Log explicitly narrows it). When you change a stage's behavior, update the canonical `.github/` asset; `meta-init` mirrors `.github/prompts/*.prompt.md` into target root `prompts/`.
 
 ### Document Scripts
 

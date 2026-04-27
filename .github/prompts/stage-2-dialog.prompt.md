@@ -66,6 +66,16 @@ Your dialog is asymmetric:
   > "The wiki shows approaches A (citing `src-smith2024-psf §3.2`) and B (citing `src-jones2023-orbital eq.14`). A optimizes for X; B optimizes for Y. Which fits your constraint that Z?"
 - Avoid yes/no ladders. Avoid forms. Avoid schema-shaped questions. "What are your conventions?" is a form; "the wiki has no committed notation for this concept — does your existing code use <A> or <B>?" is a conversation.
 
+### Grill-me discipline
+
+Apply the `grill-me` skill during Step 3. Treat every decision area as a small design tree that must be walked before a decision block lands:
+
+- Ask one focused question at a time, and include your recommended answer or the strongest researched options with trade-offs.
+- Resolve dependencies between choices explicitly: when one answer changes another section, follow that branch before committing the block.
+- If the answer can be found in `PROBLEM_STATEMENT.md`, the Stage 2 brief, the transcript, wiki pages, citations, or code artifacts, explore those artifacts instead of asking the human for raw information.
+- Do not accept the first plausible answer when alternatives, failure modes, constraints, or boundary cases remain unresolved.
+- Only write a decision block after the relevant design branches are resolved and at least 4 section probes have been substantively addressed.
+
 ### Walking the probe library before each decision block
 
 Before you write a decision block, walk the section's probe library at

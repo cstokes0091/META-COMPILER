@@ -30,6 +30,8 @@ Establish what v{N} captured: conventions, architecture, scope, requirements, ag
 
 ### 0b. Dialog with the human
 
+Apply the `grill-me` skill while re-ingesting the problem space: ask one focused question at a time, provide your recommended answer when the artifacts support one, and explore `PROBLEM_STATEMENT.md`, the prior Decision Log, and the wiki instead of asking for information already present there.
+
 Ask, one at a time, narrowing the space:
 
 - "What changed in your problem space since v{N}?"
@@ -108,12 +110,16 @@ Read, in order:
 - `workspace-artifacts/runtime/stage2/transcript.md` (seeded with prior decisions)
 - `workspace-artifacts/runtime/stage2/cascade_report_v{N+1}.yaml`
 
+Apply the `grill-me` skill to the revised sections only. Treat each revised section as a small design tree: ask one focused question at a time, include your recommended answer or strongest researched options with trade-offs, resolve dependencies between changed decisions, and explore artifacts before asking the human for raw information.
+
 Discuss **only** sections listed in `cascade_report.revised_sections`. For each revised section:
 
 - Present the PRIOR decision (already in the transcript as reference prose): "v{N} committed to A because B. Given the change, does that still hold?"
 - Query the wiki for alternatives not previously considered.
 - Converse with the human.
 - Append a **new** decision block whose title differs from the prior log's titles in that section. Blocks with identical titles fail the finalize-time freshness check.
+
+Do not land the new decision block until the relevant changed branches are resolved and the standard Stage 2 probe expectations from `stage-2-dialog.prompt.md` are substantively met. For unchanged sections, do not grill the human again.
 
 For **unchanged** sections: the carried-forward blocks are already in the transcript. Note "Retained from v{N}" in prose if you want, but do not re-discuss.
 

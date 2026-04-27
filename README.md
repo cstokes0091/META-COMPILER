@@ -139,7 +139,8 @@ meta-compiler run-all \
 # run-all stops after Stage 2 preflight (writes brief + transcript skeleton).
 # The Stage 2 dialog then happens in an LLM runtime driven by
 # .github/prompts/stage-2-dialog.prompt.md, which invokes the stage2-orchestrator
-# agent and calls `meta-compiler elicit-vision --finalize` when done.
+# agent, uses the grill-me questioning discipline before decision blocks,
+# and calls `meta-compiler elicit-vision --finalize` when done.
 # Review the Decision Log and requirements audit before running scaffold.
 
 # With a clean start:
@@ -182,7 +183,7 @@ meta-compiler validate-stage --stage 1a
 meta-compiler elicit-vision --start          # write brief + transcript skeleton
 # LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md:
 #   1. @stage2-orchestrator mode=preflight  (semantic readiness audit)
-#   2. converse with human, append decision blocks to transcript.md
+#   2. grill the decision tree with the human, append decision blocks to transcript.md
 meta-compiler elicit-vision --finalize       # parse blocks → decision_log_v{N}.yaml
 # LLM continues:
 #   3. @stage2-orchestrator mode=postflight (fidelity audit of compile)

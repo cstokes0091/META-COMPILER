@@ -248,7 +248,8 @@ The human decides: PROCEED or ITERATE back to Stage 1B.
 
 **Your job:** Walk `.github/prompts/stage-2-dialog.prompt.md` top to bottom.
 The prompt is the sequencer: it invokes the CLI, invokes the
-`stage2-orchestrator` agent, and conducts the dialog. You do not improvise
+`stage2-orchestrator` agent, and conducts the dialog. Use the `grill-me`
+questioning discipline before landing decision blocks. You do not improvise
 the sequence.
 
 The full design is in `.github/docs/stage-2-hardening.md`. Invoke `/stage-2-dialog`. Step 1 (`elicit-vision --start`) auto-fires via the `user_prompt_submit_dispatch` hook. The remaining steps stay LLM-driven:
@@ -256,7 +257,7 @@ The full design is in `.github/docs/stage-2-hardening.md`. Invoke `/stage-2-dial
 ```
 # [auto-fired] Step 1: meta-compiler elicit-vision --start
 # [Step 2: @stage2-orchestrator mode=preflight → semantic readiness audit]
-# [Step 3: converse with human — append decision blocks to transcript.md]
+# [Step 3: grill decision branches with human — append decision blocks to transcript.md]
 # [Step 4: meta-compiler elicit-vision --finalize]
 # [Step 5: @stage2-orchestrator mode=postflight → fidelity audit]
 # [Step 6: meta-compiler audit-requirements]
