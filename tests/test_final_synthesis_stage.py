@@ -153,6 +153,42 @@ def test_start_emits_work_plan_for_algorithm_project(tmp_path: Path):
     fragment = library_slice["fragments"][0]
     assert fragment["modality"] == "code"
     assert fragment["req_mentions"] == ["REQ-001"]
+    # Change D: context_md_path key is present (None when CONTEXT.md absent).
+    assert "context_md_path" in plan["final_synthesis_work_plan"]
+
+
+def test_start_threads_context_md_when_present(tmp_path: Path):
+    """Change D: when scaffolds/v{N}/CONTEXT.md exists, its path flows
+    into the work plan + request payload so the per-modality
+    synthesizers honor the same vocabulary as the work-loop palette."""
+    workspace_root, artifacts_root, paths = _bootstrap(tmp_path)
+    scaffold_root = _seed_workspace(
+        paths,
+        project_type="algorithm",
+        work_files={
+            "cap-001/main.py": "def main():\n    return 0  # REQ-001\n",
+        },
+        requirements=[{"id": "REQ-001", "description": "It runs"}],
+    )
+    (scaffold_root / "CONTEXT.md").write_text(
+        "# CONTEXT\n## Architecture Glossary\n- Module — anything with an interface\n",
+        encoding="utf-8",
+    )
+
+    run_final_synthesize_start(
+        artifacts_root=artifacts_root, workspace_root=workspace_root
+    )
+
+    plan = load_yaml(paths.final_synthesis_work_plan_path)
+    request = load_yaml(paths.final_synthesis_request_path)
+    assert plan["final_synthesis_work_plan"]["context_md_path"] is not None
+    assert plan["final_synthesis_work_plan"]["context_md_path"].endswith(
+        "CONTEXT.md"
+    )
+    assert request["final_synthesis_request"]["context_md_path"].endswith(
+        "CONTEXT.md"
+    )
+    assert "context_md_path" in request["final_synthesis_request"]["next_action"]
 
 
 def test_start_branches_for_hybrid_into_two_modalities(tmp_path: Path):

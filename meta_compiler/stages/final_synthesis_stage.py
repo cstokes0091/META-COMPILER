@@ -353,6 +353,19 @@ def run_final_synthesize_start(
         }
 
     generated_at = iso_now()
+
+    # Change D: thread CONTEXT.md (Stage 3 output) into the synthesis
+    # request so per-modality synthesizers honor the same Domain +
+    # Architecture vocabulary as the work-loop palette agents. CONTEXT.md
+    # may not exist on legacy scaffolds; surface as None and let the
+    # orchestrator handle gracefully.
+    context_md_path = scaffold_root / "CONTEXT.md"
+    context_md_relative = (
+        str(context_md_path.relative_to(paths.root))
+        if context_md_path.exists()
+        else None
+    )
+
     plan_payload = {
         "final_synthesis_work_plan": {
             "generated_at": generated_at,
@@ -362,6 +375,7 @@ def run_final_synthesize_start(
             "scaffold_root": str(scaffold_root),
             "work_dir": str(work_dir),
             "final_dir": str(final_dir),
+            "context_md_path": context_md_relative,
             "modality_keys": list(modality_keys),
             "modalities": modalities_payload,
             "expected_citation_ids": expected_citation_ids,
@@ -379,12 +393,16 @@ def run_final_synthesize_start(
             "project_type": project_type,
             "work_plan_path": str(paths.final_synthesis_work_plan_path),
             "subagent_returns_dir": str(paths.final_synthesis_subagent_returns_dir),
+            "context_md_path": context_md_relative,
             "modality_keys": list(modality_keys),
             "next_action": (
                 "Invoke .github/prompts/final-synthesis.prompt.md to fan out "
                 "per-modality synthesizer subagents, persist each return to "
                 "subagent_returns/<modality>.json, then run "
-                "`meta-compiler final-synthesize-finalize`."
+                "`meta-compiler final-synthesize-finalize`. Each synthesizer "
+                "MUST read context_md_path first (when set) to honor the "
+                "same Domain + Architecture vocabulary as the work-loop "
+                "palette agents."
             ),
         }
     }
