@@ -59,15 +59,16 @@ meta-compiler elicit-vision --start        # write Stage 2 brief + transcript sk
 # (LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md)
 meta-compiler elicit-vision --finalize     # compile transcript → decision_log_v{N}.yaml
 meta-compiler audit-requirements
+meta-compiler plan-implementation --start    # Stage 2.5 preflight: render planning brief
+# (LLM runs implementation-planner.agent.md → writes a step-by-step
+#  implementation_plan_v{N}.md plus capability_plan.version: 2 YAML)
+meta-compiler plan-implementation --finalize # Stage 2.5 postflight: extract plan_extract_v{N}.yaml
 meta-compiler scaffold
 meta-compiler phase4-finalize
 
 # Post-scaffold
-meta-compiler wiki-reconcile-concepts        # Phase A preflight: cluster alias candidates
-# (LLM runs wiki-concept-reconciliation.prompt.md → writes the proposal)
-meta-compiler wiki-apply-reconciliation      # Phase A postflight: merge aliases into canonical pages
-meta-compiler wiki-cross-source-synthesize   # Phase B preflight: cross-source definition work plan
-# (LLM runs wiki-cross-source-synthesis.prompt.md → rewrites Definition/Key Claims)
+# Prompt-led semantic enrichment: /wiki-enrich --scope new
+# (LLM refreshes new findings if needed, reconciles aliases, synthesizes cross-source pages, then runs wiki-link)
 meta-compiler wiki-browse
 meta-compiler stage2-reentry --reason "scope changed" --sections "architecture,requirements"
 meta-compiler finalize-reentry
@@ -77,6 +78,7 @@ meta-compiler add-code-seed --repo https://github.com/org/widget-lib --ref v1.2.
 meta-compiler bind-code-seed --path seeds/code/already-cloned
 
 # Utility commands
+meta-compiler wiki-update                        # Convenience: ingest --scope new + research-breadth
 meta-compiler track-seeds                        # Auto-detect and ingest new seeds
 meta-compiler clean-workspace --target-stage 0   # Reset to any stage
 
@@ -147,7 +149,8 @@ meta-compiler run-all \
 # run-all stops after Stage 2 preflight (writes brief + transcript skeleton).
 # The Stage 2 dialog then happens in an LLM runtime driven by
 # .github/prompts/stage-2-dialog.prompt.md, which invokes the stage2-orchestrator
-# agent and calls `meta-compiler elicit-vision --finalize` when done.
+# agent, uses the grill-me questioning discipline before decision blocks,
+# and calls `meta-compiler elicit-vision --finalize` when done.
 # Review the Decision Log and requirements audit before running scaffold.
 
 # With a clean start:
@@ -190,7 +193,7 @@ meta-compiler validate-stage --stage 1a
 meta-compiler elicit-vision --start          # write brief + transcript skeleton
 # LLM conducts the dialog per .github/prompts/stage-2-dialog.prompt.md:
 #   1. @stage2-orchestrator mode=preflight  (semantic readiness audit)
-#   2. converse with human, append decision blocks to transcript.md
+#   2. grill the decision tree with the human, append decision blocks to transcript.md
 meta-compiler elicit-vision --finalize       # parse blocks → decision_log_v{N}.yaml
 # LLM continues:
 #   3. @stage2-orchestrator mode=postflight (fidelity audit of compile)
@@ -199,17 +202,31 @@ meta-compiler audit-requirements
 # run-all intentionally stops at the Stage 2 preflight boundary.
 # Review decision_log_v*.yaml and requirements_audit.yaml before scaffold.
 
-# Stage 3: Scaffold
+# Stage 3: Scaffold (capability-driven, four-layer compile)
+meta-compiler plan-implementation --start
+# LLM writes decision-logs/implementation_plan_v{N}.md. The markdown is the
+# human-readable plan; the YAML extract can preserve phase, objective,
+# implementation_steps, acceptance_criteria, explicit_triggers, evidence_refs,
+# and parallelizable for downstream skills.
+meta-compiler plan-implementation --finalize
 meta-compiler scaffold
-# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md)
-# Generated scaffolds now include human-readable summaries, real .github/
-# custom agents, skills, and instructions, plus an execution contract
-# (EXECUTION_MANIFEST.yaml + orchestrator/run_stage4.py) and an initial
-# workspace-artifacts/wiki/provenance/what_i_built.md summary.
+# Thin composer that invokes:
+#   compile-capabilities -> scaffolds/v{N}/capabilities.yaml
+#   extract-contracts    -> scaffolds/v{N}/contracts/
+#   synthesize-skills    -> scaffolds/v{N}/skills/{name}/SKILL.md + INDEX.md
+#   workspace-bootstrap  -> SCAFFOLD_MANIFEST / EXECUTION_MANIFEST /
+#                           DISPATCH_HINTS, verification/{hook_id}_spec.yaml +
+#                           REQ_TRACE.yaml, empty output buckets per project_type
+# No domain-named agents are generated; execution uses the static repo-level
+# .github/agents/ palette (implementer, reviewer, researcher).
+# LLM performs scaffold review/traceability checks (see prompts/stage-3-scaffold.prompt.md).
 meta-compiler validate-stage --stage 3
 
 # Stage 4: Execute + pitch
 # Use prompts/stage-4-finalize.prompt.md
+#   phase4-finalize --start writes dispatch_plan.yaml
+#   @execution-orchestrator validates preflight/postflight boundaries
+#   implementer/reviewer/researcher agents populate executions/v{N}/work/
 meta-compiler phase4-finalize
 meta-compiler validate-stage --stage 4
 # This writes final execution outputs plus a markdown pitch and a real .pptx deck.
@@ -217,8 +234,8 @@ meta-compiler validate-stage --stage 4
 # Browse the wiki in a local browser window
 meta-compiler wiki-browse
 
-# Run scaffold self-tests
-pytest workspace-artifacts/scaffolds/v1/tests/ -v
+# Inspect planner-provided runnable acceptance specs consumed during Stage 4
+ls workspace-artifacts/scaffolds/v1/verification/*_spec.yaml
 
 # Validate everything
 meta-compiler validate-stage --stage all
@@ -226,13 +243,22 @@ meta-compiler validate-stage --stage all
 
 ## Post-Scaffold Operations
 
+Enrich the wiki after new findings land, or any time v2 needs semantic refresh.
+This single chat prompt refreshes new seeds if needed, reconciles aliases,
+synthesizes cross-source concept pages, applies validated rewrites, and relinks:
+
+```text
+/wiki-enrich --scope new
+```
+
 ```bash
-# When new seed documents arrive, re-run ingest → research-breadth, then:
+# Lower-level manual equivalent when you need to step through the two phases:
 meta-compiler wiki-reconcile-concepts         # cluster any new alias candidates
 # (LLM runs wiki-concept-reconciliation.prompt.md)
 meta-compiler wiki-apply-reconciliation       # merge into canonical pages
 meta-compiler wiki-cross-source-synthesize    # surface inter-source divergence
 # (LLM runs wiki-cross-source-synthesis.prompt.md)
+meta-compiler wiki-apply-cross-source-synthesis
 meta-compiler wiki-link                       # alias-aware link pass
 
 # Detect new seeds and report the handoff

@@ -145,6 +145,18 @@ def test_plan_start_renders_brief_with_requirements_and_constraints(tmp_path):
     assert "performance_target" in brief
     assert "Python 3.11 only" in brief
     assert "capability_plan:" in brief  # schema doc included
+    # v2.1 schema doc
+    assert "## Vertical Slice Rule" in brief
+    assert "## Dispatch Class" in brief
+    assert "dispatch_kind: hitl|afk" in brief
+    assert "user_story:" in brief
+    assert "the_problem:" in brief
+    assert "the_fix:" in brief
+    assert "anti_patterns:" in brief
+    assert "out_of_scope:" in brief
+    assert "deletion_test:" in brief
+    assert "acceptance_spec:" in brief
+    assert "format: gherkin|example_io" in brief
 
 
 # ---------------------------------------------------------------------------
@@ -297,40 +309,204 @@ def test_validate_plan_extract_v2_requires_concrete_execution_fields():
     assert any("evidence_refs" in issue for issue in issues)
 
 
+def _v2_full_capability(**overrides):
+    """Build a fully-populated v2.1 capability dict for happy-path tests.
+
+    Override-friendly: callers can pass any subset of keys to swap in failure
+    modes (e.g. drop user_story, replace dispatch_kind with garbage).
+    """
+    base = {
+        "name": "schema-dispatch",
+        "phase": "dispatch",
+        "objective": "Compile a citation-traced dispatch artifact.",
+        "description": "Compile schema-valid dispatch outputs with citation traces.",
+        "requirement_ids": ["REQ-001", "REQ-002"],
+        "constraint_ids": ["CON-001"],
+        "verification_required": True,
+        "composes": [],
+        "explicit_triggers": ["schema dispatch citation traces"],
+        "evidence_refs": ["src-test"],
+        "implementation_steps": [
+            "Load the decision log requirements and dispatch contract",
+            "Write the dispatch artifact with citation trace fields",
+        ],
+        "acceptance_criteria": [
+            "Dispatch artifact validates against the schema",
+            "Every output row includes a citation trace",
+        ],
+        "parallelizable": False,
+        "rationale": "The same output proves both requirements.",
+        "dispatch_kind": "afk",
+        "user_story": (
+            "As a planner reviewer, I want every dispatch artifact to carry "
+            "a citation trace, so that schema audits stay auditable."
+        ),
+        "the_problem": (
+            "Dispatch artifacts ship without citation traces and audits drift."
+        ),
+        "the_fix": (
+            "Compile each dispatch row with a citation trace field that the "
+            "schema validates."
+        ),
+        "anti_patterns": [
+            "Do NOT silently strip citation IDs when reshaping rows.",
+        ],
+        "out_of_scope": [],
+        "deletion_test": (
+            "Deleting this capability would make every audit pipeline fail "
+            "to resolve dispatch citations across three caller sites."
+        ),
+        "acceptance_spec": {
+            "format": "example_io",
+            "scenarios": [
+                {
+                    "name": "happy_path",
+                    "given": "A dispatch input with a citation trace.",
+                    "when": "the dispatch compiler runs against the schema",
+                    "then": "every output row carries the citation trace and audits pass",
+                    "examples": [
+                        {
+                            "input": {"row_id": 1, "citation": "src-test"},
+                            "expected": {"row_id": 1, "citation_trace": ["src-test"]},
+                        }
+                    ],
+                }
+            ],
+            "invariants": [
+                "every row has citation_trace non-empty",
+            ],
+        },
+    }
+    base.update(overrides)
+    return base
+
+
 def test_validate_plan_extract_v2_accepts_step_by_step_capability():
     payload = {
         "capability_plan": {
             "version": 2,
-            "capabilities": [
-                {
-                    "name": "schema-dispatch",
-                    "phase": "dispatch",
-                    "objective": "Compile a citation-traced dispatch artifact.",
-                    "description": "Compile schema-valid dispatch outputs with citation traces.",
-                    "requirement_ids": ["REQ-001", "REQ-002"],
-                    "constraint_ids": ["CON-001"],
-                    "verification_required": True,
-                    "composes": [],
-                    "explicit_triggers": ["schema dispatch citation traces"],
-                    "evidence_refs": ["src-test"],
-                    "implementation_steps": [
-                        "Load the decision log requirements and dispatch contract",
-                        "Write the dispatch artifact with citation trace fields",
-                    ],
-                    "acceptance_criteria": [
-                        "Dispatch artifact validates against the schema",
-                        "Every output row includes a citation trace",
-                    ],
-                    "parallelizable": False,
-                    "rationale": "The same output proves both requirements.",
-                }
-            ],
+            "capabilities": [_v2_full_capability()],
         }
     }
 
     issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
 
     assert issues == []
+
+
+def test_validate_plan_extract_v2_rejects_missing_dispatch_kind():
+    cap = _v2_full_capability()
+    cap.pop("dispatch_kind")
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("dispatch_kind" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_unparseable_user_story():
+    cap = _v2_full_capability(user_story="just do the thing")
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("user_story" in issue and "As a" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_pass_through_deletion_test():
+    cap = _v2_full_capability(
+        deletion_test="No complexity reappears; trivial wrapper around the schema."
+    )
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("deletion_test" in issue and "pass-through" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_acceptance_spec_unbound_to_user_story():
+    cap = _v2_full_capability(
+        user_story=(
+            "As a researcher, I want offline backups, "
+            "so that recovery survives a power outage."
+        )
+    )
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any(
+        "acceptance_spec" in issue and "user_story" in issue for issue in issues
+    )
+
+
+def test_validate_plan_extract_v2_rejects_acceptance_spec_missing_then():
+    cap = _v2_full_capability()
+    cap["acceptance_spec"]["scenarios"][0].pop("then")
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("acceptance_spec" in issue and "then" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_example_io_null_input():
+    cap = _v2_full_capability()
+    cap["acceptance_spec"]["scenarios"][0]["examples"][0]["input"] = None
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("examples[0].input" in issue and "non-empty mapping" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_example_io_empty_expected():
+    cap = _v2_full_capability()
+    cap["acceptance_spec"]["scenarios"][0]["examples"][0]["expected"] = {}
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any(
+        "examples[0].expected" in issue and "non-empty mapping" in issue
+        for issue in issues
+    )
+
+
+def test_validate_plan_extract_v2_rejects_horizontal_slice():
+    """When architecture is multi-layer, a capability whose
+    implementation_steps + scenarios touch <2 layers is rejected."""
+    decision_log_with_arch = {
+        "decision_log": {
+            **_decision_log_dict()["decision_log"],
+            "architecture": [
+                {"component": "ingest", "approach": "x", "constraints_applied": []},
+                {"component": "dispatch", "approach": "y", "constraints_applied": []},
+                {"component": "render", "approach": "z", "constraints_applied": []},
+            ],
+        }
+    }
+    cap = _v2_full_capability(
+        implementation_steps=[
+            "Implement parsing for ingest layer only",
+            "Wire ingest layer to ingest layer downstream",
+        ],
+        acceptance_spec={
+            "format": "gherkin",
+            "scenarios": [
+                {
+                    "name": "ingest_only",
+                    "given": "ingest layer wired up",
+                    "when": "ingest layer receives data",
+                    "then": "ingest layer carries citation trace through ingest",
+                }
+            ],
+        },
+    )
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=decision_log_with_arch)
+    assert any("horizontal slice" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_requires_anti_patterns():
+    cap = _v2_full_capability(anti_patterns=[])
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("anti_patterns" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_requires_out_of_scope_key_present():
+    cap = _v2_full_capability()
+    cap.pop("out_of_scope")
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("out_of_scope" in issue for issue in issues)
 
 
 def test_validate_plan_extract_rejects_dangling_compose():

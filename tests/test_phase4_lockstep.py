@@ -1,8 +1,11 @@
-"""Verify Stage 4 lockstep with the Commit 8 scaffold rewrite.
+"""Verify Stage 4 lockstep with the Commit 8 scaffold rewrite + Change E.
 
-Post-flip, `run_phase4_start` reads DISPATCH_HINTS.yaml (not AGENT_REGISTRY.yaml)
-and produces capability-keyed assignments with assigned_agent: "planner".
-The legacy orchestrator subprocess fallback in run_phase4_finalize is gone.
+`run_phase4_start` reads DISPATCH_HINTS.yaml (not AGENT_REGISTRY.yaml) and
+produces capability-keyed assignments. Change E removed the
+`assigned_agent: "planner"` field — there is no Stage 4 planner agent any
+more; planning lives upstream in Stage 2.5 and `run_phase4_start` writes
+per-capability `_dispatch.yaml` files alongside `dispatch_plan.yaml`. The
+legacy orchestrator subprocess fallback in run_phase4_finalize is gone.
 """
 from __future__ import annotations
 
@@ -168,10 +171,15 @@ def test_phase4_start_reads_new_dispatch_hints(tmp_path):
     plan = yaml.safe_load(dispatch_plan_path.read_text(encoding="utf-8"))["dispatch_plan"]
 
     for assignment in plan["assignments"]:
-        assert assignment["assigned_agent"] == "planner"
+        # Change E: assigned_agent: "planner" was dropped — Stage 4 has no
+        # planner agent. Routing is deterministic in the orchestrator.
+        assert "assigned_agent" not in assignment
         # expected_work_dir uses executions/v1/work/<capability_id>/ naming.
         assert assignment["expected_work_dir"].startswith("executions/v1/work/")
         assert "capability" in assignment
+        # Per-cap _dispatch.yaml is the new denormalized routing target.
+        assert assignment["dispatch_path"].endswith("_dispatch.yaml")
+        assert (artifacts / assignment["dispatch_path"]).exists()
 
 
 def test_phase4_finalize_requires_work_or_manifest(tmp_path):

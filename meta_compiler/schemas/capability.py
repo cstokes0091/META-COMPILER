@@ -1,6 +1,8 @@
 """Capability graph: the post-dialogue compile output consumed by Stage 3 downstream stages."""
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .verification import VerificationType
@@ -29,6 +31,17 @@ class Capability(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     parallelizable: bool | None = None
     rationale: str | None = None
+
+    # Stage 2.5 v2.1 fields (Change A): grill-with-docs dialog output,
+    # vertical-slice + runnable-spec discipline, HITL/AFK dispatch class.
+    dispatch_kind: Literal["hitl", "afk"] | None = None
+    acceptance_spec: dict[str, Any] | None = None
+    user_story: str | None = None
+    the_problem: str | None = None
+    the_fix: str | None = None
+    anti_patterns: list[str] = Field(default_factory=list)
+    out_of_scope: list[str] = Field(default_factory=list)
+    deletion_test: str | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> "Capability":

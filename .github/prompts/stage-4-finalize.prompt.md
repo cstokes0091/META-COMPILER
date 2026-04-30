@@ -9,29 +9,34 @@ of how research became a product.
 
 Stage 4 follows the same prompt-as-conductor pattern as Stage 2 ingest:
 
-1. CLI mechanical prep (`phase4-finalize --start`)
+1. CLI mechanical prep (`phase4-finalize --start`) — also writes a
+   per-capability `_dispatch.yaml` denormalizing every plan-extract field
+   the implementer + reviewer need (Change E removed the Stage 4 planner
+   agent; planning lives upstream in Stage 2.5).
 2. Preflight verdict (`@execution-orchestrator mode=preflight`)
-3. Ralph loop: planner decomposes, implementer fan-out, reviewer fan-out,
-   revision cycles — all against the capability-keyed dispatch plan
+3. Per-capability work loop: implementer → reviewer (always) → researcher
+   (only when the reviewer's verdict has `gap_kind: knowledge_gap`). The
+   orchestrator routes deterministically; there is no Stage 4 planning
+   step.
 4. CLI mechanical compile (`phase4-finalize --finalize`)
 5. Postflight verdict (`@execution-orchestrator mode=postflight`)
 
 The conductor is *this prompt*. The CLI never holds the loop — the LLM does.
-Step 3 batches must be dispatched in a single message with multiple tool
-calls, the same way `ingest-orchestrator.prompt.md` fans out its readers.
 
 ## Your Role
-Conduct the Stage 4 ralph loop against the static agent palette
-(`planner`, `implementer`, `reviewer`, `researcher`). You will:
-- Trigger the dispatch-plan write
+Conduct the Stage 4 work loop against the static three-agent palette
+(`implementer`, `reviewer`, `researcher`). You will:
+- Trigger the dispatch-plan write (this also emits each capability's
+  `work/<cap>/_dispatch.yaml`)
 - Invoke the orchestrator agent for preflight readiness
-- Fan out implementers (one per capability in `dispatch_plan.yaml`)
-- Fan out reviewers (one per implementer output)
+- Drive the per-capability loop: implementer → reviewer (every iteration)
+  → researcher (only on `gap_kind: knowledge_gap`)
 - Trigger the final manifest + pitch compile
 - Invoke the orchestrator for postflight fidelity audit
 
 You do NOT inline-execute implementer work yourself. You delegate to the
-four-agent palette.
+three-agent palette. There is no Stage 4 `@planner` agent — planning is
+upstream in Stage 2.5; the implementer reads `_dispatch.yaml` directly.
 
 ## Step 1 — Mechanical prep (CLI)
 
@@ -45,8 +50,15 @@ This writes:
 - `workspace-artifacts/executions/v{N}/dispatch_plan.yaml` — the
   capability-keyed assignment list, derived from the scaffold's
   `DISPATCH_HINTS.yaml`. Each entry carries `capability`,
-  `assigned_agent: planner`, `skill_path`, `contract_ref`, and
-  `expected_work_dir: executions/v{N}/work/<capability_id>/`.
+  `skill_path`, `contract_ref`, `expected_work_dir`, `dispatch_path`,
+  `dispatch_kind` (`hitl|afk`), and `verification_spec_paths`.
+  (`assigned_agent` is no longer present — Change E removed the Stage
+  4 planner.)
+- `workspace-artifacts/executions/v{N}/work/<capability>/_dispatch.yaml`
+  per capability — full v2.1 plan-extract denormalization (user_story,
+  the_problem, the_fix, anti_patterns, out_of_scope, dispatch_kind,
+  acceptance_spec_path, etc.). The implementer reads this directly at
+  Step 0; the reviewer reads it during the audit phases.
 - `workspace-artifacts/runtime/phase4/execution_request.yaml` — the
   preflight request the orchestrator agent will read.
 - `workspace-artifacts/executions/v{N}/work/` — the directory each
@@ -84,71 +96,85 @@ If any requirement is uncovered, halt with the specific REQ-IDs and re-run
 `meta-compiler scaffold` (or `compile-capabilities` standalone) after
 adding citations/capabilities.
 
-## Step 3 — Ralph loop fan-out (capability-keyed)
+## Step 3 — Per-capability work loop (deterministic routing)
 
-Read `executions/v{N}/dispatch_plan.yaml`. Fan-out runs in three sub-steps.
-The batch sub-steps (3a, 3b) MUST use a single message with multiple `@agent`
-tool calls — not a chain of one-per-message invocations.
+Read `executions/v{N}/dispatch_plan.yaml`. The orchestrator agent
+already validated it in Step 2. **There is no Step 3a planner sub-step
+any more — Change E removed the Stage 4 planner agent. Routing is
+deterministic: for each capability the orchestrator runs implementer →
+reviewer (every iteration) → researcher (only when the reviewer's
+verdict has `gap_kind: knowledge_gap`).**
 
-### Step 3a — Planner decomposes (1 invocation, sequential)
+Group assignments by `dispatch_kind`. AFK capabilities can run as one
+unattended batch; HITL capabilities require operator confirmation
+before each starts. Within a batch, capabilities with
+`parallelizable: true` and no shared `composes` link can run in
+parallel.
 
-Invoke `@planner` once, passing the task description (or "implement every
-capability in dispatch_plan.yaml" if running the default end-to-end flow).
+For each capability:
 
-The planner:
-- Reads `capabilities.yaml`, `skills/INDEX.md`, and `dispatch_plan.yaml`.
-- Produces an ordered `planner_plan` in
-  `executions/v{N}/work/_plan.yaml` that topologically orders capabilities
-  by the `composes` graph.
-- Assigns each capability to an agent role:
-  - `implementer` for code/artifact outputs
-  - `researcher` for document outputs that need evidence gathering
-  - `reviewer` for verification-only capabilities
-
-### Step 3b — Implementer + researcher fan-out (parallel, up to 4)
-
-For every capability in `_plan.yaml` with `assigned_agent: implementer` or
-`assigned_agent: researcher`, spawn one subagent. **Run up to 4 in parallel
-using a single message with multiple tool calls.** Each subagent:
-
-- Reads its `skills/<capability>/SKILL.md`, the referenced contract file,
-  and the cited findings (resolved via the SKILL's `findings:` frontmatter).
-- Writes deliverables under `executions/v{N}/work/<capability>/`.
-- Fails its own capability with `_issue.yaml` if a required input is
-  missing, rather than emitting a placeholder.
-
-Implementers do not depend on each other's `work/` outputs; they each read
-the Decision Log + findings independently.
+```
+load _dispatch.yaml + SKILL.md + CONTEXT.md  (fresh read set)
+attempt = 1
+loop:
+    @implementer  ← writes work/<cap>/tests/test_acceptance.py at
+                    Step 0 (translating verification/<hook>_spec.yaml
+                    into pytest), confirms RED, then runs tracer-bullet
+                    TDD on internals (test_unit_*.py).
+    @reviewer     ← runs FIDELITY_AUDIT → RED → GREEN → UNIT_TESTS →
+                    ANTI_PATTERN_AUDIT → OUT_OF_SCOPE_AUDIT →
+                    VOCABULARY_AUDIT → USER_STORY_AUDIT; writes
+                    work/<cap>/_verdict.yaml. NEVER edits any test file.
+    if verdict.decision == "PROCEED": break
+    if attempt >= max_attempts:
+        BLOCK + emit stage2-reentry hint
+    if verdict.gap_kind == "knowledge_gap":
+        @researcher  ← reads the verdict's gap_statement, produces
+                        either work/<cap>/_research.md (in-corpus) or
+                        work/<cap>/_gap_escalation.yaml (out-of-corpus,
+                        operator pause).
+    # all other gap_kinds (anti_pattern, out_of_scope, vocab_drift,
+    # user_story_gap) loop straight back to @implementer
+    attempt += 1
+```
 
 If an agent returns errors, retry once; on second failure, mark the
 assignment `status: failed` in `dispatch_plan.yaml` and continue.
 
-### Step 3c — Reviewer fan-out (parallel, up to 4)
+### Reviewer details
 
-For every capability produced in 3b, spawn a `@reviewer` invocation. **Run
-up to 4 in parallel using a single message with multiple tool calls.** Each
-reviewer:
+The reviewer:
 
 - Runs in fresh context — it did not write the artifact it reviews.
-- Executes the `verification/<hook_id>.py` pytest stubs and upgrades the
-  `pytest.xfail` markers into real assertions against the implementer's
-  work dir.
+- Reads `verification/<hook_id>_spec.yaml` (the planner-frozen
+  acceptance spec; Change B replaced the legacy `.py` stubs) and runs
+  the implementer's own `work/<cap>/tests/test_acceptance.py` plus
+  every `test_unit_*.py` in the work dir.
+- **Never edits any test file** (`work/<cap>/tests/*.py` is implementer-
+  owned; `verification/<hook>_spec.yaml` is planner-owned). Earlier
+  versions instructed the reviewer to "upgrade xfail markers into real
+  assertions against the implementer's outputs" — that's the conflict-
+  of-interest Change C removed. If a test is wrong, ITERATE; the
+  implementer fixes it.
+- Runs FIDELITY_AUDIT first (each scenario in the spec maps to a real
+  pytest function with a real call site + real assertion). Trivially-
+  passing tests (`assert True`) are caught here.
 - Confirms every contract invariant holds against the outputs.
-- Writes `_verdict.yaml` in the work dir with
-  `verdict: PROCEED | ITERATE | BLOCK`.
+- Writes `_verdict.yaml` with new fields: `decision: PROCEED | ITERATE
+  | BLOCK`, `gap_kind`, `gap_statement`, `fidelity_audit_passed`,
+  `acceptance_red_observed`, `acceptance_green_observed`, unit test
+  counts, plus per-audit violation lists.
 
-### Step 3d — Revision batch (iterative, parallel within each cycle)
+### Iteration cap
 
-Collect all `ITERATE` verdicts. Re-dispatch the failing implementers **in a
-single message with multiple tool calls**, each receiving its reviewer's
-`failed_hooks` and `violated` invariants. After revision, re-run the
-corresponding reviewers (also as a single batched message).
+Cap at 3 cycles per capability. On cycle 3 force-advance and append
+an `open_item` to `executions/v{N}/ralph_loop_log.yaml`.
 
-Cap at 3 cycles per capability. On cycle 3 force-advance and append an
-`open_item` to `executions/v{N}/ralph_loop_log.yaml`.
-
-`BLOCK` verdicts indicate the contract needs to change upstream — halt and
-surface the issue rather than forcing a cycle.
+`BLOCK` verdicts indicate the contract needs to change upstream — halt
+and surface the issue rather than forcing a cycle. Same for
+`gap_kind: knowledge_gap` paths where the researcher writes
+`_gap_escalation.yaml`: pause for operator decision (add seed,
+`/wiki-enrich`, or Stage 2.5 re-entry).
 
 ## Step 4 — Final synthesis (assemble per-capability fragments into ONE deliverable)
 

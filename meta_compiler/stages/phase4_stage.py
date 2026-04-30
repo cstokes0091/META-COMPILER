@@ -157,18 +157,74 @@ def _load_dispatch_hints(scaffold_root: Path) -> list[dict[str, Any]]:
     return [row for row in assignments if isinstance(row, dict)]
 
 
+def _load_capability_graph_for_dispatch(
+    scaffold_root: Path,
+) -> dict[str, dict[str, Any]]:
+    """Return {capability_name: capability_dict_from_yaml} for denormalization.
+
+    Used by run_phase4_start to write per-capability `_dispatch.yaml`
+    files with the full plan-extract field set. We index by name so the
+    DISPATCH_HINTS row's `capability` field resolves directly.
+    """
+    capabilities_path = scaffold_root / "capabilities.yaml"
+    if not capabilities_path.exists():
+        return {}
+    payload = load_yaml(capabilities_path) or {}
+    graph = payload.get("capability_graph") or {}
+    capabilities = graph.get("capabilities") or []
+    out: dict[str, dict[str, Any]] = {}
+    for cap in capabilities:
+        if not isinstance(cap, dict):
+            continue
+        name = cap.get("name")
+        if isinstance(name, str) and name:
+            out[name] = cap
+    return out
+
+
+def _dispatch_kind_for_payload(raw_value: Any, *, capability_name: str) -> str:
+    """Return a concrete dispatch_kind for legacy and v2.1 scaffolds."""
+    if raw_value in (None, ""):
+        return "afk"
+    if raw_value in ("hitl", "afk"):
+        return str(raw_value)
+    raise RuntimeError(
+        f"Invalid dispatch_kind for {capability_name}: {raw_value!r}; "
+        "expected 'hitl' or 'afk'."
+    )
+
+
+def _parallelizable_for_payload(raw_value: Any, *, capability_name: str) -> bool:
+    """Return a concrete parallelizable flag for legacy and v2.1 scaffolds."""
+    if raw_value is None:
+        return False
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise RuntimeError(
+        f"Invalid parallelizable for {capability_name}: {raw_value!r}; "
+        "expected a boolean."
+    )
+
+
 def run_phase4_start(
     artifacts_root: Path,
     workspace_root: Path,
     decision_log_version: int | None = None,
 ) -> dict[str, Any]:
-    """Stage 4 preflight: write dispatch plan + execution request, then stop.
+    """Stage 4 preflight: write dispatch plan + per-capability dispatch files
+    + execution request, then stop.
 
-    The LLM ralph loop (driven by stage-4-finalize.prompt.md) consumes the
-    dispatch plan to fan out scaffold-generated implementer agents. After the
-    loop populates `executions/v{N}/work/`, the operator runs
-    `meta-compiler phase4-finalize --finalize` to compile the final manifest
-    and emit the pitch deck.
+    Change E rewrites this preflight to denormalize each capability's
+    plan-extract fields into `executions/v{N}/work/<cap>/_dispatch.yaml`.
+    The Stage 4 work loop (driven by stage-4-finalize.prompt.md) reads
+    those files instead of an in-flight `_plan.yaml` produced by a Stage
+    4 planner agent — that planner has been removed; planning lives
+    upstream in Stage 2.5. The execution-orchestrator routes implementer
+    → reviewer (always) → researcher (only on `gap_kind: knowledge_gap`).
+
+    After the loop populates `executions/v{N}/work/`, the operator runs
+    `meta-compiler phase4-finalize --finalize` to compile the final
+    manifest and emit the pitch deck.
     """
     paths = build_paths(artifacts_root)
     ensure_layout(paths)
@@ -193,20 +249,89 @@ def run_phase4_start(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     capability_entries = _load_dispatch_hints(scaffold_root)
+    capability_graph_by_name = _load_capability_graph_for_dispatch(scaffold_root)
+    context_md_path = scaffold_root / "CONTEXT.md"
+    context_md_relative = (
+        str(context_md_path.relative_to(paths.root))
+        if context_md_path.exists()
+        else None
+    )
+
     dispatch_assignments: list[dict[str, Any]] = []
+    dispatch_files_written: list[str] = []
     for entry in capability_entries:
         capability = entry.get("capability")
         if not capability:
             continue
-        capability_work_dir = work_dir / str(capability)
-        dispatch_assignments.append(
-            {
-                "capability": capability,
-                "assigned_agent": "planner",  # palette-keyed dispatch
+        capability_name = str(capability)
+        capability_work_dir = work_dir / capability_name
+        capability_work_dir.mkdir(parents=True, exist_ok=True)
+        cap_dict = capability_graph_by_name.get(capability_name) or {}
+        dispatch_path = capability_work_dir / "_dispatch.yaml"
+        verification_hook_ids = list(entry.get("verification_hook_ids") or [])
+        verification_spec_paths = list(entry.get("verification_spec_paths") or [])
+        if not verification_spec_paths and verification_hook_ids:
+            # Legacy DISPATCH_HINTS may have only the hook ids; reconstruct
+            # the spec path so older scaffolds still drive the work loop.
+            verification_spec_paths = [
+                f"verification/{hook}_spec.yaml" for hook in verification_hook_ids
+            ]
+        raw_dispatch_kind = cap_dict.get("dispatch_kind") or entry.get("dispatch_kind")
+        raw_parallelizable = (
+            cap_dict.get("parallelizable")
+            if "parallelizable" in cap_dict
+            else entry.get("parallelizable")
+        )
+        dispatch_kind = _dispatch_kind_for_payload(
+            raw_dispatch_kind, capability_name=capability_name
+        )
+        parallelizable = _parallelizable_for_payload(
+            raw_parallelizable, capability_name=capability_name
+        )
+        dispatch_payload = {
+            "dispatch": {
+                "decision_log_version": version,
+                "capability_id": capability_name,
+                "work_dir": str(capability_work_dir.relative_to(paths.root)),
                 "skill_path": entry.get("skill_path"),
                 "contract_ref": entry.get("contract_ref"),
-                "verification_hook_ids": list(entry.get("verification_hook_ids") or []),
+                "verification_hook_ids": verification_hook_ids,
+                "verification_spec_paths": verification_spec_paths,
+                "context_md_path": context_md_relative,
+                # v2.1 fields denormalized from capabilities.yaml — feed the
+                # implementer's Step 0 (acceptance test from spec) and the
+                # reviewer's audit phases without a Stage 4 planner hop.
+                "user_story": cap_dict.get("user_story"),
+                "the_problem": cap_dict.get("the_problem"),
+                "the_fix": cap_dict.get("the_fix"),
+                "anti_patterns": list(cap_dict.get("anti_patterns") or []),
+                "out_of_scope": list(cap_dict.get("out_of_scope") or []),
+                "dispatch_kind": dispatch_kind,
+                "parallelizable": parallelizable,
+                "implementation_steps": list(cap_dict.get("implementation_steps") or []),
+                "acceptance_criteria": list(cap_dict.get("acceptance_criteria") or []),
+                "explicit_triggers": list(cap_dict.get("explicit_triggers") or []),
+                "evidence_refs": list(cap_dict.get("evidence_refs") or []),
+                "rationale": cap_dict.get("rationale"),
+                "phase": cap_dict.get("phase"),
+                "objective": cap_dict.get("objective"),
+                "deletion_test": cap_dict.get("deletion_test"),
+            }
+        }
+        dump_yaml(dispatch_path, dispatch_payload)
+        dispatch_files_written.append(str(dispatch_path.relative_to(paths.root)))
+
+        dispatch_assignments.append(
+            {
+                "capability": capability_name,
+                "skill_path": entry.get("skill_path"),
+                "contract_ref": entry.get("contract_ref"),
+                "verification_hook_ids": verification_hook_ids,
+                "verification_spec_paths": verification_spec_paths,
                 "expected_work_dir": str(capability_work_dir.relative_to(paths.root)),
+                "dispatch_path": str(dispatch_path.relative_to(paths.root)),
+                "dispatch_kind": dispatch_payload["dispatch"]["dispatch_kind"],
+                "parallelizable": dispatch_payload["dispatch"]["parallelizable"],
                 "status": "pending",
             }
         )
@@ -222,6 +347,7 @@ def run_phase4_start(
                 "scaffold_root": str(scaffold_root.relative_to(paths.root.parent)) if scaffold_root.is_relative_to(paths.root.parent) else str(scaffold_root),
                 "execution_output_dir": str(output_dir.relative_to(paths.root)),
                 "work_dir": str(work_dir.relative_to(paths.root)),
+                "context_md_path": context_md_relative,
                 "assignments": dispatch_assignments,
             }
         },
@@ -234,11 +360,17 @@ def run_phase4_start(
             "project_type": project_type,
             "dispatch_plan_path": str(dispatch_plan_path.relative_to(paths.root)),
             "work_dir": str(work_dir.relative_to(paths.root)),
+            "context_md_path": context_md_relative,
             "verdict_output_path": str(paths.phase4_preflight_verdict_path.relative_to(paths.root)),
             "next_action": (
-                "Invoke @execution-orchestrator (or per-agent implementers from "
-                "the dispatch plan) to populate the work_dir, then run "
-                "meta-compiler phase4-finalize --finalize."
+                "Invoke @execution-orchestrator to drive the work loop. "
+                "For each capability, the orchestrator loads "
+                "`work/<cap>/_dispatch.yaml` + SKILL.md + CONTEXT.md as a "
+                "fresh read set, then runs implementer → reviewer "
+                "(→ researcher only on `gap_kind: knowledge_gap`). The "
+                "Stage 4 planner agent is gone — planning is upstream in "
+                "Stage 2.5. After the loop populates the work_dir, run "
+                "`meta-compiler phase4-finalize --finalize`."
             ),
         }
     }
@@ -252,6 +384,8 @@ def run_phase4_start(
         "execution_request_path": str(paths.phase4_execution_request_path),
         "work_dir": str(work_dir),
         "capability_count": len(dispatch_assignments),
+        "dispatch_files_written": dispatch_files_written,
+        "context_md_path": context_md_relative,
     }
 
 

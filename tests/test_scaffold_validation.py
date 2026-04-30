@@ -271,17 +271,45 @@ def test_uncovered_requirement_flagged(tmp_path):
 def test_missing_verification_stub_flagged(tmp_path):
     _, artifacts = _seed_fixture(tmp_path)
     scaffold = _scaffold_root(artifacts)
-    stub = next((scaffold / "verification").glob("ver-*.py"))
-    stub.unlink()
+    spec = next((scaffold / "verification").glob("ver-*_spec.yaml"))
+    spec.unlink()
     issues = validate_scaffold(scaffold)
     assert any("verification hook missing" in msg for msg in issues)
 
 
+def test_example_io_spec_requires_concrete_input_and_expected(tmp_path):
+    _, artifacts = _seed_fixture(tmp_path)
+    scaffold = _scaffold_root(artifacts)
+    spec = next((scaffold / "verification").glob("ver-*_spec.yaml"))
+    payload = yaml.safe_load(spec.read_text(encoding="utf-8"))
+    payload["verification_spec"]["spec_status"] = "planner_provided"
+    payload["verification_spec"]["format"] = "example_io"
+    payload["verification_spec"]["scenarios"] = [
+        {
+            "name": "empty_example",
+            "given": "an input",
+            "when": "the capability runs",
+            "then": "the expected output appears",
+            "examples": [{"input": None, "expected": {}}],
+        }
+    ]
+    _write(spec, payload)
+
+    issues = validate_scaffold(scaffold)
+
+    assert any("input" in msg and "non-empty mapping" in msg for msg in issues)
+    assert any("expected" in msg and "non-empty mapping" in msg for msg in issues)
+
+
 def test_missing_palette_agent_flagged(tmp_path):
+    """Change E: PALETTE_AGENTS dropped `planner` (replaced with
+    deterministic _dispatch.yaml denormalization in phase4_stage). The
+    palette is now (implementer, reviewer, researcher); validate_scaffold
+    flags any missing palette member."""
     ws_root, artifacts = _seed_fixture(tmp_path)
-    (ws_root / ".github" / "agents" / "planner.agent.md").unlink()
+    (ws_root / ".github" / "agents" / "implementer.agent.md").unlink()
     issues = validate_scaffold(_scaffold_root(artifacts))
-    assert any("planner.agent.md" in msg for msg in issues)
+    assert any("implementer.agent.md" in msg for msg in issues)
 
 
 def test_missing_output_bucket_flagged(tmp_path):

@@ -370,7 +370,55 @@ def render_planning_brief(
     sections.append("        - <observable pass/fail criterion>")
     sections.append("      parallelizable: true|false")
     sections.append("      rationale: <one sentence>")
+    sections.append("      # v2.1 fields — required when verification_required: true")
+    sections.append("      dispatch_kind: hitl|afk")
+    sections.append("      user_story: \"As a <role>, I want <outcome>, so that <benefit>.\"")
+    sections.append("      the_problem: <one sentence — the failure mode this capability prevents>")
+    sections.append("      the_fix: <one sentence — how this capability prevents it>")
+    sections.append("      anti_patterns:")
+    sections.append("        - <\"Do NOT\" guardrail the implementer must self-enforce>")
+    sections.append("      out_of_scope:")
+    sections.append("        - <explicit non-goal — may be empty list, but field must be present>")
+    sections.append("      deletion_test: <if this capability were deleted, what complexity reappears across N callers?>")
+    sections.append("      acceptance_spec:")
+    sections.append("        format: gherkin|example_io")
+    sections.append("        scenarios:")
+    sections.append("          - name: <slug>")
+    sections.append("            given: <preconditions>")
+    sections.append("            when: <action; subject must be a noun the implementer can call>")
+    sections.append("            then: <observable outcome with concrete expected value>")
+    sections.append("            examples:        # required when format: example_io")
+    sections.append("              - input: {...}")
+    sections.append("                expected: {...}")
+    sections.append("        invariants: [<cross-scenario invariant>, ...]")
     sections.append("```")
+    sections.append("")
+    sections.append("## Vertical Slice Rule")
+    sections.append("")
+    sections.append(
+        "Each capability cuts end-to-end through every layer the project_type "
+        "requires; a completed capability is independently demoable. "
+        "Horizontal-only capabilities — e.g. \"all the parsing\" or \"all the "
+        "data model\" — are rejected. The validator enforces this by checking "
+        "that the combined `implementation_steps` + `acceptance_spec` text "
+        "references at least two distinct architecture components."
+    )
+    sections.append("")
+    sections.append("## Dispatch Class")
+    sections.append("")
+    sections.append(
+        "Every verification-required capability declares `dispatch_kind`:"
+    )
+    sections.append(
+        "- `afk` — autonomous; the orchestrator can batch this with other "
+        "AFK capabilities and run unattended."
+    )
+    sections.append(
+        "- `hitl` — human-in-the-loop; the orchestrator pauses for operator "
+        "confirmation before starting this capability. Use when the "
+        "capability touches shared state, irreversible side-effects, or "
+        "requires a domain decision."
+    )
     sections.append("")
     sections.append("Capability rules:")
     sections.append("")
@@ -385,8 +433,9 @@ def render_planning_brief(
     )
     sections.append(
         "- `verification_required: false` means Stage 3 will NOT generate a "
-        "pytest stub for this capability. Use it when the capability is a "
-        "tooling pin or policy fact rather than a behaviour to verify."
+        "verification spec for this capability. Use it when the capability "
+        "is a tooling pin or policy fact rather than a behaviour to verify. "
+        "Such capabilities skip the v2.1 fields below."
     )
     sections.append(
         "- Every REQ-NNN in the decision log MUST be covered by ≥1 "
@@ -397,11 +446,25 @@ def render_planning_brief(
         "self-loops, no dangling refs."
     )
     sections.append(
-        "- For `capability_plan.version: 2`, each verification-required capability "
-        "must include concrete `implementation_steps`, `acceptance_criteria`, "
-        "`explicit_triggers`, and `evidence_refs`. Write the markdown plan as "
-        "the human-readable step-by-step source of truth; the YAML is the "
-        "machine-readable extract."
+        "- For `capability_plan.version: 2`, each verification-required "
+        "capability must include concrete `implementation_steps`, "
+        "`acceptance_criteria`, `explicit_triggers`, `evidence_refs`, plus the "
+        "v2.1 fields: `dispatch_kind`, `user_story`, `the_problem`, "
+        "`the_fix`, `anti_patterns`, `out_of_scope`, `deletion_test`, "
+        "`acceptance_spec`. The acceptance_spec is a behavior spec — NOT "
+        "Python — that the Stage 4 implementer translates into pytest at "
+        "Stage 4 step 0."
+    )
+    sections.append(
+        "- The `acceptance_spec`'s scenarios must verify the `user_story`: "
+        "at least one scenario's `then` clause must share a significant "
+        "noun with the `user_story`'s \"so that\" benefit clause."
+    )
+    sections.append(
+        "- The `deletion_test` must explain real complexity that reappears "
+        "across N callers if the capability were removed. If it would not, "
+        "the capability is a pass-through and should be merged into a "
+        "deeper module."
     )
     return "\n".join(sections) + "\n"
 
@@ -528,12 +591,146 @@ def _string_list_issues(value: Any, field_name: str, prefix: str) -> list[str]:
     return issues
 
 
+_USER_STORY_RE = re.compile(
+    r"^\s*as a .+?,\s*i want .+?,\s*so that .+?\.?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Pass-through phrases the planner sometimes writes when a capability fails the
+# deletion test. Matched case-insensitively; any hit rejects the capability.
+_DELETION_PASS_THROUGH_PATTERNS: tuple[str, ...] = (
+    r"no complexity",
+    r"trivial wrapper",
+    r"could be inlined",
+    r"thin pass-through",
+    r"thin wrapper",
+    r"no callers would notice",
+)
+
+_NOUN_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "has", "have", "i", "in", "is", "it", "its", "of", "on", "or",
+        "should", "so", "that", "the", "this", "to", "was", "will", "with",
+        "want", "want_to", "would", "could", "may", "might",
+    }
+)
+
+
+def _significant_nouns(text: str) -> set[str]:
+    """Return lowercased word tokens with stopwords stripped, length>=3."""
+    if not isinstance(text, str):
+        return set()
+    tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]+", text.lower())
+    return {tok for tok in tokens if len(tok) >= 3 and tok not in _NOUN_STOPWORDS}
+
+
+def _user_story_benefit(user_story: str) -> set[str]:
+    """Extract the 'so that ...' clause's significant nouns."""
+    if not isinstance(user_story, str):
+        return set()
+    match = re.search(r"so that\s+(.+?)\.?\s*$", user_story, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return set()
+    return _significant_nouns(match.group(1))
+
+
+def _validate_acceptance_spec(value: Any, *, prefix: str) -> list[str]:
+    """Validate the acceptance_spec block (Gherkin / example_io YAML)."""
+    issues: list[str] = []
+    if not isinstance(value, dict):
+        issues.append(f"{prefix}.acceptance_spec: must be a mapping")
+        return issues
+    fmt = value.get("format")
+    if fmt not in ("gherkin", "example_io"):
+        issues.append(
+            f"{prefix}.acceptance_spec.format: must be 'gherkin' or 'example_io'"
+        )
+    scenarios = value.get("scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        issues.append(
+            f"{prefix}.acceptance_spec.scenarios: must be a non-empty list"
+        )
+        return issues
+    for s_idx, scenario in enumerate(scenarios):
+        sprefix = f"{prefix}.acceptance_spec.scenarios[{s_idx}]"
+        if not isinstance(scenario, dict):
+            issues.append(f"{sprefix}: must be a mapping")
+            continue
+        for required_key in ("name", "given", "when", "then"):
+            val = scenario.get(required_key)
+            if not isinstance(val, str) or not val.strip():
+                issues.append(f"{sprefix}.{required_key}: must be a non-empty string")
+        if fmt == "example_io":
+            examples = scenario.get("examples")
+            if not isinstance(examples, list) or not examples:
+                issues.append(
+                    f"{sprefix}.examples: must be a non-empty list when "
+                    "acceptance_spec.format is 'example_io'"
+                )
+                continue
+            for e_idx, example in enumerate(examples):
+                eprefix = f"{sprefix}.examples[{e_idx}]"
+                if not isinstance(example, dict):
+                    issues.append(f"{eprefix}: must be a mapping")
+                    continue
+                if "input" not in example:
+                    issues.append(f"{eprefix}.input: required for example_io scenarios")
+                else:
+                    issues.extend(
+                        _concrete_example_io_value_issues(
+                            example.get("input"), field_name="input", prefix=eprefix
+                        )
+                    )
+                if "expected" not in example:
+                    issues.append(f"{eprefix}.expected: required for example_io scenarios")
+                else:
+                    issues.extend(
+                        _concrete_example_io_value_issues(
+                            example.get("expected"),
+                            field_name="expected",
+                            prefix=eprefix,
+                        )
+                    )
+    return issues
+
+
+def _concrete_example_io_value_issues(
+    value: Any, *, field_name: str, prefix: str
+) -> list[str]:
+    """Require example_io values to be concrete enough to become assertions."""
+    if not isinstance(value, dict):
+        return [f"{prefix}.{field_name}: must be a non-empty mapping"]
+    if not value:
+        return [f"{prefix}.{field_name}: must be a non-empty mapping"]
+    return []
+
+
+def _scenario_text(spec: Any) -> str:
+    """Return concatenated when/then text from every scenario in a spec."""
+    if not isinstance(spec, dict):
+        return ""
+    scenarios = spec.get("scenarios")
+    if not isinstance(scenarios, list):
+        return ""
+    parts: list[str] = []
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            continue
+        for key in ("when", "then"):
+            val = scenario.get(key)
+            if isinstance(val, str):
+                parts.append(val)
+    return " ".join(parts)
+
+
 def _validate_v2_capability_fields(
     cap: dict[str, Any],
     *,
     prefix: str,
     known_citations: set[str],
     decision_vocab: set[str],
+    architecture_components: set[str],
 ) -> list[str]:
     issues: list[str] = []
     verification_required = cap.get("verification_required") is not False
@@ -543,6 +740,8 @@ def _validate_v2_capability_fields(
         "acceptance_criteria",
         "explicit_triggers",
         "evidence_refs",
+        "anti_patterns",
+        "out_of_scope",
     ):
         issues.extend(_string_list_issues(cap.get(field_name), field_name, prefix))
 
@@ -552,6 +751,9 @@ def _validate_v2_capability_fields(
         issues.append(f"{prefix}.objective: must be a string when provided")
     if "parallelizable" in cap and not isinstance(cap.get("parallelizable"), bool):
         issues.append(f"{prefix}.parallelizable: must be a boolean when provided")
+
+    if "acceptance_spec" in cap:
+        issues.extend(_validate_acceptance_spec(cap.get("acceptance_spec"), prefix=prefix))
 
     if not verification_required:
         return issues
@@ -567,6 +769,117 @@ def _validate_v2_capability_fields(
                 f"{prefix}.{field_name}: must include at least one concrete entry "
                 "when verification_required is true"
             )
+
+    # New v2.1 fields (Change A): user_story, the_problem, the_fix,
+    # anti_patterns, deletion_test, dispatch_kind, acceptance_spec.
+    # out_of_scope is required-as-a-key but may be empty (planner consciously
+    # asserts there's nothing to exclude).
+
+    dispatch_kind = cap.get("dispatch_kind")
+    if dispatch_kind not in ("hitl", "afk"):
+        issues.append(
+            f"{prefix}.dispatch_kind: must be 'hitl' or 'afk' when "
+            "verification_required is true"
+        )
+
+    user_story = cap.get("user_story")
+    if not isinstance(user_story, str) or not user_story.strip():
+        issues.append(
+            f"{prefix}.user_story: must be a non-empty string "
+            "when verification_required is true"
+        )
+    elif not _USER_STORY_RE.match(user_story.strip()):
+        issues.append(
+            f"{prefix}.user_story: must match 'As a <role>, I want <outcome>, "
+            "so that <benefit>'"
+        )
+
+    for prose_field in ("the_problem", "the_fix"):
+        val = cap.get(prose_field)
+        if not isinstance(val, str) or not val.strip():
+            issues.append(
+                f"{prefix}.{prose_field}: must be a non-empty string "
+                "when verification_required is true"
+            )
+
+    if not _non_empty_string_list(cap.get("anti_patterns")):
+        issues.append(
+            f"{prefix}.anti_patterns: must include at least one entry "
+            "when verification_required is true"
+        )
+
+    if "out_of_scope" not in cap:
+        issues.append(
+            f"{prefix}.out_of_scope: field is required (empty list is allowed; "
+            "planner must consciously declare nothing is excluded)"
+        )
+
+    deletion_test = cap.get("deletion_test")
+    if not isinstance(deletion_test, str) or not deletion_test.strip():
+        issues.append(
+            f"{prefix}.deletion_test: must be a non-empty string "
+            "when verification_required is true"
+        )
+    else:
+        lower = deletion_test.lower()
+        for pattern in _DELETION_PASS_THROUGH_PATTERNS:
+            if re.search(pattern, lower):
+                issues.append(
+                    f"{prefix}.deletion_test: capability appears to fail the "
+                    "deletion test (pass-through phrase detected); merge into a "
+                    "deeper module"
+                )
+                break
+
+    spec = cap.get("acceptance_spec")
+    if not isinstance(spec, dict):
+        issues.append(
+            f"{prefix}.acceptance_spec: must be a mapping with format + "
+            "scenarios[] when verification_required is true"
+        )
+    else:
+        # Bind scenarios to the user story: at least one scenario's `then`
+        # clause must share a significant noun with the user_story benefit
+        # clause. Skip if user_story already failed validation.
+        if isinstance(user_story, str) and _USER_STORY_RE.match(user_story.strip()):
+            benefit = _user_story_benefit(user_story)
+            if benefit:
+                scenarios = spec.get("scenarios") or []
+                covered = False
+                for scenario in scenarios:
+                    if not isinstance(scenario, dict):
+                        continue
+                    then_text = scenario.get("then")
+                    if isinstance(then_text, str) and (
+                        _significant_nouns(then_text) & benefit
+                    ):
+                        covered = True
+                        break
+                if not covered:
+                    issues.append(
+                        f"{prefix}.acceptance_spec: no scenario's `then` clause "
+                        "shares a significant noun with the user_story's benefit "
+                        "clause; scenarios must verify the story, not invent "
+                        "unrelated tests"
+                    )
+
+        # Vertical-slice check: combined implementation_steps + scenario
+        # text must reference >=2 distinct architecture components.
+        # Heuristic; only runs when architecture rows are non-empty.
+        if architecture_components:
+            steps = cap.get("implementation_steps") or []
+            steps_text = " ".join(s for s in steps if isinstance(s, str))
+            combined = (steps_text + " " + _scenario_text(spec)).lower()
+            hits: set[str] = set()
+            for component in architecture_components:
+                if component and component.lower() in combined:
+                    hits.add(component)
+            if len(hits) < 2:
+                issues.append(
+                    f"{prefix}: capability appears to be a horizontal slice "
+                    f"(touches {len(hits)} architecture component(s); "
+                    "expected >=2 for end-to-end coverage)"
+                )
 
     trigger_values = [
         str(item).strip()
@@ -634,6 +947,17 @@ def validate_plan_extract(
         return ["plan_extract: decision log payload missing root"]
     known_citations = _known_citation_ids(inner)
     decision_vocab = decision_log_vocabulary({"decision_log": inner})
+    architecture_components: set[str] = set()
+    for row in inner.get("architecture") or []:
+        if isinstance(row, dict):
+            component = row.get("component")
+            if isinstance(component, str) and component.strip():
+                architecture_components.add(component.strip())
+    for row in inner.get("code_architecture") or []:
+        if isinstance(row, dict):
+            aspect = row.get("aspect")
+            if isinstance(aspect, str) and aspect.strip():
+                architecture_components.add(aspect.strip())
 
     valid_req_ids = {
         str(row.get("id"))
@@ -714,6 +1038,7 @@ def validate_plan_extract(
                     prefix=prefix,
                     known_citations=known_citations,
                     decision_vocab=decision_vocab,
+                    architecture_components=architecture_components,
                 )
             )
 

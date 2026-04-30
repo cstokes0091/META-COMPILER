@@ -20,8 +20,11 @@ in the plan's validation check #4.
 Commit 4's contract extract stage populates the real contract library and
 rewrites these references when needed.
 
-`verification_hook_ids` is a placeholder `ver-{capability_name}-001`; Commit 6's
-workspace bootstrap emits the actual verification/{hook_id}.py stubs.
+`verification_hook_ids` is a placeholder `ver-{capability_name}-001`; the
+workspace bootstrap stage emits the actual verification/{hook_id}_spec.yaml
+acceptance specs (machine-readable Gherkin/example-IO; the Stage 4
+implementer translates each scenario into work/<cap>/tests/test_acceptance.py
+at step 0 of the work loop).
 """
 from __future__ import annotations
 
@@ -321,6 +324,21 @@ def _capability_from_plan_entry(
         else None
     )
 
+    # v2.1 fields (Change A → Change B propagation):
+    dispatch_kind = entry.get("dispatch_kind")
+    if dispatch_kind not in ("hitl", "afk"):
+        dispatch_kind = None
+    user_story = _optional_string(entry.get("user_story"))
+    the_problem = _optional_string(entry.get("the_problem"))
+    the_fix = _optional_string(entry.get("the_fix"))
+    deletion_test = _optional_string(entry.get("deletion_test"))
+    anti_patterns = _string_list(entry.get("anti_patterns"))
+    out_of_scope = _string_list(entry.get("out_of_scope"))
+    acceptance_spec_raw = entry.get("acceptance_spec")
+    acceptance_spec = (
+        acceptance_spec_raw if isinstance(acceptance_spec_raw, dict) else None
+    )
+
     # Citations are the union of every referenced REQ + CON's citations.
     citations: list[str] = []
     for rid in requirement_ids:
@@ -417,6 +435,14 @@ def _capability_from_plan_entry(
         evidence_refs=evidence_refs or required_finding_ids,
         parallelizable=parallelizable,
         rationale=rationale,
+        dispatch_kind=dispatch_kind,
+        acceptance_spec=acceptance_spec,
+        user_story=user_story,
+        the_problem=the_problem,
+        the_fix=the_fix,
+        anti_patterns=anti_patterns,
+        out_of_scope=out_of_scope,
+        deletion_test=deletion_test,
     )
 
 
