@@ -400,7 +400,7 @@ def test_acceptance_criteria_lists_all_verification_specs():
         name="multi-hook",
         description="multi hook cap",
         io_contract_ref="contract-a",
-        verification_type="behavioral",
+        verification_type="unit_test",
         verification_hook_ids=["ver-one", "ver-two"],
         requirement_ids=["REQ-001"],
         citation_ids=["src-test"],
