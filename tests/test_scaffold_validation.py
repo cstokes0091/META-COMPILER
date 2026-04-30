@@ -271,8 +271,8 @@ def test_uncovered_requirement_flagged(tmp_path):
 def test_missing_verification_stub_flagged(tmp_path):
     _, artifacts = _seed_fixture(tmp_path)
     scaffold = _scaffold_root(artifacts)
-    stub = next((scaffold / "verification").glob("ver-*.py"))
-    stub.unlink()
+    spec = next((scaffold / "verification").glob("ver-*_spec.yaml"))
+    spec.unlink()
     issues = validate_scaffold(scaffold)
     assert any("verification hook missing" in msg for msg in issues)
 

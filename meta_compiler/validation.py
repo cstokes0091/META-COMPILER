@@ -1804,6 +1804,92 @@ def validate_custom_instruction_file(instruction_path: Path) -> list[str]:
 PALETTE_AGENT_NAMES: tuple[str, ...] = ("planner", "implementer", "reviewer", "researcher")
 
 
+def validate_acceptance_spec_yaml_well_formed(
+    spec_path: Path, *, capability_name: str
+) -> list[str]:
+    """Validate `verification/{hook_id}_spec.yaml` shape (Change B).
+
+    The spec replaces the legacy pytest stub. The Stage 4 implementer
+    translates each scenario into `work/<cap>/tests/test_acceptance.py`
+    at step 0 of the work loop; the reviewer audits fidelity. The shape
+    must therefore be machine-readable: format ∈ {gherkin, example_io},
+    scenarios[] non-empty (unless spec_status is `pending_planner_spec`),
+    each scenario carries given/when/then non-empty, and example_io
+    scenarios carry concrete input/expected pairs.
+    """
+    issues: list[str] = []
+    try:
+        import yaml as _yaml  # local import; tests don't need this hot path
+
+        payload = _yaml.safe_load(spec_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError) as exc:
+        return [
+            f"verification spec unreadable: {spec_path.name} "
+            f"(capability {capability_name}): {exc}"
+        ]
+    spec = payload.get("verification_spec")
+    if not isinstance(spec, dict):
+        return [
+            f"verification spec missing root key `verification_spec`: "
+            f"{spec_path.name} (capability {capability_name})"
+        ]
+    spec_status = spec.get("spec_status")
+    if spec_status not in ("planner_provided", "pending_planner_spec"):
+        issues.append(
+            f"verification spec spec_status invalid in {spec_path.name}: "
+            f"got {spec_status!r}, expected 'planner_provided' or "
+            "'pending_planner_spec'"
+        )
+    fmt = spec.get("format")
+    if fmt not in ("gherkin", "example_io"):
+        issues.append(
+            f"verification spec format invalid in {spec_path.name}: "
+            f"got {fmt!r}, expected 'gherkin' or 'example_io'"
+        )
+    scenarios = spec.get("scenarios")
+    if not isinstance(scenarios, list):
+        issues.append(
+            f"verification spec scenarios must be a list in {spec_path.name}"
+        )
+        return issues
+    # Bootstrap / pending specs may legitimately have empty scenarios; the
+    # reviewer ITERATEs with knowledge_gap until the planner re-runs Stage 2.5.
+    if spec_status == "planner_provided" and not scenarios:
+        issues.append(
+            f"verification spec scenarios empty in {spec_path.name} "
+            f"(capability {capability_name}): planner_provided specs must "
+            "have at least one scenario"
+        )
+        return issues
+    for s_idx, scenario in enumerate(scenarios):
+        sprefix = f"verification spec {spec_path.name} scenarios[{s_idx}]"
+        if not isinstance(scenario, dict):
+            issues.append(f"{sprefix}: must be a mapping")
+            continue
+        for required_key in ("name", "given", "when", "then"):
+            val = scenario.get(required_key)
+            if not isinstance(val, str) or not val.strip():
+                issues.append(f"{sprefix}.{required_key}: must be a non-empty string")
+        if fmt == "example_io":
+            examples = scenario.get("examples")
+            if not isinstance(examples, list) or not examples:
+                issues.append(
+                    f"{sprefix}.examples: must be a non-empty list when "
+                    "format is 'example_io'"
+                )
+                continue
+            for e_idx, example in enumerate(examples):
+                eprefix = f"{sprefix}.examples[{e_idx}]"
+                if not isinstance(example, dict):
+                    issues.append(f"{eprefix}: must be a mapping")
+                    continue
+                if "input" not in example:
+                    issues.append(f"{eprefix}.input: required for example_io")
+                if "expected" not in example:
+                    issues.append(f"{eprefix}.expected: required for example_io")
+    return issues
+
+
 def validate_scaffold(scaffold_root: Path) -> list[str]:
     """Validate a post-dialogue scaffold (Commit 7 shape).
 
@@ -1988,18 +2074,23 @@ def validate_scaffold(scaffold_root: Path) -> list[str]:
             for rid in sorted(req_ids - covered):
                 issues.append(f"requirement {rid}: no capability covers it (coverage gate)")
 
-    # ---- 9. Verification harness presence ----
+    # ---- 9. Verification harness presence + spec well-formedness ----
     verification_dir = scaffold_root / "verification"
     for cap in graph.capabilities:
         if not cap.verification_required:
             # Constraint-only / policy capabilities deliberately skip stubs.
             continue
         for hook_id in cap.verification_hook_ids:
-            stub = verification_dir / f"{hook_id}.py"
-            if not stub.exists():
+            spec = verification_dir / f"{hook_id}_spec.yaml"
+            if not spec.exists():
                 issues.append(
-                    f"verification hook missing: verification/{hook_id}.py (capability {cap.name})"
+                    f"verification hook missing: verification/{hook_id}_spec.yaml "
+                    f"(capability {cap.name})"
                 )
+                continue
+            issues.extend(
+                validate_acceptance_spec_yaml_well_formed(spec, capability_name=cap.name)
+            )
 
     # ---- 10. Palette sanity at repo/workspace level ----
     workspace_root = artifacts_root.parent

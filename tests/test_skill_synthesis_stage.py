@@ -286,6 +286,111 @@ def test_skill_index_entry_matches_skill(tmp_path):
         assert sk_fm["name"] == entry.capability_name
 
 
+def test_skill_renders_v2_1_failure_mode_sections(tmp_path):
+    """Change B: SKILL.md leads with User Story / The Problem / The Fix and
+    has Anti-Patterns + Out of Scope sections rendered from the planner's
+    failure-mode framing. Acceptance Criteria points at the runnable spec.
+    """
+    _setup_fixture(tmp_path)
+    _write(
+        tmp_path / "decision-logs" / "plan_extract_v1.yaml",
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-30T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 2,
+                "capabilities": [
+                    {
+                        "name": "schema-dispatch",
+                        "phase": "dispatch",
+                        "objective": "Produce citation-traced schema dispatch outputs.",
+                        "description": "Compile schema dispatch outputs from the decision log.",
+                        "requirement_ids": ["REQ-001"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "explicit_triggers": ["decision log schema workflow"],
+                        "evidence_refs": ["src-decision-seed"],
+                        "implementation_steps": [
+                            "Load the decision log and cited findings",
+                            "Write schema dispatch output with citation trace metadata",
+                        ],
+                        "acceptance_criteria": [
+                            "Output includes citation trace metadata for REQ-001",
+                        ],
+                        "parallelizable": False,
+                        "rationale": "The planner provided concrete execution guidance.",
+                        "dispatch_kind": "afk",
+                        "user_story": (
+                            "As a planner reviewer, I want every dispatch "
+                            "row to carry citation trace metadata, so that "
+                            "audits stay traceable."
+                        ),
+                        "the_problem": "Dispatch rows ship without trace metadata and audits drift.",
+                        "the_fix": "Compile every row with a trace metadata field that the schema validates.",
+                        "anti_patterns": [
+                            "silently strip citation IDs when reshaping rows",
+                            "Do NOT skip fields when the contract is unclear",
+                        ],
+                        "out_of_scope": ["Real-time streaming dispatch"],
+                        "deletion_test": (
+                            "Deleting this leaves three audit pipelines with "
+                            "no trace metadata across N callers."
+                        ),
+                        "acceptance_spec": {
+                            "format": "gherkin",
+                            "scenarios": [
+                                {
+                                    "name": "trace_emitted",
+                                    "given": "decision log REQ-001 loaded",
+                                    "when": "the dispatch compiler runs",
+                                    "then": "every row has citation trace metadata for audits",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    run_capability_compile(tmp_path)
+    run_contract_extract(tmp_path)
+    run_skill_synthesis(tmp_path)
+
+    skill_path = tmp_path / "scaffolds" / "v1" / "skills" / "schema-dispatch" / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+
+    # Section ordering: User Story / The Problem / The Fix appear before Goal.
+    user_story_idx = text.index("## User Story")
+    problem_idx = text.index("## The Problem")
+    fix_idx = text.index("## The Fix")
+    goal_idx = text.index("## Goal")
+    assert user_story_idx < problem_idx < fix_idx < goal_idx
+
+    assert "every dispatch row to carry citation trace metadata" in text
+    assert "Dispatch rows ship without trace metadata" in text
+    assert "trace metadata field that the schema validates" in text
+
+    # Anti-Patterns rendered with "Do NOT" prefix on items that don't already have it.
+    anti_idx = text.index("## Anti-Patterns")
+    assert "Do NOT silently strip citation IDs" in text
+    assert "Do NOT skip fields" in text
+    assert anti_idx > goal_idx
+
+    # Out of Scope section
+    oos_idx = text.index("## Out of Scope")
+    assert "Real-time streaming dispatch" in text
+    assert oos_idx > anti_idx
+
+    # Acceptance Criteria points at the runnable spec
+    accept_idx = text.index("## Acceptance Criteria")
+    accept_section = text[accept_idx:]
+    assert "_spec.yaml" in accept_section
+    assert "verifies the User Story above" in accept_section
+    assert oos_idx < accept_idx
+
+
 def test_skill_requires_capability_graph(tmp_path):
     _setup_fixture(tmp_path)
     with pytest.raises(RuntimeError, match="capabilities.yaml missing"):

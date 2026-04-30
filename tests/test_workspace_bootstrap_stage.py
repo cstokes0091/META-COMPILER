@@ -225,20 +225,76 @@ def test_bootstrap_output_buckets_match_project_type(tmp_path):
 
 
 def test_bootstrap_verification_stubs_per_hook(tmp_path):
+    """Change B: verification dir holds machine-readable acceptance specs
+    (one YAML per hook) instead of pytest .py stubs. Spec carries
+    capability + contract metadata + scenarios; the Stage 4 implementer
+    translates each scenario into work/<cap>/tests/test_acceptance.py."""
+    ws_root = tmp_path
+    artifacts = _setup_fixture(ws_root)
+    _write_palette(ws_root)
+    run_workspace_bootstrap(artifacts, workspace_root=ws_root)
+
+    verification_dir = artifacts / "scaffolds" / "v1" / "verification"
+    specs = list(verification_dir.glob("ver-*_spec.yaml"))
+    assert specs, "no verification specs written"
+    # No legacy .py stubs are emitted any more.
+    assert not list(verification_dir.glob("ver-*.py"))
+
+    for spec_path in specs:
+        payload = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+        spec = payload["verification_spec"]
+        assert spec["hook_id"] == spec_path.name.removesuffix("_spec.yaml")
+        assert spec["capability"]
+        assert spec["contract_ref"]
+        assert spec["spec_status"] in ("planner_provided", "pending_planner_spec")
+        assert "scenarios" in spec
+        assert "implementer_instructions" in spec
+        assert "test_acceptance.py" in spec["implementer_instructions"]
+
+
+def test_bootstrap_writes_context_md(tmp_path):
+    """Change B: scaffolds/v{N}/CONTEXT.md is rendered with five
+    sections (Domain Glossary / Architecture Glossary / Requirements &
+    Constraints / Project Invariants & Out-of-Scope / Anti-Patterns
+    Index). Path is recorded in SCAFFOLD_MANIFEST.yaml."""
     ws_root = tmp_path
     artifacts = _setup_fixture(ws_root)
     _write_palette(ws_root)
     result = run_workspace_bootstrap(artifacts, workspace_root=ws_root)
 
-    verification_dir = artifacts / "scaffolds" / "v1" / "verification"
-    stubs = list(verification_dir.glob("ver-*.py"))
-    assert stubs, "no verification stubs written"
-    # Stubs are importable
-    for stub in stubs:
-        code = stub.read_text(encoding="utf-8")
-        assert "pytest.xfail" in code
-        assert "CAPABILITY" in code
-        assert "CONTRACT" in code
+    context_path = artifacts / "scaffolds" / "v1" / "CONTEXT.md"
+    assert context_path.exists()
+    text = context_path.read_text(encoding="utf-8")
+
+    # Five required sections
+    for heading in (
+        "## Domain Glossary",
+        "## Architecture Glossary",
+        "## Requirements & Constraints",
+        "## Project Invariants & Out-of-Scope",
+        "## Anti-Patterns Index",
+    ):
+        assert heading in text, f"missing section: {heading}"
+
+    # Architecture Glossary lists the eight mandatory terms.
+    for term in ("Module", "Interface", "Implementation", "Depth",
+                 "Seam", "Adapter", "Leverage", "Locality"):
+        assert f"**{term}**" in text
+
+    # Synonym-drift warning is in the Architecture Glossary section.
+    assert "synonym drift" in text
+    assert "'component'" in text or "component" in text.lower()
+
+    # SCAFFOLD_MANIFEST.yaml records the CONTEXT.md path.
+    manifest = yaml.safe_load(
+        (artifacts / "scaffolds" / "v1" / "SCAFFOLD_MANIFEST.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["scaffold"]["context_md_path"] == "CONTEXT.md"
+
+    # Result dict surfaces the path.
+    assert "context_md_path" in result
 
 
 def test_bootstrap_req_trace_maps_requirements(tmp_path):
@@ -352,9 +408,11 @@ def test_bootstrap_skips_stubs_for_verification_required_false(tmp_path):
     run_workspace_bootstrap(artifacts, workspace_root=ws_root)
 
     verification = artifacts / "scaffolds" / "v1" / "verification"
-    # Stub exists for the verification_required=True cap, not the False one.
-    assert (verification / "ver-shared-pipeline-001.py").exists()
-    assert not (verification / "ver-python-pin-001.py").exists()
+    # Spec exists for the verification_required=True cap, not the False one.
+    assert (verification / "ver-shared-pipeline-001_spec.yaml").exists()
+    assert not (verification / "ver-python-pin-001_spec.yaml").exists()
+    # No legacy .py stub is written for either capability.
+    assert not list(verification.glob("ver-*.py"))
 
     # REQ_TRACE includes both REQ-001 and CON-001 entries; the CON entry has
     # empty hook_ids and verification_required=False.

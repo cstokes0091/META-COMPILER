@@ -204,11 +204,23 @@ def _render_skill_body(
     lines: list[str] = [
         f"# Skill: {cap.description}",
         "",
+    ]
+
+    # User Story renders first when present — north star for Stage 4 agents.
+    if cap.user_story:
+        lines.extend(["## User Story", cap.user_story, ""])
+
+    if cap.the_problem:
+        lines.extend(["## The Problem", cap.the_problem, ""])
+    if cap.the_fix:
+        lines.extend(["## The Fix", cap.the_fix, ""])
+
+    lines.extend([
         "## Goal",
         goal,
         "",
         "## Procedure",
-    ]
+    ])
     procedure = _render_procedure(cap, contract)
     lines.extend(procedure)
     lines.extend([
@@ -223,11 +235,28 @@ def _render_skill_body(
         "## Invariants",
     ])
     lines.extend(_render_invariants(contract))
+
+    # Anti-Patterns + Out of Scope come from the planner's failure-mode
+    # framing; render only when present so legacy / bootstrap caps still
+    # produce valid SKILL.md output.
+    if cap.anti_patterns:
+        lines.extend(["", "## Anti-Patterns"])
+        for ap in cap.anti_patterns:
+            text = ap.strip()
+            if not text.lower().startswith("do not"):
+                text = f"Do NOT {text[0].lower()}{text[1:]}" if text else text
+            lines.append(f"- {text}")
+
+    if cap.out_of_scope:
+        lines.extend(["", "## Out of Scope"])
+        for item in cap.out_of_scope:
+            lines.append(f"- {item}")
+
     lines.extend([
         "",
         "## Acceptance Criteria",
     ])
-    lines.extend(_render_acceptance_criteria(cap))
+    lines.extend(_render_acceptance_criteria_with_spec_link(cap))
     lines.extend([
         "",
         "## Evidence",
@@ -235,6 +264,25 @@ def _render_skill_body(
     lines.extend(_render_evidence(findings, finding_index))
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_acceptance_criteria_with_spec_link(cap: Capability) -> list[str]:
+    """Render acceptance criteria as prose + a pointer to the runnable spec.
+
+    The implementer translates the spec at scaffolds/v{N}/verification/
+    {hook_id}_spec.yaml into work/<cap>/tests/test_acceptance.py at Stage 4
+    step 0; the reviewer audits fidelity. The criteria below are the
+    human-readable summary.
+    """
+    out: list[str] = []
+    if cap.verification_required and cap.verification_hook_ids:
+        hook = cap.verification_hook_ids[0]
+        out.append(
+            f"See `verification/{hook}_spec.yaml` (runnable; verifies the "
+            "User Story above). Human-readable criteria:"
+        )
+    out.extend(_render_acceptance_criteria(cap))
+    return out
 
 
 def _render_procedure(cap: Capability, contract: Contract) -> list[str]:

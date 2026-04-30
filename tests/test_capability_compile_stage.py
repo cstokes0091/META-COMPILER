@@ -434,6 +434,94 @@ def test_capability_compile_consumes_plan_extract(tmp_path):
     assert latency.verification_hook_ids == ["ver-latency-gate-001"]
 
 
+def test_capability_compile_propagates_v2_1_fields(tmp_path):
+    """Change A's new v2.1 plan-extract fields (user_story, acceptance_spec,
+    the_problem, the_fix, anti_patterns, out_of_scope, deletion_test,
+    dispatch_kind) survive into the Capability model unchanged."""
+    artifacts_root = tmp_path
+    _setup_fixture(artifacts_root, version=1, with_findings=True)
+
+    plan_path = artifacts_root / "decision-logs" / "plan_extract_v1.yaml"
+    _write(
+        plan_path,
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-30T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 2,
+                "capabilities": [
+                    {
+                        "name": "decision-log-pipeline",
+                        "phase": "pipeline",
+                        "objective": "Pipeline that compiles citation-traced output.",
+                        "description": "Compile pipeline outputs with citation traces",
+                        "requirement_ids": ["REQ-001", "REQ-002"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "explicit_triggers": ["decision log schema workflow orchestrator"],
+                        "evidence_refs": ["src-decision-seed"],
+                        "implementation_steps": [
+                            "Load decision log requirements",
+                            "Compile pipeline trace output",
+                        ],
+                        "acceptance_criteria": [
+                            "Output records REQ-001 + REQ-002 trace metadata",
+                        ],
+                        "parallelizable": False,
+                        "rationale": "Bundles related REQs.",
+                        "dispatch_kind": "afk",
+                        "user_story": (
+                            "As a planner reviewer, I want every pipeline "
+                            "output to carry trace metadata, so that audits "
+                            "stay traceable."
+                        ),
+                        "the_problem": "Pipeline outputs drift without trace metadata.",
+                        "the_fix": "Compile each row with a trace metadata field.",
+                        "anti_patterns": ["Do NOT silently drop citation IDs."],
+                        "out_of_scope": ["Real-time streaming"],
+                        "deletion_test": (
+                            "Deleting this would leave three audit pipelines "
+                            "with no trace metadata across N callers."
+                        ),
+                        "acceptance_spec": {
+                            "format": "gherkin",
+                            "scenarios": [
+                                {
+                                    "name": "trace_emitted",
+                                    "given": "decision log REQ-001 + REQ-002 loaded",
+                                    "when": "the pipeline compiles output",
+                                    "then": "every row has citation trace metadata for audits",
+                                }
+                            ],
+                            "invariants": [],
+                        },
+                    }
+                ],
+            }
+        },
+    )
+
+    run_capability_compile(artifacts_root)
+    out = yaml.safe_load(
+        (tmp_path / "scaffolds" / "v1" / "capabilities.yaml").read_text(encoding="utf-8")
+    )
+    graph = CapabilityGraph.model_validate(out["capability_graph"])
+    cap = next(c for c in graph.capabilities if c.name == "decision-log-pipeline")
+
+    assert cap.dispatch_kind == "afk"
+    assert cap.user_story is not None and "trace metadata" in cap.user_story
+    assert cap.the_problem == "Pipeline outputs drift without trace metadata."
+    assert cap.the_fix == "Compile each row with a trace metadata field."
+    assert cap.anti_patterns == ["Do NOT silently drop citation IDs."]
+    assert cap.out_of_scope == ["Real-time streaming"]
+    assert cap.deletion_test is not None and "three audit pipelines" in cap.deletion_test
+    assert isinstance(cap.acceptance_spec, dict)
+    assert cap.acceptance_spec["format"] == "gherkin"
+    assert cap.acceptance_spec["scenarios"][0]["name"] == "trace_emitted"
+
+
 def test_capability_compile_falls_back_when_plan_extract_absent(tmp_path):
     """No plan_extract_v{N}.yaml → legacy 1-to-1 row mapping is used."""
     artifacts_root = tmp_path
