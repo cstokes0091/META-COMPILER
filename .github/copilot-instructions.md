@@ -67,6 +67,7 @@ Each stage operates in **fresh context**. Artifacts pass knowledge forward, not 
 - **Stage 2.5** (`plan_implementation_stage.py`) — implementation planning. `plan-implementation --start` renders `runtime/plan/brief.md` from the decision log + findings + citations, including planner evidence context, trigger vocabulary, and cited finding summaries. The `implementation-planner` agent asks clarifying questions and writes `decision-logs/implementation_plan_v{N}.md`; the markdown is the human-readable step-by-step implementation plan, while the fenced `capability_plan` YAML is the machine-readable extract. `capability_plan.version: 2` entries can carry `phase`, `objective`, `implementation_steps`, `acceptance_criteria`, `explicit_triggers`, `evidence_refs`, `parallelizable`, and `rationale`. `plan-implementation --finalize` validates the plan and writes `decision-logs/plan_extract_v{N}.yaml`.
 - **Stage 3** is a four-layer capability-driven compile: capability compile → contract extract → skill synthesis → workspace bootstrap. It consumes the Decision Log plus cited findings; when a Stage 2.5 plan extract exists, capabilities preserve N-to-M REQ/CON mappings, planner `explicit_triggers`, concrete `implementation_steps`, acceptance criteria, and evidence refs. Skills render those steps into `SKILL.md` instead of falling back to generic procedures.
 - **Stage 4** (`phase4_stage.py`) — the LLM ralph loop uses `@execution-orchestrator` plus the static planner/implementer/reviewer/researcher palette to populate `workspace-artifacts/executions/v{N}/work/{capability_id}/`, then `phase4-finalize --finalize` compiles the final manifest and pitch deck. Stage 4 reads `DISPATCH_HINTS.yaml`; the legacy `orchestrator/run_stage4.py` fallback is gone.
+- **Stage 4 final-synthesis sub-stage** (`final_synthesis_stage.py`) — between the work loop and the pitch sub-loop, per-capability fragments under `executions/v{N}/work/<cap>/` are assembled into ONE coherent deliverable under `executions/v{N}/final/<bucket>/` (project-type-aware: `algorithm`→`final/library/<package>/`, `report`→`final/document/<slug>.md`+`.docx`, `hybrid`→both, `workflow`→`final/application/run.py` + bucketed layout). Same preflight/orchestrator/postflight pattern as wiki reconciliation: `final-synthesize-start` writes `runtime/final_synthesis/{work_plan,synthesis_request}.yaml`; `.github/prompts/final-synthesis.prompt.md` invokes `@final-synthesis-orchestrator` which fans out one synthesizer per modality (`@library-synthesizer` / `@document-synthesizer` / `@workflow-synthesizer`) and persists each return verbatim to `subagent_returns/<modality>.json`; `final-synthesize-finalize` validates each return, runs a REQ-trace continuity check (every `REQ-NNN` mentioned in fragments must still appear under `final/`, modulo `--allow-req-drop` overrides), atomically swaps `final/.tmp/` into place, and emits `final_synthesis_report.yaml`. The `gate_final_synthesize_request` hook blocks the postflight until the work plan + ≥1 subagent return exist. After synthesis, `phase4-finalize --finalize` reads `final/` first when compiling the manifest (`synthesis_status: synthesized`); the pitch evidence pack additionally exposes `assembled_deliverables[]` keyed by `ev-final-NNN`, and `@pitch-writer` cites those on the `built` slide.
 
 Post-scaffold commands (`concept_reconciliation_stage.py`, `stage2_reentry.py`, `seed_tracker.py`, `clean_stage.py`) preserve version history under `workspace-artifacts/`. Use `/wiki-enrich` as the single chat entry point for semantic wiki enrichment; it refreshes new findings when needed, runs alias reconciliation and cross-source synthesis, applies validated CLI rewrites, and relinks aliases (see CLAUDE.md §Semantic Wiki Enrichment).
 
@@ -95,13 +96,23 @@ workspace-artifacts/
     reviews/search/         # Reviewer-scoped external search artifacts
     provenance/what_i_built.md  # Refreshed at Stage 3 and Stage 4
   decision-logs/            # decision_log_v{N}.yaml + requirements_audit.yaml
+                            # + implementation_plan_v{N}.md (Stage 2.5)
+                            # + plan_extract_v{N}.yaml (machine-readable plan)
   scaffolds/v{N}/           # Generated project workspaces + tests/
-  executions/v{N}/          # Stage 4 final outputs
+  executions/v{N}/          # Stage 4 outputs
+    work/<capability>/       # Per-capability fragments from the ralph loop
+    final/<bucket>/          # Stage 4 final-synthesis: assembled deliverable
+                             # (library/, document/, application/ — by project_type)
+    final_synthesis_report.yaml  # Synthesis audit + REQ trace diff
+    FINAL_OUTPUT_MANIFEST.yaml   # Compiled manifest (cites final/ when synthesized)
   pitches/                  # Markdown + PPTX decks
   manifests/workspace_manifest.yaml
   manifests/source_bindings.yaml  # bindings (per-file) + code_bindings (per-repo commit SHA)
   runtime/                  # Ephemeral work plans (e.g., ingest/work_plan.yaml)
     ingest/repo_map/<name>.yaml   # Per-repo RepoMap written by the repo-mapper subagent
+    plan/brief.md                 # Stage 2.5 implementation-planner brief
+    final_synthesis/work_plan.yaml + synthesis_request.yaml
+    final_synthesis/subagent_returns/{modality}.json  # library / document / application
 ```
 
 When modifying any stage, verify `validation.py` still enforces the invariants for the affected artifacts (`validate-stage --stage <N>`).

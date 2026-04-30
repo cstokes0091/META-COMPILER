@@ -150,25 +150,92 @@ Cap at 3 cycles per capability. On cycle 3 force-advance and append an
 `BLOCK` verdicts indicate the contract needs to change upstream — halt and
 surface the issue rather than forcing a cycle.
 
-## Step 4 — Mechanical compile + pitch sub-loop
+## Step 4 — Final synthesis (assemble per-capability fragments into ONE deliverable)
+
+The ralph loop fills `work/<capability>/` with per-capability fragments —
+useful for per-capability review, not yet a deliverable. The
+final-synthesis sub-stage takes those fragments and assembles them into a
+project-type-aware artifact under `executions/v{N}/final/<bucket>/`:
+
+| project_type | assembled subtree |
+|---|---|
+| `algorithm` (code) | `final/library/<package>/...` + tests + README + optional pyproject |
+| `report` (document) | `final/document/<slug>.md` + `references.md` + `.docx` |
+| `hybrid` | both `final/library/` and `final/document/` |
+| `workflow` | `final/application/run.py` + bucketed layout + `requirements.txt` + `README.md` |
+
+This sub-stage uses the canonical preflight CLI → orchestrator fan-out →
+postflight CLI pattern. Walk the three sub-steps in order.
+
+### Step 4a — Final-synthesis preflight (CLI)
+
+```bash
+meta-compiler final-synthesize-start
+```
+
+Walks `executions/v{N}/work/`, classifies every fragment, and writes
+`runtime/final_synthesis/work_plan.yaml` plus `synthesis_request.yaml`.
+Branches on `project_type` from the EXECUTION_MANIFEST to determine which
+modalities (`library` / `document` / `application`) the orchestrator must
+fan out for.
+
+### Step 4b — Per-modality fan-out (LLM)
+
+Invoke `.github/prompts/final-synthesis.prompt.md`. The conductor prompt
+fans out one synthesizer per modality (≤2 modalities ⇒ both in parallel)
+and persists each return JSON verbatim to
+`runtime/final_synthesis/subagent_returns/<modality>.json`.
+
+The synthesizers do NOT write files in `final/`. They return structured
+JSON describing layouts, exports, section orderings, and entry points.
+
+### Step 4c — Final-synthesis postflight (CLI)
+
+```bash
+meta-compiler final-synthesize-finalize
+```
+
+Validates each return against schema. Materializes
+`executions/v{N}/final/.tmp/` from the proposals. Runs the REQ-trace
+continuity check (every `REQ-NNN` that appeared in work/ fragments must
+still appear under final/). Atomically swaps `.tmp/` into
+`executions/v{N}/final/`. Emits `executions/v{N}/final_synthesis_report.yaml`.
+
+If the REQ-trace check fails with `synthesis_drops`, your options are:
+
+1. Re-run the synthesizers (re-invoke the conductor prompt) — the
+   subagent prompts demand REQ preservation, so a retry usually fixes
+   it.
+2. Pass `--allow-req-drop REQ-007,REQ-012` to the postflight to
+   acknowledge the drop. Each allowed drop is logged in the report.
+
+If `final/` already exists and contains files edited after the last
+report, the postflight refuses to overwrite. Pass `--force` to override.
+
+## Step 5 — Mechanical compile + pitch sub-loop
 
 The deck is built in three sub-steps. Walk them in order; do not skip.
 
-### Step 4a — Evidence and final manifest (CLI)
+### Step 5a — Evidence and final manifest (CLI)
 
 ```bash
 meta-compiler phase4-finalize --pitch-step=evidence
 ```
 
 This:
-- Walks `executions/v{N}/work/` and compiles
-  `executions/v{N}/FINAL_OUTPUT_MANIFEST.yaml` with deliverables keyed by
-  `capability` (not agent).
+- Compiles `executions/v{N}/FINAL_OUTPUT_MANIFEST.yaml`. When Step 4 ran
+  successfully, `deliverables[]` lists the assembled artifacts under
+  `final/<bucket>/` and `synthesis_status: synthesized`. Per-capability
+  files are demoted to `fragments[]` for audit. When Step 4 was skipped,
+  the manifest falls back to the legacy `synthesis_status:
+  fragments_only` shape.
 - Refreshes `workspace-artifacts/wiki/provenance/what_i_built.md`.
 - Builds `workspace-artifacts/runtime/phase4/evidence_pack.yaml` — typed
   facts (problem, architecture, code-architecture, deliverables,
   REQ-traced vs REQ-orphan, open items, citations, execution summary).
-  Every fact gets a stable `ev-...` ID.
+  Every fact gets a stable `ev-...` ID. When `final/` exists, the pack
+  additionally exposes `assembled_deliverables[]` keyed by `ev-final-NNN`
+  — the pitch-writer should prefer those on the `built` slide.
 - Writes `workspace-artifacts/runtime/phase4/pitch_request.yaml` — the
   entry point for the `@pitch-writer` agent.
 
@@ -177,7 +244,7 @@ raises a clear error pointing back at Step 3. (There is no legacy
 `orchestrator/run_stage4.py` subprocess fallback — it was removed when
 the scaffold flipped to the capability-keyed shape.)
 
-### Step 4b — Draft the deck (LLM)
+### Step 5b — Draft the deck (LLM)
 
 Invoke:
 
@@ -191,7 +258,7 @@ Every bullet cites at least one evidence ID; every required slide role
 orphan REQs and force-advanced capabilities are surfaced honestly. Spot-check
 the draft for evidence-anchored claims; do not edit `slides.yaml` by hand.
 
-### Step 4c — Verify and render (CLI)
+### Step 5c — Verify and render (CLI)
 
 ```bash
 meta-compiler phase4-finalize --pitch-step=render
@@ -213,7 +280,7 @@ missing or older than `evidence_pack.yaml`.
 
 Full sub-loop docs: `.github/prompts/pitch-writer.prompt.md`.
 
-## Step 5 — Postflight (orchestrator agent)
+## Step 6 — Postflight (orchestrator agent)
 
 Invoke the orchestrator a second time:
 
@@ -225,6 +292,15 @@ It reads `FINAL_OUTPUT_MANIFEST.yaml` and the dispatch plan and issues
 `verdict: PROCEED | REVISE` against concrete criteria. Vague "deliverable
 fidelity" is not enough; the postflight MUST enforce the following and name
 specific files on failure.
+
+**For final synthesis (when `synthesis_status: synthesized`):**
+- `executions/v{N}/final/<bucket>/` exists and is non-empty for every
+  modality the project_type requires.
+- `executions/v{N}/final_synthesis_report.yaml` is fresh (mtime newer
+  than the dispatch plan) and reports `req_trace_diff.synthesis_drops`
+  empty OR fully covered by `allowed_req_drops[]`.
+- The pitch deck cites at least one `ev-final-*` evidence ID on the
+  `built` slide.
 
 **For every capability:**
 - The work dir `executions/v{N}/work/<capability>/` contains at least one
@@ -268,8 +344,11 @@ This is the final gate. If it returns issues, address them and re-run.
 
 ## Output
 - `executions/v{N}/dispatch_plan.yaml` — preflight assignment record
-- `executions/v{N}/work/<capability>/` — per-capability deliverables
+- `executions/v{N}/work/<capability>/` — per-capability fragments
+- `executions/v{N}/final/<bucket>/` — assembled deliverable (post-synthesis)
+- `executions/v{N}/final_synthesis_report.yaml` — synthesis audit + REQ trace diff
 - `executions/v{N}/FINAL_OUTPUT_MANIFEST.yaml` — compiled manifest
+- `runtime/final_synthesis/{work_plan,synthesis_request}.yaml` + `subagent_returns/<modality>.json`
 - `wiki/provenance/what_i_built.md` — refreshed product summary
 - `pitches/pitch_v{N}.md` + `pitch_v{N}.pptx` + `pitch_v{N}.yaml`
 - `runtime/phase4/preflight_verdict.yaml` + `postcheck_verdict.yaml`

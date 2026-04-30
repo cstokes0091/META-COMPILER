@@ -503,6 +503,583 @@ def validate_cross_source_synthesis_return(
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Stage 4 final-synthesis validators
+# ---------------------------------------------------------------------------
+
+
+_PACKAGE_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_KEBAB_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_ENTRY_POINT_TARGET_RE = re.compile(r"^[a-z][a-z0-9_.]*:[a-zA-Z_][a-zA-Z0-9_]*$")
+_REQ_RE_VALIDATION = re.compile(r"REQ-\d{3}")
+_FRAGMENT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]+:[^\s]+$")
+
+
+# Reserved Python identifiers that must never be used as a synthesized
+# package name. Includes a representative subset of the standard library so
+# the LLM cannot accidentally shadow stdlib imports, plus the project's own
+# package name to prevent self-collision.
+_RESERVED_PACKAGE_NAMES: frozenset[str] = frozenset({
+    "abc", "argparse", "ast", "asyncio", "base64", "bisect", "calendar",
+    "collections", "concurrent", "configparser", "contextlib", "copy",
+    "csv", "ctypes", "datetime", "decimal", "difflib", "dis", "email",
+    "enum", "errno", "fractions", "functools", "gc", "getpass", "glob",
+    "gzip", "hashlib", "heapq", "hmac", "html", "http", "importlib",
+    "inspect", "io", "ipaddress", "itertools", "json", "logging", "math",
+    "multiprocessing", "operator", "os", "pathlib", "pickle", "pkgutil",
+    "platform", "pprint", "queue", "random", "re", "secrets", "select",
+    "shelve", "shutil", "signal", "site", "smtplib", "socket", "sqlite3",
+    "ssl", "stat", "statistics", "string", "struct", "subprocess", "sys",
+    "tempfile", "test", "tests", "textwrap", "threading", "time", "timeit",
+    "tkinter", "token", "traceback", "types", "typing", "unicodedata",
+    "unittest", "urllib", "uuid", "warnings", "weakref", "xml", "yaml",
+    "zipfile", "zlib",
+    "meta_compiler",
+})
+
+# Required README sections per synthesis modality. Subagents may add more
+# sections; these are the floor.
+_LIBRARY_README_REQUIRED_SECTIONS: tuple[str, ...] = (
+    "Overview", "Installation", "Usage", "Capabilities",
+)
+_APPLICATION_README_REQUIRED_SECTIONS: tuple[str, ...] = (
+    "Overview", "Run", "Configuration",
+)
+
+
+def _check_deduplication_audit(
+    issues: list[str],
+    prefix: str,
+    payload: dict[str, Any],
+    expected_fragments: set[str],
+    accounted_for: set[str],
+) -> None:
+    """Verify every expected fragment is either accounted for in the layout
+    or explicitly listed in `deduplications_applied[].dropped`.
+
+    Mutates `issues`. Both `expected_fragments` and `accounted_for` are sets
+    of `"<capability_id>:<relative_path>"` tokens.
+    """
+    deduplications = payload.get("deduplications_applied") or []
+    if not isinstance(deduplications, list):
+        issues.append(f"{prefix}.deduplications_applied: must be a list when present")
+        deduplications = []
+
+    dropped: set[str] = set()
+    for idx, entry in enumerate(deduplications):
+        ep = f"{prefix}.deduplications_applied[{idx}]"
+        if not isinstance(entry, dict):
+            issues.append(f"{ep}: must be an object")
+            continue
+        kept = entry.get("kept")
+        if not isinstance(kept, str) or not _FRAGMENT_TOKEN_RE.match(kept):
+            issues.append(
+                f"{ep}.kept: must match '<capability>:<relative_path>'"
+            )
+        dropped_list = entry.get("dropped") or []
+        if not isinstance(dropped_list, list) or not dropped_list:
+            issues.append(f"{ep}.dropped: must be a non-empty list")
+            dropped_list = []
+        for jdx, token in enumerate(dropped_list):
+            if not isinstance(token, str) or not _FRAGMENT_TOKEN_RE.match(token):
+                issues.append(
+                    f"{ep}.dropped[{jdx}]: must match '<capability>:<relative_path>'"
+                )
+                continue
+            dropped.add(token)
+        if not isinstance(entry.get("reason"), str) or not entry.get("reason").strip():
+            issues.append(f"{ep}.reason: must be a non-empty string")
+
+    silently_lost = expected_fragments - accounted_for - dropped
+    if silently_lost:
+        sample = sorted(silently_lost)[:5]
+        issues.append(
+            f"{prefix}: fragments missing from layout AND deduplications_applied "
+            f"(silent loss is forbidden): {sample}"
+            + (f" ... (+{len(silently_lost) - 5} more)" if len(silently_lost) > 5 else "")
+        )
+
+
+def _resolve_fragment_token(fragment: dict[str, Any]) -> str | None:
+    capability = fragment.get("capability")
+    rel = fragment.get("relative_path") or fragment.get("path")
+    if not isinstance(capability, str) or not capability.strip():
+        return None
+    if not isinstance(rel, str) or not rel.strip():
+        return None
+    return f"{capability}:{rel}"
+
+
+def validate_library_synthesis_return(
+    payload: dict[str, Any],
+    *,
+    expected_fragments: set[str],
+    expected_req_ids: set[str],
+) -> list[str]:
+    """Validate one library-synthesizer subagent's JSON return.
+
+    The orchestrator persists this to
+    `runtime/final_synthesis/subagent_returns/library.json`. Validation runs
+    in the postflight CLI before any file is written under
+    `executions/v{N}/final/library/`.
+
+    `expected_fragments` is the set of `"<capability_id>:<relative_path>"`
+    tokens for code fragments listed in the library work-plan slice. Every
+    one must appear in `module_layout[].sources` or be explicitly dropped
+    via `deduplications_applied[].dropped`.
+
+    `expected_req_ids` is informational only here — REQ-trace continuity
+    runs at apply time over the assembled tree.
+    """
+    issues: list[str] = []
+    prefix = "library_synthesis_return"
+
+    if not isinstance(payload, dict):
+        return [f"{prefix}: must be an object"]
+
+    if payload.get("modality") != "library":
+        issues.append(f"{prefix}.modality: must be 'library'")
+
+    package_name = payload.get("package_name")
+    if not isinstance(package_name, str) or not _PACKAGE_NAME_RE.match(package_name or ""):
+        issues.append(
+            f"{prefix}.package_name: must match '^[a-z][a-z0-9_]*$'"
+        )
+    elif package_name in _RESERVED_PACKAGE_NAMES:
+        issues.append(
+            f"{prefix}.package_name: {package_name!r} collides with the Python "
+            "stdlib or this project's own package; pick a domain-specific name"
+        )
+
+    module_layout = payload.get("module_layout") or []
+    if not isinstance(module_layout, list) or not module_layout:
+        issues.append(f"{prefix}.module_layout: must be a non-empty list")
+        module_layout = []
+
+    accounted_for: set[str] = set()
+    layout_targets: dict[str, str] = {}
+    for idx, entry in enumerate(module_layout):
+        ep = f"{prefix}.module_layout[{idx}]"
+        if not isinstance(entry, dict):
+            issues.append(f"{ep}: must be an object")
+            continue
+        target = entry.get("target_path")
+        if not isinstance(target, str) or not target.strip():
+            issues.append(f"{ep}.target_path: must be a non-empty string")
+        elif target in layout_targets:
+            issues.append(
+                f"{ep}.target_path: duplicate target {target!r} (also at "
+                f"{layout_targets[target]})"
+            )
+        elif not target.endswith(".py"):
+            issues.append(f"{ep}.target_path: must end with '.py'")
+        else:
+            layout_targets[target] = ep
+        sources = entry.get("sources") or []
+        if not isinstance(sources, list) or not sources:
+            issues.append(f"{ep}.sources: must be a non-empty list")
+            sources = []
+        for jdx, src in enumerate(sources):
+            sp = f"{ep}.sources[{jdx}]"
+            if not isinstance(src, dict):
+                issues.append(f"{sp}: must be an object")
+                continue
+            token = _resolve_fragment_token(src)
+            if token is None:
+                issues.append(
+                    f"{sp}: must have non-empty 'capability' and 'relative_path'"
+                )
+                continue
+            if expected_fragments and token not in expected_fragments:
+                issues.append(
+                    f"{sp}: fragment {token!r} not in work plan"
+                )
+                continue
+            accounted_for.add(token)
+
+    exports = payload.get("exports") or []
+    if not isinstance(exports, list):
+        issues.append(f"{prefix}.exports: must be a list")
+    else:
+        for idx, sym in enumerate(exports):
+            if not isinstance(sym, str) or not sym.strip():
+                issues.append(f"{prefix}.exports[{idx}]: must be a non-empty string")
+
+    entry_points = payload.get("entry_points") or []
+    if not isinstance(entry_points, list):
+        issues.append(f"{prefix}.entry_points: must be a list")
+        entry_points = []
+    for idx, entry in enumerate(entry_points):
+        ep = f"{prefix}.entry_points[{idx}]"
+        if not isinstance(entry, dict):
+            issues.append(f"{ep}: must be an object")
+            continue
+        name = entry.get("name")
+        target = entry.get("target")
+        if not isinstance(name, str) or not name.strip():
+            issues.append(f"{ep}.name: must be a non-empty string")
+        if not isinstance(target, str) or not _ENTRY_POINT_TARGET_RE.match(target or ""):
+            issues.append(
+                f"{ep}.target: must match '<module_path>:<callable>'"
+            )
+
+    readme_sections = payload.get("readme_sections") or []
+    if not isinstance(readme_sections, list):
+        issues.append(f"{prefix}.readme_sections: must be a list")
+        readme_sections = []
+    seen_headings: set[str] = set()
+    for idx, section in enumerate(readme_sections):
+        sp = f"{prefix}.readme_sections[{idx}]"
+        if not isinstance(section, dict):
+            issues.append(f"{sp}: must be an object")
+            continue
+        heading = section.get("heading")
+        body = section.get("body")
+        if not isinstance(heading, str) or not heading.strip():
+            issues.append(f"{sp}.heading: must be a non-empty string")
+        else:
+            seen_headings.add(heading.strip())
+        if not isinstance(body, str) or not body.strip():
+            issues.append(f"{sp}.body: must be a non-empty string")
+    missing_headings = [h for h in _LIBRARY_README_REQUIRED_SECTIONS if h not in seen_headings]
+    if missing_headings:
+        issues.append(
+            f"{prefix}.readme_sections: missing required heading(s) {missing_headings}"
+        )
+
+    package_metadata = payload.get("package_metadata")
+    if package_metadata is not None:
+        if not isinstance(package_metadata, dict):
+            issues.append(f"{prefix}.package_metadata: must be an object when present")
+        else:
+            for field in ("name", "description", "python_requires"):
+                if field in package_metadata:
+                    val = package_metadata[field]
+                    if not isinstance(val, str) or not val.strip():
+                        issues.append(
+                            f"{prefix}.package_metadata.{field}: must be a non-empty string"
+                        )
+
+    _check_deduplication_audit(
+        issues, prefix, payload, expected_fragments, accounted_for
+    )
+
+    _ = expected_req_ids  # surface unused-arg hint suppression
+    return issues
+
+
+def validate_document_synthesis_return(
+    payload: dict[str, Any],
+    *,
+    expected_fragments: set[str],
+    expected_citation_ids: set[str],
+    expected_req_ids: set[str],
+) -> list[str]:
+    """Validate one document-synthesizer subagent's JSON return.
+
+    Persisted at `runtime/final_synthesis/subagent_returns/document.json`.
+    """
+    issues: list[str] = []
+    prefix = "document_synthesis_return"
+
+    if not isinstance(payload, dict):
+        return [f"{prefix}: must be an object"]
+
+    if payload.get("modality") != "document":
+        issues.append(f"{prefix}.modality: must be 'document'")
+
+    title = payload.get("title")
+    if not isinstance(title, str) or not title.strip():
+        issues.append(f"{prefix}.title: must be a non-empty string")
+
+    abstract = payload.get("abstract")
+    if not isinstance(abstract, str) or not abstract.strip():
+        issues.append(f"{prefix}.abstract: must be a non-empty string")
+    elif len(abstract) > 500:
+        issues.append(
+            f"{prefix}.abstract: must be <=500 characters (got {len(abstract)})"
+        )
+
+    intro_prose = payload.get("intro_prose")
+    if not isinstance(intro_prose, str) or not intro_prose.strip():
+        issues.append(f"{prefix}.intro_prose: must be a non-empty string")
+
+    conclusion_prose = payload.get("conclusion_prose")
+    if not isinstance(conclusion_prose, str) or not conclusion_prose.strip():
+        issues.append(f"{prefix}.conclusion_prose: must be a non-empty string")
+
+    section_order = payload.get("section_order") or []
+    if not isinstance(section_order, list) or not section_order:
+        issues.append(f"{prefix}.section_order: must be a non-empty list")
+        section_order = []
+
+    accounted_for: set[str] = set()
+    inline_cites: set[str] = set()
+    section_bodies: list[str] = []
+    for idx, section in enumerate(section_order):
+        sp = f"{prefix}.section_order[{idx}]"
+        if not isinstance(section, dict):
+            issues.append(f"{sp}: must be an object")
+            continue
+        heading = section.get("heading")
+        if not isinstance(heading, str) or not heading.strip():
+            issues.append(f"{sp}.heading: must be a non-empty string")
+
+        source = section.get("source") or {}
+        if not isinstance(source, dict):
+            issues.append(f"{sp}.source: must be an object")
+            source = {}
+        capability = source.get("capability")
+        rel = source.get("file") or source.get("relative_path") or source.get("path")
+        synth_prose = source.get("synthesizer_prose")
+        if isinstance(capability, str) and isinstance(rel, str) and capability.strip() and rel.strip():
+            token = f"{capability}:{rel}"
+            if expected_fragments and token not in expected_fragments:
+                issues.append(f"{sp}.source: fragment {token!r} not in work plan")
+            else:
+                accounted_for.add(token)
+            section_bodies.append("")  # body comes from on-disk fragment at apply time
+        elif isinstance(synth_prose, str) and synth_prose.strip():
+            section_bodies.append(synth_prose)
+        else:
+            issues.append(
+                f"{sp}.source: must have either {{capability, file}} or non-empty "
+                "'synthesizer_prose'"
+            )
+            continue
+
+        transitions_after = section.get("transitions_after")
+        if transitions_after is not None and (
+            not isinstance(transitions_after, str) or not transitions_after.strip()
+        ):
+            issues.append(
+                f"{sp}.transitions_after: must be a non-empty string when present"
+            )
+        elif isinstance(transitions_after, str):
+            section_bodies.append(transitions_after)
+
+        cites = section.get("citations_inline") or []
+        if not isinstance(cites, list):
+            issues.append(f"{sp}.citations_inline: must be a list")
+            cites = []
+        for jdx, cid in enumerate(cites):
+            if not isinstance(cid, str) or not cid.strip():
+                issues.append(
+                    f"{sp}.citations_inline[{jdx}]: must be a non-empty string"
+                )
+                continue
+            if expected_citation_ids and cid not in expected_citation_ids:
+                issues.append(
+                    f"{sp}.citations_inline[{jdx}]: {cid!r} not in citations index"
+                )
+            inline_cites.add(cid)
+
+    references_unified = payload.get("references_unified") or []
+    if not isinstance(references_unified, list):
+        issues.append(f"{prefix}.references_unified: must be a list")
+        references_unified = []
+    ref_ids: set[str] = set()
+    for idx, entry in enumerate(references_unified):
+        rp = f"{prefix}.references_unified[{idx}]"
+        if not isinstance(entry, dict):
+            issues.append(f"{rp}: must be an object")
+            continue
+        cid = entry.get("id")
+        human = entry.get("human")
+        if not isinstance(cid, str) or not cid.strip():
+            issues.append(f"{rp}.id: must be a non-empty string")
+            continue
+        if not isinstance(human, str) or not human.strip():
+            issues.append(f"{rp}.human: must be a non-empty string")
+        ref_ids.add(cid)
+
+    unmatched_inline = inline_cites - ref_ids
+    if unmatched_inline:
+        sample = sorted(unmatched_inline)[:5]
+        issues.append(
+            f"{prefix}.references_unified: missing entries for inline cites {sample}"
+        )
+
+    # REQ coverage: every expected REQ id must appear in at least one section
+    # body (synthesizer_prose) or transition. Section bodies that come from
+    # on-disk fragments are checked at apply time over the assembled tree.
+    if expected_req_ids:
+        synth_text = "\n".join(section_bodies + [intro_prose or "", conclusion_prose or ""])
+        if synth_text:
+            req_in_prose = {rid for rid in expected_req_ids if rid in synth_text}
+            # Note: REQs may legitimately live ONLY in fragment bodies that the
+            # synthesizer is referencing (not duplicating). The validator does
+            # NOT fail when synth-prose alone lacks a REQ — the postflight
+            # REQ-trace continuity check catches that against the assembled
+            # tree. The check here is informational.
+            _ = req_in_prose
+
+    _check_deduplication_audit(
+        issues, prefix, payload, expected_fragments, accounted_for
+    )
+
+    return issues
+
+
+def validate_application_synthesis_return(
+    payload: dict[str, Any],
+    *,
+    expected_fragments: set[str],
+    expected_buckets: set[str],
+    expected_req_ids: set[str],
+) -> list[str]:
+    """Validate one workflow-synthesizer subagent's JSON return.
+
+    Persisted at `runtime/final_synthesis/subagent_returns/application.json`.
+    """
+    import ast as _ast  # localized — only this validator parses Python
+
+    issues: list[str] = []
+    prefix = "application_synthesis_return"
+
+    if not isinstance(payload, dict):
+        return [f"{prefix}: must be an object"]
+
+    if payload.get("modality") != "application":
+        issues.append(f"{prefix}.modality: must be 'application'")
+
+    application_name = payload.get("application_name")
+    if not isinstance(application_name, str) or not _KEBAB_NAME_RE.match(application_name or ""):
+        issues.append(
+            f"{prefix}.application_name: must match '^[a-z][a-z0-9-]*$'"
+        )
+
+    directory_layout = payload.get("directory_layout") or {}
+    if not isinstance(directory_layout, dict):
+        issues.append(f"{prefix}.directory_layout: must be an object")
+        directory_layout = {}
+
+    missing_buckets = expected_buckets - set(directory_layout.keys())
+    if missing_buckets:
+        issues.append(
+            f"{prefix}.directory_layout: missing required bucket(s) "
+            f"{sorted(missing_buckets)}"
+        )
+
+    accounted_for: set[str] = set()
+    for bucket, entries in directory_layout.items():
+        bp = f"{prefix}.directory_layout.{bucket}"
+        if not isinstance(entries, list):
+            issues.append(f"{bp}: must be a list")
+            continue
+        for idx, entry in enumerate(entries):
+            ep = f"{bp}[{idx}]"
+            if not isinstance(entry, dict):
+                issues.append(f"{ep}: must be an object")
+                continue
+            source = entry.get("source")
+            target = entry.get("target")
+            if not isinstance(source, str) or not _FRAGMENT_TOKEN_RE.match(source or ""):
+                issues.append(
+                    f"{ep}.source: must match '<capability>:<relative_path>'"
+                )
+                continue
+            if expected_fragments and source not in expected_fragments:
+                issues.append(f"{ep}.source: fragment {source!r} not in work plan")
+                continue
+            accounted_for.add(source)
+            if not isinstance(target, str) or not target.strip():
+                issues.append(f"{ep}.target: must be a non-empty string")
+
+    if "tests" in directory_layout:
+        tests_entries = directory_layout.get("tests") or []
+        if isinstance(tests_entries, list) and not tests_entries:
+            issues.append(
+                f"{prefix}.directory_layout.tests: must be non-empty (every "
+                "synthesized application ships with at least one test)"
+            )
+
+    entry_point = payload.get("entry_point") or {}
+    if not isinstance(entry_point, dict):
+        issues.append(f"{prefix}.entry_point: must be an object")
+    else:
+        filename = entry_point.get("filename")
+        if not isinstance(filename, str) or not filename.endswith(".py"):
+            issues.append(f"{prefix}.entry_point.filename: must end with '.py'")
+        body = entry_point.get("body")
+        if not isinstance(body, str) or not body.strip():
+            issues.append(f"{prefix}.entry_point.body: must be a non-empty string")
+        else:
+            try:
+                _ast.parse(body)
+            except SyntaxError as exc:
+                issues.append(
+                    f"{prefix}.entry_point.body: invalid Python syntax: "
+                    f"{exc.msg} (line {exc.lineno})"
+                )
+        invocation = entry_point.get("invocation")
+        if not isinstance(invocation, str) or not invocation.strip():
+            issues.append(f"{prefix}.entry_point.invocation: must be a non-empty string")
+
+    env_vars = payload.get("environment_variables") or []
+    if not isinstance(env_vars, list):
+        issues.append(f"{prefix}.environment_variables: must be a list")
+    else:
+        for idx, entry in enumerate(env_vars):
+            ep = f"{prefix}.environment_variables[{idx}]"
+            if not isinstance(entry, dict):
+                issues.append(f"{ep}: must be an object")
+                continue
+            name = entry.get("name")
+            purpose = entry.get("purpose")
+            required = entry.get("required")
+            if not isinstance(name, str) or not name.strip():
+                issues.append(f"{ep}.name: must be a non-empty string")
+            if not isinstance(purpose, str) or not purpose.strip():
+                issues.append(f"{ep}.purpose: must be a non-empty string")
+            if not isinstance(required, bool):
+                issues.append(f"{ep}.required: must be a boolean")
+
+    dependencies = payload.get("dependencies") or []
+    if not isinstance(dependencies, list):
+        issues.append(f"{prefix}.dependencies: must be a list")
+    else:
+        for idx, dep in enumerate(dependencies):
+            if not isinstance(dep, str) or not dep.strip():
+                issues.append(
+                    f"{prefix}.dependencies[{idx}]: must be a non-empty string "
+                    "(format: 'package' or 'package==version')"
+                )
+
+    readme_sections = payload.get("readme_sections") or []
+    if not isinstance(readme_sections, list):
+        issues.append(f"{prefix}.readme_sections: must be a list")
+        readme_sections = []
+    seen_headings: set[str] = set()
+    for idx, section in enumerate(readme_sections):
+        sp = f"{prefix}.readme_sections[{idx}]"
+        if not isinstance(section, dict):
+            issues.append(f"{sp}: must be an object")
+            continue
+        heading = section.get("heading")
+        body = section.get("body")
+        if not isinstance(heading, str) or not heading.strip():
+            issues.append(f"{sp}.heading: must be a non-empty string")
+        else:
+            seen_headings.add(heading.strip())
+        if not isinstance(body, str) or not body.strip():
+            issues.append(f"{sp}.body: must be a non-empty string")
+    missing_headings = [
+        h for h in _APPLICATION_README_REQUIRED_SECTIONS if h not in seen_headings
+    ]
+    if missing_headings:
+        issues.append(
+            f"{prefix}.readme_sections: missing required heading(s) {missing_headings}"
+        )
+
+    _check_deduplication_audit(
+        issues, prefix, payload, expected_fragments, accounted_for
+    )
+
+    _ = expected_req_ids
+    return issues
+
+
 def validate_concept_reconciliation_proposal(payload: dict[str, Any]) -> list[str]:
     """Validate the YAML payload written by the wiki-concept-reconciliation
     orchestrator before `meta-compiler wiki-apply-reconciliation` consumes it."""
@@ -1588,6 +2165,34 @@ def validate_stage_4(paths: ArtifactPaths) -> list[str]:
         manifest_path = latest_execution / "FINAL_OUTPUT_MANIFEST.yaml"
         if not manifest_path.exists():
             issues.append(f"4: final output manifest missing: {manifest_path.relative_to(paths.root)}")
+
+        # Final-synthesis sub-stage: when the workspace manifest reports
+        # "4-synthesized", the assembled tree at executions/v{N}/final/ and a
+        # final_synthesis_report.yaml must both be present. When the manifest
+        # is at "4" or "3" the synthesis sub-stage was skipped (either
+        # intentionally or because this run predates it) — informational only.
+        manifest = load_manifest(paths)
+        last_completed = ""
+        if manifest:
+            research = (
+                manifest.get("workspace_manifest", {}).get("research", {})
+                if isinstance(manifest, dict)
+                else {}
+            )
+            last_completed = str(research.get("last_completed_stage", ""))
+        if last_completed == "4-synthesized":
+            final_dir = latest_execution / "final"
+            report_path = latest_execution / "final_synthesis_report.yaml"
+            if not final_dir.exists() or not any(final_dir.rglob("*")):
+                issues.append(
+                    f"4: stage state is '4-synthesized' but {final_dir.relative_to(paths.root)} "
+                    "is missing or empty"
+                )
+            if not report_path.exists():
+                issues.append(
+                    f"4: stage state is '4-synthesized' but "
+                    f"{report_path.relative_to(paths.root)} is missing"
+                )
 
     pitch_files = sorted(paths.pitches_dir.glob("pitch_v*.pptx"))
     if not pitch_files:

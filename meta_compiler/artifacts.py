@@ -99,12 +99,28 @@ class ArtifactPaths:
     # so version history is preserved together.
     plan_runtime_dir: Path
     plan_brief_path: Path
+    # Stage 4 final-synthesis sub-stage runtime artifacts. The preflight CLI
+    # walks executions/v{N}/work/ and writes the work plan + synthesis
+    # request; the orchestrator fans out per-modality synthesizers and
+    # persists each return to subagent_returns/<modality>.json; the
+    # postflight CLI validates each return and assembles
+    # executions/v{N}/final/<bucket>/.
+    final_synthesis_runtime_dir: Path
+    final_synthesis_work_plan_path: Path
+    final_synthesis_request_path: Path
+    final_synthesis_subagent_returns_dir: Path
 
     def implementation_plan_path(self, version: int) -> Path:
         return self.decision_logs_dir / f"implementation_plan_v{version}.md"
 
     def plan_extract_path(self, version: int) -> Path:
         return self.decision_logs_dir / f"plan_extract_v{version}.yaml"
+
+    def final_dir_for(self, version: int) -> Path:
+        return self.executions_dir / f"v{version}" / "final"
+
+    def final_synthesis_report_path(self, version: int) -> Path:
+        return self.executions_dir / f"v{version}" / "final_synthesis_report.yaml"
 
 
 def build_paths(root: Path) -> ArtifactPaths:
@@ -119,6 +135,7 @@ def build_paths(root: Path) -> ArtifactPaths:
     wiki_cross_source_runtime_dir = runtime_dir / "wiki_cross_source"
     wiki_search_runtime_dir = stage2_runtime_dir / "wiki_search"
     plan_runtime_dir = runtime_dir / "plan"
+    final_synthesis_runtime_dir = runtime_dir / "final_synthesis"
     return ArtifactPaths(
         root=resolved,
         seeds_dir=resolved / "seeds",
@@ -181,6 +198,10 @@ def build_paths(root: Path) -> ArtifactPaths:
         wiki_search_results_path=wiki_search_runtime_dir / "results.yaml",
         plan_runtime_dir=plan_runtime_dir,
         plan_brief_path=plan_runtime_dir / "brief.md",
+        final_synthesis_runtime_dir=final_synthesis_runtime_dir,
+        final_synthesis_work_plan_path=final_synthesis_runtime_dir / "work_plan.yaml",
+        final_synthesis_request_path=final_synthesis_runtime_dir / "synthesis_request.yaml",
+        final_synthesis_subagent_returns_dir=final_synthesis_runtime_dir / "subagent_returns",
     )
 
 
@@ -214,6 +235,8 @@ def ensure_layout(paths: ArtifactPaths) -> None:
         paths.wiki_search_runtime_dir,
         paths.wiki_search_results_dir,
         paths.wiki_search_inline_dir,
+        paths.final_synthesis_runtime_dir,
+        paths.final_synthesis_subagent_returns_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
 

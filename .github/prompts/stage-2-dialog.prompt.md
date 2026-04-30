@@ -1,5 +1,5 @@
 ---
-description: Vision elicitation via prompt-as-conductor. Walk the five steps exactly. The CLI is the integrity layer; the stage2-orchestrator agent audits both boundaries; you conduct the dialog and write the transcript. You never edit Decision Log YAML directly.
+description: Vision elicitation via prompt-as-conductor. Walk the six steps exactly (Steps 1–5 compile the Decision Log; Step 6 hands off to Stage 2.5 implementation planning). The CLI is the integrity layer; the stage2-orchestrator agent audits both boundaries; you conduct the dialog and write the transcript. You never edit Decision Log YAML directly.
 ---
 
 # Stage 2: Vision Elicitation
@@ -314,7 +314,56 @@ On `PROCEED`, run:
 meta-compiler audit-requirements
 ```
 
-This kicks off the existing Decision Log audit (distinct from the fidelity audit above). Record the path to the audit output in your final handoff message to the human.
+This kicks off the existing Decision Log audit (distinct from the fidelity audit above). Record the path to the audit output before proceeding to Step 6.
+
+## Step 6 — Stage 2.5 Implementation Planning
+
+The Decision Log is the *what* — the rigid, traceable capture of intent. Stage 2.5 turns it into the *how*: a phased implementation plan with N-to-M REQ/CON mappings, concrete `implementation_steps`, observable `acceptance_criteria`, and explicit triggers. Stage 3 reads the plan extract and bakes the same shape into `capabilities.yaml` (instead of a mechanical 1-to-1 REQ→capability mapping). Run Stage 2.5 before handing off to Stage 3.
+
+### Step 6a — Render the planning brief (CLI)
+
+```bash
+meta-compiler plan-implementation --start
+```
+
+Reads the latest Decision Log + cited findings + citations index and renders `workspace-artifacts/runtime/plan/brief.md`. The brief includes the planner evidence context, the trigger vocabulary drawn from cited concept names, and per-finding summaries the planner can reference without re-reading the wiki end-to-end.
+
+On nonzero exit: **STOP**. Surface the failure (typically a missing decision log or unresolvable citation) and remediate before proceeding.
+
+### Step 6b — Plan with the implementation-planner agent
+
+Invoke:
+
+```
+@implementation-planner
+```
+
+The agent reads `runtime/plan/brief.md`, asks 2–5 focused clarifying questions in chat (skipping clarifying questions is flagged stale by the postflight), then writes `workspace-artifacts/decision-logs/implementation_plan_v{N}.md` with the six required sections in this exact order:
+
+- `## Overview`
+- `## Phases`
+- `## Capabilities` — ends with one fenced ```yaml``` block whose top-level key is `capability_plan:`
+- `## Dependencies`
+- `## Risks`
+- `## Open Questions`
+
+The `capability_plan` YAML uses `version: 2` schema: every verification-required capability declares `phase`, `objective`, `implementation_steps`, `acceptance_criteria`, `explicit_triggers`, `evidence_refs`, `parallelizable`, and `rationale`. Capabilities may be N-to-M with REQ/CON ids — one capability can absorb REQ-001 + REQ-004, or one REQ can split across multiple capabilities. Constraint-only capabilities are valid; mark them `verification_required: false` so they don't pollute the verification harness.
+
+Help the human answer the agent's clarifying questions; do not let them be skipped. The plan should respect Stage 2's architecture and code-architecture decisions, not relitigate them.
+
+### Step 6c — Finalize the plan extract (CLI)
+
+```bash
+meta-compiler plan-implementation --finalize
+```
+
+This validates the markdown structure (six required sections present and ordered correctly) and extracts the fenced `capability_plan` YAML to `workspace-artifacts/decision-logs/plan_extract_v{N}.yaml`. The `gate_implementation_plan` hook blocks `--finalize` until `implementation_plan_v{N}.md` exists.
+
+Exits nonzero on any structural failure (missing section, malformed YAML, REQ ids absent from the decision log, fabricated CON ids, etc.). On nonzero exit: **STOP**. Surface the validator's issue list to the human and either re-invoke `@implementation-planner` to fix the plan, or amend the markdown directly if the fix is mechanical.
+
+The downstream Stage 3 capability compiler reads `plan_extract_v{N}.yaml` and preserves the planner's N-to-M mappings, explicit triggers, implementation steps, and acceptance criteria. The `gate_capability_compile` hook blocks `meta-compiler compile-capabilities` when the plan markdown exists but no extract has been generated (operator can pass `--allow-no-plan` for the legacy 1-to-1 fallback).
+
+When Step 6c succeeds, your final handoff message to the human references both `decision-logs/decision_log_v{N}.yaml` (Stage 2 output), `decision-logs/requirements_audit.yaml` (audit-requirements output), and `decision-logs/implementation_plan_v{N}.md` + `plan_extract_v{N}.yaml` (Stage 2.5 output). Human review of the plan is the natural break before Stage 3.
 
 ---
 
@@ -322,6 +371,7 @@ This kicks off the existing Decision Log audit (distinct from the fidelity audit
 
 - You do not run `meta-compiler scaffold`. That's Stage 3, a separate prompt.
 - You do not edit `decision_log_v{N}.yaml` directly. The transcript is the source; the CLI is the compiler; the orchestrator is the auditor.
+- You do not edit `implementation_plan_v{N}.md` or `plan_extract_v{N}.yaml` outside the agent flow described in Step 6 — let the planner agent and the `--finalize` CLI manage them.
 - You do not ask the human for things the wiki already answers. If the wiki has the answer, state it and ask for the decision, not the information.
 
 ## On refusal

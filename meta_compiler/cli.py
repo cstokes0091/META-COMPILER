@@ -34,6 +34,10 @@ from .stages.migrate_decision_log_stage import (
 from .stages.capability_compile_stage import run_capability_compile
 from .stages.contract_extract_stage import run_contract_extract
 from .stages.phase4_stage import run_phase4_finalize, run_phase4_start
+from .stages.final_synthesis_stage import (
+    run_final_synthesize_finalize,
+    run_final_synthesize_start,
+)
 from .stages.plan_implementation_stage import (
     run_plan_implementation_finalize,
     run_plan_implementation_start,
@@ -628,6 +632,55 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Wiki version. Only 2 is supported.",
     )
 
+    final_synthesize_start_parser = subparsers.add_parser(
+        "final-synthesize-start",
+        help=(
+            "Stage 4 final-synthesis preflight: walk executions/v{N}/work/, classify "
+            "fragments, write work_plan + synthesis_request for the orchestrator"
+        ),
+    )
+    _add_common_paths(final_synthesize_start_parser)
+    final_synthesize_start_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version (default: latest)",
+    )
+
+    final_synthesize_finalize_parser = subparsers.add_parser(
+        "final-synthesize-finalize",
+        help=(
+            "Stage 4 final-synthesis postflight: validate per-modality subagent "
+            "returns and assemble executions/v{N}/final/<bucket>/"
+        ),
+    )
+    _add_common_paths(final_synthesize_finalize_parser)
+    final_synthesize_finalize_parser.add_argument(
+        "--decision-log-version",
+        type=int,
+        default=None,
+        help="Decision log version (default: read from work plan)",
+    )
+    final_synthesize_finalize_parser.add_argument(
+        "--allow-req-drop",
+        action="append",
+        default=[],
+        help=(
+            "REQ-NNN id(s) that may be absent from the assembled tree even though "
+            "they appear in work fragments. Repeatable; comma-separated values "
+            "also accepted (e.g. --allow-req-drop REQ-007 --allow-req-drop "
+            "REQ-009,REQ-012)."
+        ),
+    )
+    final_synthesize_finalize_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Overwrite executions/v{N}/final/ even if it contains files edited "
+            "after the last final_synthesis_report.yaml"
+        ),
+    )
+
     style_corpus_parser = subparsers.add_parser(
         "wiki-build-style-corpus",
         help="Scan user_authored seeds + findings; emit wiki/style/style_corpus.md",
@@ -970,6 +1023,26 @@ def main(argv: list[str] | None = None) -> int:
                 artifacts_root=artifacts_root,
                 workspace_root=workspace_root,
                 version=args.version,
+            )
+        elif args.command == "final-synthesize-start":
+            result = run_final_synthesize_start(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                decision_log_version=args.decision_log_version,
+            )
+        elif args.command == "final-synthesize-finalize":
+            allow_req_drop: list[str] = []
+            for entry in args.allow_req_drop or []:
+                for token in str(entry).split(","):
+                    token = token.strip()
+                    if token:
+                        allow_req_drop.append(token)
+            result = run_final_synthesize_finalize(
+                artifacts_root=artifacts_root,
+                workspace_root=workspace_root,
+                decision_log_version=args.decision_log_version,
+                allow_req_drop=tuple(allow_req_drop),
+                force=args.force,
             )
         elif args.command == "run-all":
             result = run_all(

@@ -63,7 +63,10 @@ def _write_what_i_built_refresh(
 ) -> Path:
     final_output = execution_manifest.get("final_output", {}) if isinstance(execution_manifest, dict) else {}
     deliverables = final_output.get("deliverables", []) if isinstance(final_output, dict) else []
+    fragments = final_output.get("fragments", []) if isinstance(final_output, dict) else []
     notes = final_output.get("execution_notes", []) if isinstance(final_output, dict) else []
+    synthesis_status = final_output.get("synthesis_status") if isinstance(final_output, dict) else None
+    final_dir_str = final_output.get("final_dir") if isinstance(final_output, dict) else None
 
     lines = [
         "## What I Built",
@@ -71,17 +74,28 @@ def _write_what_i_built_refresh(
         f"- Decision Log Version: v{decision_log_version}",
         f"- Project type: {project_type}",
         f"- Output directory: {output_dir}",
-        "",
-        "### Final Deliverables",
     ]
+    if synthesis_status:
+        lines.append(f"- Synthesis status: {synthesis_status}")
+    if final_dir_str and synthesis_status == "synthesized":
+        lines.append(f"- Assembled deliverable root: {final_dir_str}")
+    lines.extend(["", "### Final Deliverables"])
 
     if isinstance(deliverables, list) and deliverables:
         for row in deliverables:
             if not isinstance(row, dict):
                 continue
-            lines.append(f"- {row.get('kind')}: {row.get('path')}")
+            bucket = row.get("bucket")
+            if bucket:
+                lines.append(f"- [{bucket}] {row.get('kind')}: {row.get('path')}")
+            else:
+                lines.append(f"- {row.get('kind')}: {row.get('path')}")
     else:
         lines.append("- No deliverables recorded.")
+
+    if synthesis_status == "synthesized" and isinstance(fragments, list) and fragments:
+        lines.extend(["", "### Underlying Fragments"])
+        lines.append(f"- {len(fragments)} per-capability fragment(s) under work/")
 
     lines.extend(["", "### Execution Notes"])
     if isinstance(notes, list) and notes:
@@ -248,13 +262,20 @@ def _compile_final_output_manifest(
     decision_log_version: int,
     project_type: str,
     scaffold_root: Path,
+    final_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Compile FINAL_OUTPUT_MANIFEST.yaml from LLM-populated work/ directory.
+    """Compile FINAL_OUTPUT_MANIFEST.yaml.
 
-    Walks each per-capability subdirectory, records every output file as a
-    deliverable keyed by capability_id, and writes the manifest.
+    When `final_dir` exists and contains assembled output (the
+    final-synthesis sub-stage has run), `deliverables[]` lists those
+    artifacts as the canonical deliverable set, and per-capability
+    work/<cap>/ files are demoted to `fragments[]` for audit.
+
+    When `final_dir` is empty or absent, the legacy behavior applies:
+    `deliverables[]` is populated from work/<cap>/ and `synthesis_status`
+    reports `"fragments_only"`.
     """
-    deliverables: list[dict[str, Any]] = []
+    fragments: list[dict[str, Any]] = []
     if work_dir.exists():
         for capability_dir in sorted(work_dir.iterdir()):
             if not capability_dir.is_dir():
@@ -262,7 +283,7 @@ def _compile_final_output_manifest(
             for path in sorted(capability_dir.rglob("*")):
                 if not path.is_file():
                     continue
-                deliverables.append(
+                fragments.append(
                     {
                         "capability": capability_dir.name,
                         "kind": path.suffix.lstrip(".") or "file",
@@ -272,6 +293,45 @@ def _compile_final_output_manifest(
                     }
                 )
 
+    deliverables: list[dict[str, Any]] = []
+    synthesis_status = "fragments_only"
+    if final_dir is not None and final_dir.exists() and any(final_dir.rglob("*")):
+        synthesis_status = "synthesized"
+        for path in sorted(final_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                relative = path.relative_to(final_dir)
+            except ValueError:
+                relative = path
+            bucket = relative.parts[0] if relative.parts else ""
+            deliverables.append(
+                {
+                    "bucket": bucket,
+                    "kind": path.suffix.lstrip(".") or "file",
+                    "path": str(path.relative_to(output_dir.parent.parent))
+                    if path.is_relative_to(output_dir.parent.parent)
+                    else str(path),
+                }
+            )
+    else:
+        # Legacy: deliverables == fragments. Preserves backward compat for
+        # workspaces predating the final-synthesis sub-stage.
+        deliverables = list(fragments)
+
+    if synthesis_status == "synthesized":
+        execution_notes = [
+            f"Assembled {len(deliverables)} file(s) under final/",
+            f"Underlying work_dir produced {len(fragments)} fragment(s)",
+            "Composed via final-synthesis.prompt.md → final-synthesize-finalize",
+        ]
+    else:
+        execution_notes = [
+            f"Compiled from {len(fragments)} file(s) in work_dir",
+            "Conducted via stage-4-finalize.prompt.md ralph loop",
+            "final-synthesis sub-stage NOT run — deliverables == fragments",
+        ]
+
     manifest_payload = {
         "final_output": {
             "generated_at": iso_now(),
@@ -279,11 +339,11 @@ def _compile_final_output_manifest(
             "project_type": project_type,
             "scaffold_root": str(scaffold_root),
             "work_dir": str(work_dir),
+            "final_dir": str(final_dir) if final_dir is not None else None,
+            "synthesis_status": synthesis_status,
             "deliverables": deliverables,
-            "execution_notes": [
-                f"Compiled from {len(deliverables)} file(s) in work_dir",
-                "Conducted via stage-4-finalize.prompt.md ralph loop",
-            ],
+            "fragments": fragments,
+            "execution_notes": execution_notes,
         }
     }
     manifest_path = output_dir / "FINAL_OUTPUT_MANIFEST.yaml"
@@ -338,6 +398,7 @@ def run_phase4_finalize(
     output_dir = paths.executions_dir / f"v{version}"
     output_dir.mkdir(parents=True, exist_ok=True)
     work_dir = output_dir / "work"
+    final_dir = paths.final_dir_for(version)
 
     completed_stdout = ""
     completed_stderr = ""
@@ -353,6 +414,7 @@ def run_phase4_finalize(
             decision_log_version=version,
             project_type=project_type,
             scaffold_root=scaffold_root,
+            final_dir=final_dir,
         )
     elif final_output_manifest_path.exists():
         # Manifest already on disk (e.g., LLM agent wrote it directly).
@@ -427,6 +489,7 @@ def run_phase4_finalize(
             citations_payload=citations_payload,
             req_trace_path=req_trace_path if req_trace_path.exists() else None,
             ralph_loop_log_path=ralph_loop_log_path if ralph_loop_log_path.exists() else None,
+            final_dir=final_dir if final_dir.exists() and any(final_dir.rglob("*")) else None,
         )
         dump_yaml(paths.phase4_evidence_pack_path, evidence_pack)
         pitch_render.write_pitch_request(

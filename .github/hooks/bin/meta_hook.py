@@ -321,14 +321,38 @@ STAGE_PRECONDITIONS: dict[str, dict[str, Any]] = {
     "extract-contracts": {"allowed_prior": ["2", "3"], "sets": None},
     "synthesize-skills": {"allowed_prior": ["2", "3"], "sets": None},
     "workspace-bootstrap": {"allowed_prior": ["2", "3"], "sets": "3"},
-    "phase4-finalize": {"allowed_prior": ["3"], "sets": "4"},
+    "phase4-finalize": {"allowed_prior": ["3", "4-synthesized", "4"], "sets": "4"},
+    "final-synthesize-start": {
+        "allowed_prior": ["3", "4-synthesis-pending"],
+        "sets": "4-synthesis-pending",
+    },
+    "final-synthesize-finalize": {
+        "allowed_prior": ["4-synthesis-pending", "4-synthesized"],
+        "sets": "4-synthesized",
+    },
     "wiki-update": {"allowed_prior": ["1a", "1b", "1c", "2"], "sets": None},
-    "track-seeds": {"allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
-    "clean-workspace": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
-                                          "2-dialog-started", "2-reentry-seeded"], "sets": None},
-    "validate-stage": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
-                                          "2-dialog-started", "2-reentry-seeded"], "sets": None},
-    "wiki-browse": {"allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4"], "sets": None},
+    "track-seeds": {
+        "allowed_prior": ["0", "1a", "1b", "1c", "2", "3", "4",
+                          "4-synthesis-pending", "4-synthesized"],
+        "sets": None,
+    },
+    "clean-workspace": {
+        "allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
+                          "4-synthesis-pending", "4-synthesized",
+                          "2-dialog-started", "2-reentry-seeded"],
+        "sets": None,
+    },
+    "validate-stage": {
+        "allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
+                          "4-synthesis-pending", "4-synthesized",
+                          "2-dialog-started", "2-reentry-seeded"],
+        "sets": None,
+    },
+    "wiki-browse": {
+        "allowed_prior": ["(none)", "0", "1a", "1b", "1c", "2", "3", "4",
+                          "4-synthesis-pending", "4-synthesized"],
+        "sets": None,
+    },
     "run-all": {"allowed_prior": ["(none)", "0"], "sets": None},
 }
 
@@ -517,6 +541,16 @@ def inject_state(payload: dict[str, Any]) -> dict[str, Any]:
         "3": (
             "Stage 4: run `/stage-4-finalize`. The planner/implementer/reviewer "
             "palette executes against the capability graph."
+        ),
+        "4-synthesis-pending": (
+            "Stage 4 final-synthesis preflight done. Invoke "
+            ".github/prompts/final-synthesis.prompt.md to fan out per-modality "
+            "synthesizers, then run `meta-compiler final-synthesize-finalize`."
+        ),
+        "4-synthesized": (
+            "Stage 4 final-synthesis assembled. Run `meta-compiler "
+            "phase4-finalize --finalize` to compile FINAL_OUTPUT_MANIFEST and "
+            "the pitch deck against the assembled `executions/v{N}/final/`."
         ),
         "4": "Pipeline complete. Use `/clean-workspace` or `/stage2-reentry` to iterate.",
     }
@@ -1180,6 +1214,86 @@ def gate_cross_source_synthesis_returns(payload: dict[str, Any]) -> dict[str, An
         }
 
     audit(ws, "gate_cross_source_synthesis_returns", "PreToolUse", "allow",
+          extra={"command": cmd, "subagent_return_count": len(return_files)})
+    return {"permissionDecision": "allow"}
+
+
+@register("gate_final_synthesize_request")
+def gate_final_synthesize_request(payload: dict[str, Any]) -> dict[str, Any]:
+    """Block `meta-compiler final-synthesize-finalize` unless preflight ran
+    AND at least one subagent return exists.
+
+    Workflow:
+      1. `final-synthesize-start` (writes work_plan + synthesis_request)
+      2. `@final-synthesis-orchestrator` (writes per-modality JSON to
+         runtime/final_synthesis/subagent_returns/)
+      3. `final-synthesize-finalize` (validates + assembles final/) — gated.
+    """
+    ws = resolve_workspace_root(payload)
+    cmd = (payload.get("tool_input") or {}).get("command") or ""
+    if not isinstance(cmd, str):
+        return {"permissionDecision": "allow"}
+    if "final-synthesize-finalize" not in cmd or not cmd.strip().startswith(
+        "meta-compiler"
+    ):
+        return {"permissionDecision": "allow"}
+
+    disabled, ov_reason = is_disabled("gate_final_synthesize_request", ws)
+    if disabled:
+        audit(ws, "gate_final_synthesize_request", "PreToolUse", "allow_override",
+              reason=ov_reason, extra={"command": cmd})
+        return {
+            "permissionDecision": "allow",
+            "systemMessage": (
+                f"gate_final_synthesize_request disabled by override: {ov_reason}"
+            ),
+        }
+
+    runtime_dir = ws / "workspace-artifacts" / "runtime" / "final_synthesis"
+    work_plan_path = runtime_dir / "work_plan.yaml"
+    request_path = runtime_dir / "synthesis_request.yaml"
+
+    if not work_plan_path.exists() or not request_path.exists():
+        line = audit(ws, "gate_final_synthesize_request", "PreToolUse", "deny",
+                     reason="work_plan.yaml or synthesis_request.yaml missing",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                "runtime/final_synthesis/work_plan.yaml or synthesis_request.yaml "
+                "is missing — preflight did not run."
+            ),
+            "remediation": (
+                "Run `meta-compiler final-synthesize-start` first, then invoke "
+                ".github/prompts/final-synthesis.prompt.md to fan out per-modality "
+                "synthesizers, then retry final-synthesize-finalize."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    returns_dir = runtime_dir / "subagent_returns"
+    return_files = list(returns_dir.glob("*.json")) if returns_dir.exists() else []
+    if not return_files:
+        line = audit(ws, "gate_final_synthesize_request", "PreToolUse", "deny",
+                     reason="no subagent JSON returns",
+                     extra={"command": cmd})
+        return {
+            "permissionDecision": "deny",
+            "reason": (
+                "No per-modality subagent returns at "
+                "runtime/final_synthesis/subagent_returns/. The orchestrator "
+                "fan-out has not produced any output yet."
+            ),
+            "remediation": (
+                "Invoke .github/prompts/final-synthesis.prompt.md — it writes "
+                "per-modality JSON (library.json / document.json / "
+                "application.json) to subagent_returns/ — before running "
+                "`meta-compiler final-synthesize-finalize`."
+            ),
+            "audit_ref": f"workspace-artifacts/runtime/hook_audit.log:{line}" if line else None,
+        }
+
+    audit(ws, "gate_final_synthesize_request", "PreToolUse", "allow",
           extra={"command": cmd, "subagent_return_count": len(return_files)})
     return {"permissionDecision": "allow"}
 

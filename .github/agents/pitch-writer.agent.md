@@ -48,13 +48,13 @@ pitch_deck:
     - role: built
       title: "What was built"
       bullets:
-        - text: "<deliverable narrative — name the file kind and what it does>"
-          evidence_ids: [ev-deliv-001, ev-req-001]
+        - text: "<deliverable narrative — name the assembled artifact and what it does>"
+          evidence_ids: [ev-final-001, ev-req-001]
     - role: evidence
       title: "Evidence and verification"
       bullets:
         - text: "<verification method tied to a REQ; cite the citation if external>"
-          evidence_ids: [ev-req-001, ev-cite-...]
+          evidence_ids: [ev-req-001, ev-deliv-001, ev-cite-...]
     - role: why
       title: "Why it matters"
       bullets:
@@ -77,6 +77,7 @@ pitch_deck:
 6. **Respect the slide caps anchored in `pitch_request.slide_caps`.** Defaults: 6 bullets per slide, ≤140 chars per bullet, ≤70 chars per title, ≤200 chars per subtitle. The renderer truncates with `…` if you exceed; aim to land under the cap so the truncation never triggers.
 7. **Cite citations as `ev-cite-<slug>` IDs**, not raw `src-...` IDs. The evidence pack maps `evidence_pack.citations.ev-cite-...` → `{citation_id, human, source_type}`. Use the `human` string in your bullet body when quoting.
 8. **Never reference the META-COMPILER framework's stage numbers, ralph loops, or scaffold mechanics.** The audience is a stakeholder reading about the *project*.
+9. **Prefer `ev-final-*` on the `built` slide when present.** When `evidence_pack.assembled_deliverables[]` exists (the final-synthesis sub-stage has assembled `executions/v{N}/final/<bucket>/`), the `built` slide MUST cite at least one `ev-final-*` ID — those name the truthful "what we shipped" artifacts (a coherent library, document, or runnable application). Use `ev-deliv-*` (per-capability fragments) on the `evidence` slide where coverage breadth matters. When the sub-stage hasn't run, `assembled_deliverables[]` is absent and `ev-deliv-*` carries the `built` slide as before.
 
 ## Drafting checklist (run mentally before writing slides.yaml)
 

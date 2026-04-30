@@ -59,6 +59,11 @@
           },
           {
             "type": "command",
+            "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_final_synthesize_request",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "python3 /Users/christianstokes/Downloads/META-COMPILER/.github/hooks/bin/meta_hook.py gate_wiki_search_apply",
             "timeout": 10
           },

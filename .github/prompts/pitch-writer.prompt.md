@@ -41,6 +41,12 @@ Hard rules the agent honors (and you should spot-check before Step 3):
 - All 7 required roles are present.
 - Bullets describe THIS project, not the META-COMPILER framework.
 - `requirements_orphan[]` and `cycle_summary.force_advanced[]` are surfaced honestly.
+- When `evidence_pack.assembled_deliverables[]` is present (i.e., the
+  final-synthesis sub-stage has assembled a coherent deliverable under
+  `executions/v{N}/final/<bucket>/`), the `built` slide MUST cite at
+  least one `ev-final-*` ID — those are the truthful "what we shipped"
+  evidence handles. Reserve `ev-deliv-*` IDs (per-capability fragments)
+  for the `evidence` slide where coverage breadth matters.
 
 If the draft drifts (e.g., a bullet has no evidence_ids, or describes the framework instead of the project), prompt the agent to revise the offending slide. Do not edit `slides.yaml` by hand — re-invoke the agent.
 

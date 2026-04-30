@@ -81,44 +81,60 @@ def build_evidence_pack(
     citations_payload: dict[str, Any] | None,
     req_trace_path: Path | None,
     ralph_loop_log_path: Path | None,
+    final_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Extract a typed evidence pack from the Decision Log + execution outputs.
 
     Every fact gets a stable `id` (e.g. `ev-deliv-003`, `ev-req-007`) so the
     pitch-writer agent can cite specific evidence and the fidelity gate can
     refuse claims whose IDs don't resolve.
+
+    When `final_dir` is provided AND the final-synthesis sub-stage has run
+    (`final_output_manifest.synthesis_status == "synthesized"`), the pack
+    additionally exposes `assembled_deliverables[]` — high-level
+    `ev-final-NNN` evidence IDs that the pitch-writer should prefer on the
+    `built` slide. The legacy `deliverables[]` list (`ev-deliv-NNN`) keeps
+    pointing at per-capability fragments for the `evidence` slide where
+    coverage breadth matters.
     """
     root = decision_log.get("decision_log") or {}
     meta = root.get("meta") or {}
 
-    pack: dict[str, Any] = {
-        "evidence_pack": {
-            "generated_at": iso_now(),
-            "decision_log_version": decision_log_version,
-            "project_type": project_type,
-            "project": _evidence_project(meta),
-            "problem": _evidence_problem(workspace_root),
-            "architecture": _evidence_architecture(root),
-            "code_architecture": _evidence_code_architecture(root),
-            "scope": _evidence_scope(root),
-            "requirements_traced": [],
-            "requirements_orphan": [],
-            "deliverables": _evidence_deliverables(
-                final_output_manifest=final_output_manifest, work_dir=work_dir
-            ),
-            "open_items": _evidence_open_items(root),
-            "citations": _evidence_citations(citations_payload, root),
-            "execution": _evidence_execution(
-                final_output_manifest=final_output_manifest,
-                ralph_loop_log_path=ralph_loop_log_path,
-            ),
-        }
+    evidence_pack: dict[str, Any] = {
+        "generated_at": iso_now(),
+        "decision_log_version": decision_log_version,
+        "project_type": project_type,
+        "project": _evidence_project(meta),
+        "problem": _evidence_problem(workspace_root),
+        "architecture": _evidence_architecture(root),
+        "code_architecture": _evidence_code_architecture(root),
+        "scope": _evidence_scope(root),
+        "requirements_traced": [],
+        "requirements_orphan": [],
+        "deliverables": _evidence_deliverables(
+            final_output_manifest=final_output_manifest, work_dir=work_dir
+        ),
+        "open_items": _evidence_open_items(root),
+        "citations": _evidence_citations(citations_payload, root),
+        "execution": _evidence_execution(
+            final_output_manifest=final_output_manifest,
+            ralph_loop_log_path=ralph_loop_log_path,
+        ),
     }
+
+    if final_dir is not None and final_dir.exists() and any(final_dir.rglob("*")):
+        evidence_pack["assembled_deliverables"] = _evidence_assembled_deliverables(
+            final_dir=final_dir,
+            workspace_root=workspace_root,
+        )
+
+    pack: dict[str, Any] = {"evidence_pack": evidence_pack}
 
     traced, orphan = _evidence_requirements(
         root=root,
         work_dir=work_dir,
         req_trace_path=req_trace_path,
+        final_dir=final_dir,
     )
     pack["evidence_pack"]["requirements_traced"] = traced
     pack["evidence_pack"]["requirements_orphan"] = orphan
@@ -264,11 +280,23 @@ _CODE_SUFFIXES = {
 def _evidence_deliverables(
     *, final_output_manifest: dict[str, Any], work_dir: Path
 ) -> list[dict[str, Any]]:
+    """Per-capability fragments (the `ev-deliv-*` evidence list).
+
+    When the final-synthesis sub-stage has run, the manifest's top-level
+    `deliverables[]` is the *assembled* artifact set; the per-capability
+    fragments live under `fragments[]`. We prefer that when available so
+    `ev-deliv-*` IDs continue to mean "per-capability fragment" — letting
+    the pitch-writer use them on the `evidence` slide where coverage
+    breadth matters. Pre-synthesis manifests still fall through to
+    `deliverables[]` (the legacy shape).
+    """
     final_output = final_output_manifest.get("final_output") or {}
-    deliverables = final_output.get("deliverables") or []
+    fragments = final_output.get("fragments") or []
+    if not fragments:
+        fragments = final_output.get("deliverables") or []
 
     out: list[dict[str, Any]] = []
-    for idx, row in enumerate(deliverables, start=1):
+    for idx, row in enumerate(fragments, start=1):
         if not isinstance(row, dict):
             continue
         path_str = str(row.get("path") or "")
@@ -300,6 +328,62 @@ def _evidence_deliverables(
                 "agent": agent,
                 "kind": str(row.get("kind") or "file"),
                 "path": path_str,
+                "modality": modality,
+                "size_bytes": size_bytes,
+                "line_count": line_count,
+            }
+        )
+    return out
+
+
+def _evidence_assembled_deliverables(
+    *, final_dir: Path, workspace_root: Path
+) -> list[dict[str, Any]]:
+    """High-level assembled artifact list (the `ev-final-*` evidence list).
+
+    Walked directly from `executions/v{N}/final/<bucket>/`. The pitch-writer
+    cites these IDs on the `built` slide because they're the truthful
+    "what we shipped" answer — a single library / document / application —
+    rather than the dozens of per-capability fragments under work/.
+    """
+    out: list[dict[str, Any]] = []
+    if not final_dir.exists():
+        return out
+    for idx, path in enumerate(sorted(final_dir.rglob("*")), start=1):
+        if not path.is_file():
+            continue
+        try:
+            relative = path.relative_to(final_dir)
+        except ValueError:
+            continue
+        bucket = relative.parts[0] if relative.parts else ""
+        try:
+            relative_to_workspace = path.relative_to(workspace_root)
+            display_path = str(relative_to_workspace)
+        except ValueError:
+            display_path = str(path)
+        size_bytes = 0
+        line_count = 0
+        try:
+            size_bytes = path.stat().st_size
+            if path.suffix.lower() in _CODE_SUFFIXES or path.suffix.lower() in {
+                ".md", ".txt", ".yaml", ".yml", ".json", ".rst", ".toml",
+            }:
+                try:
+                    line_count = sum(
+                        1 for _ in path.read_text(encoding="utf-8").splitlines()
+                    )
+                except UnicodeDecodeError:
+                    line_count = 0
+        except OSError:
+            pass
+        modality = "code" if path.suffix.lower() in _CODE_SUFFIXES else "document"
+        out.append(
+            {
+                "id": f"ev-final-{idx:03d}",
+                "bucket": bucket,
+                "kind": path.suffix.lstrip(".") or "file",
+                "path": display_path,
                 "modality": modality,
                 "size_bytes": size_bytes,
                 "line_count": line_count,
@@ -396,15 +480,29 @@ def _evidence_requirements(
     root: dict[str, Any],
     work_dir: Path,
     req_trace_path: Path | None,
+    final_dir: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Cross-reference every REQ-NNN against the implementer work files.
+    """Cross-reference every REQ-NNN against the assembled tree first, the
+    implementer work files second.
 
-    A requirement is `traced` when at least one file under `work_dir/` mentions
-    its REQ ID. Otherwise it's `orphan` — a real accuracy red flag the deck
-    must surface honestly rather than paper over.
+    A requirement is `traced` when at least one assembled-tree file (or, as
+    fallback, a work_dir file) mentions its REQ ID. Otherwise it's `orphan`
+    — a real accuracy red flag the deck must surface honestly rather than
+    paper over.
+
+    Preferring `final_dir/` when present aligns the pitch deck's "this REQ
+    was delivered" claim with the *assembled* artifacts the user actually
+    sees, not just per-capability fragments under work/.
     """
     requirements = root.get("requirements") or []
-    work_files = []
+
+    final_files: list[Path] = []
+    if final_dir is not None and final_dir.exists():
+        for path in final_dir.rglob("*"):
+            if path.is_file():
+                final_files.append(path)
+
+    work_files: list[Path] = []
     if work_dir.exists():
         for path in work_dir.rglob("*"):
             if path.is_file():
@@ -431,13 +529,26 @@ def _evidence_requirements(
         req_id = str(req.get("id") or "")
         if not _REQ_RE.fullmatch(req_id):
             continue
-        implementing = [
-            str(p.relative_to(work_dir.parent.parent))
-            if p.is_relative_to(work_dir.parent.parent)
-            else str(p)
-            for p in work_files
-            if _file_mentions(req_id, p)
-        ]
+
+        # Prefer assembled tree; fall back to work_dir.
+        implementing_paths = [p for p in final_files if _file_mentions(req_id, p)]
+        scope = "final"
+        if not implementing_paths:
+            implementing_paths = [p for p in work_files if _file_mentions(req_id, p)]
+            scope = "work" if implementing_paths else scope
+
+        def _display(p: Path) -> str:
+            for base in (final_dir, work_dir.parent.parent if work_dir else None):
+                if base is None:
+                    continue
+                try:
+                    return str(p.relative_to(base))
+                except ValueError:
+                    continue
+            return str(p)
+
+        implementing = [_display(p) for p in implementing_paths]
+
         if implementing:
             counter_t += 1
             traced.append(
@@ -448,6 +559,7 @@ def _evidence_requirements(
                     "verification": str(req.get("verification", "")),
                     "lens": str(req.get("lens", "")),
                     "implementing_files": implementing[:8],
+                    "trace_scope": scope,
                 }
             )
         else:
@@ -457,7 +569,7 @@ def _evidence_requirements(
                     "id": f"ev-orphan-{counter_o:03d}",
                     "req_id": req_id,
                     "description": str(req.get("description", "")),
-                    "reason": "no work file references this REQ ID",
+                    "reason": "no work or final file references this REQ ID",
                 }
             )
 
