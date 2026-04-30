@@ -218,6 +218,26 @@ def test_run_phase4_start_writes_per_cap_dispatch_yaml_with_v2_1_fields(tmp_path
     assert beta_payload["capability_id"] == "req-002-beta"
     assert beta_payload["user_story"] is None  # not set in capabilities.yaml
     assert beta_payload["anti_patterns"] == []
+    assert beta_payload["dispatch_kind"] == "afk"
+    assert beta_payload["parallelizable"] is False
+
+
+def test_run_phase4_start_rejects_invalid_dispatch_metadata(tmp_path: Path):
+    workspace_root, artifacts_root = _bootstrap_scaffold(
+        tmp_path,
+        capability_assignments=[
+            {
+                "capability": "req-001-alpha",
+                "skill_path": "skills/req-001-alpha/SKILL.md",
+                "contract_ref": "contract-alpha",
+                "dispatch_kind": "robot",
+                "parallelizable": False,
+            }
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="Invalid dispatch_kind"):
+        run_phase4_start(artifacts_root=artifacts_root, workspace_root=workspace_root)
 
 
 def test_run_phase4_start_creates_work_dir(tmp_path: Path):

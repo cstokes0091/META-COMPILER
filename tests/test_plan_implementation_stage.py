@@ -440,6 +440,25 @@ def test_validate_plan_extract_v2_rejects_acceptance_spec_missing_then():
     assert any("acceptance_spec" in issue and "then" in issue for issue in issues)
 
 
+def test_validate_plan_extract_v2_rejects_example_io_null_input():
+    cap = _v2_full_capability()
+    cap["acceptance_spec"]["scenarios"][0]["examples"][0]["input"] = None
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any("examples[0].input" in issue and "non-empty mapping" in issue for issue in issues)
+
+
+def test_validate_plan_extract_v2_rejects_example_io_empty_expected():
+    cap = _v2_full_capability()
+    cap["acceptance_spec"]["scenarios"][0]["examples"][0]["expected"] = {}
+    payload = {"capability_plan": {"version": 2, "capabilities": [cap]}}
+    issues = validate_plan_extract(payload, decision_log=_decision_log_dict())
+    assert any(
+        "examples[0].expected" in issue and "non-empty mapping" in issue
+        for issue in issues
+    )
+
+
 def test_validate_plan_extract_v2_rejects_horizontal_slice():
     """When architecture is multi-layer, a capability whose
     implementation_steps + scenarios touch <2 layers is rejected."""

@@ -1885,9 +1885,36 @@ def validate_acceptance_spec_yaml_well_formed(
                     continue
                 if "input" not in example:
                     issues.append(f"{eprefix}.input: required for example_io")
+                else:
+                    issues.extend(
+                        _verification_example_io_value_issues(
+                            example.get("input"),
+                            field_name="input",
+                            prefix=eprefix,
+                        )
+                    )
                 if "expected" not in example:
                     issues.append(f"{eprefix}.expected: required for example_io")
+                else:
+                    issues.extend(
+                        _verification_example_io_value_issues(
+                            example.get("expected"),
+                            field_name="expected",
+                            prefix=eprefix,
+                        )
+                    )
     return issues
+
+
+def _verification_example_io_value_issues(
+    value: Any, *, field_name: str, prefix: str
+) -> list[str]:
+    """Require scaffold example_io values to be concrete runnable mappings."""
+    if not isinstance(value, dict):
+        return [f"{prefix}.{field_name}: must be a non-empty mapping"]
+    if not value:
+        return [f"{prefix}.{field_name}: must be a non-empty mapping"]
+    return []
 
 
 def validate_scaffold(scaffold_root: Path) -> list[str]:
@@ -2489,4 +2516,3 @@ def _is_generic_trigger(
         return not (tokens & bootstrap_vocab)
     # No vocabulary available at all: only stop-word check applies.
     return False
-

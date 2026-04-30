@@ -182,6 +182,30 @@ def _load_capability_graph_for_dispatch(
     return out
 
 
+def _dispatch_kind_for_payload(raw_value: Any, *, capability_name: str) -> str:
+    """Return a concrete dispatch_kind for legacy and v2.1 scaffolds."""
+    if raw_value in (None, ""):
+        return "afk"
+    if raw_value in ("hitl", "afk"):
+        return str(raw_value)
+    raise RuntimeError(
+        f"Invalid dispatch_kind for {capability_name}: {raw_value!r}; "
+        "expected 'hitl' or 'afk'."
+    )
+
+
+def _parallelizable_for_payload(raw_value: Any, *, capability_name: str) -> bool:
+    """Return a concrete parallelizable flag for legacy and v2.1 scaffolds."""
+    if raw_value is None:
+        return False
+    if isinstance(raw_value, bool):
+        return raw_value
+    raise RuntimeError(
+        f"Invalid parallelizable for {capability_name}: {raw_value!r}; "
+        "expected a boolean."
+    )
+
+
 def run_phase4_start(
     artifacts_root: Path,
     workspace_root: Path,
@@ -252,6 +276,18 @@ def run_phase4_start(
             verification_spec_paths = [
                 f"verification/{hook}_spec.yaml" for hook in verification_hook_ids
             ]
+        raw_dispatch_kind = cap_dict.get("dispatch_kind") or entry.get("dispatch_kind")
+        raw_parallelizable = (
+            cap_dict.get("parallelizable")
+            if "parallelizable" in cap_dict
+            else entry.get("parallelizable")
+        )
+        dispatch_kind = _dispatch_kind_for_payload(
+            raw_dispatch_kind, capability_name=capability_name
+        )
+        parallelizable = _parallelizable_for_payload(
+            raw_parallelizable, capability_name=capability_name
+        )
         dispatch_payload = {
             "dispatch": {
                 "decision_log_version": version,
@@ -270,12 +306,8 @@ def run_phase4_start(
                 "the_fix": cap_dict.get("the_fix"),
                 "anti_patterns": list(cap_dict.get("anti_patterns") or []),
                 "out_of_scope": list(cap_dict.get("out_of_scope") or []),
-                "dispatch_kind": cap_dict.get("dispatch_kind") or entry.get("dispatch_kind"),
-                "parallelizable": (
-                    cap_dict.get("parallelizable")
-                    if "parallelizable" in cap_dict
-                    else entry.get("parallelizable")
-                ),
+                "dispatch_kind": dispatch_kind,
+                "parallelizable": parallelizable,
                 "implementation_steps": list(cap_dict.get("implementation_steps") or []),
                 "acceptance_criteria": list(cap_dict.get("acceptance_criteria") or []),
                 "explicit_triggers": list(cap_dict.get("explicit_triggers") or []),
