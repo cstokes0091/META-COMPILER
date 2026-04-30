@@ -1801,7 +1801,7 @@ def validate_custom_instruction_file(instruction_path: Path) -> list[str]:
     return issues
 
 
-PALETTE_AGENT_NAMES: tuple[str, ...] = ("planner", "implementer", "reviewer", "researcher")
+PALETTE_AGENT_NAMES: tuple[str, ...] = ("implementer", "reviewer", "researcher")
 
 
 def validate_acceptance_spec_yaml_well_formed(

@@ -278,10 +278,14 @@ def test_missing_verification_stub_flagged(tmp_path):
 
 
 def test_missing_palette_agent_flagged(tmp_path):
+    """Change E: PALETTE_AGENTS dropped `planner` (replaced with
+    deterministic _dispatch.yaml denormalization in phase4_stage). The
+    palette is now (implementer, reviewer, researcher); validate_scaffold
+    flags any missing palette member."""
     ws_root, artifacts = _seed_fixture(tmp_path)
-    (ws_root / ".github" / "agents" / "planner.agent.md").unlink()
+    (ws_root / ".github" / "agents" / "implementer.agent.md").unlink()
     issues = validate_scaffold(_scaffold_root(artifacts))
-    assert any("planner.agent.md" in msg for msg in issues)
+    assert any("implementer.agent.md" in msg for msg in issues)
 
 
 def test_missing_output_bucket_flagged(tmp_path):

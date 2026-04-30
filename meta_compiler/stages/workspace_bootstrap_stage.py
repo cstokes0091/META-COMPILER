@@ -39,7 +39,7 @@ from ..utils import iso_now
 from ._decision_log_utils import resolve_decision_log
 
 
-PALETTE_AGENTS: tuple[str, ...] = ("planner", "implementer", "reviewer", "researcher")
+PALETTE_AGENTS: tuple[str, ...] = ("implementer", "reviewer", "researcher")
 
 
 def run_workspace_bootstrap(
