@@ -252,6 +252,60 @@ def test_bootstrap_verification_stubs_per_hook(tmp_path):
         assert "test_acceptance.py" in spec["implementer_instructions"]
 
 
+def test_bootstrap_dispatch_hints_carry_dispatch_kind_and_parallelizable(tmp_path):
+    """Change C: DISPATCH_HINTS.yaml assignments carry the new
+    dispatch_kind (hitl|afk) and parallelizable fields the Stage 4
+    orchestrator uses to batch AFK capabilities and gate HITL ones."""
+    ws_root = tmp_path
+    artifacts = _setup_fixture(ws_root)
+    _write_palette(ws_root)
+
+    # Inject a plan_extract that sets dispatch_kind for the cap.
+    _write(
+        artifacts / "decision-logs" / "plan_extract_v1.yaml",
+        {
+            "plan_extract": {
+                "generated_at": "2026-04-30T00:00:00+00:00",
+                "decision_log_version": 1,
+                "source": "decision-logs/implementation_plan_v1.md",
+                "version": 2,
+                "capabilities": [
+                    {
+                        "name": "auto-cap",
+                        "description": "Autonomous capability",
+                        "requirement_ids": ["REQ-001"],
+                        "constraint_ids": [],
+                        "verification_required": True,
+                        "composes": [],
+                        "rationale": "primary work",
+                        "dispatch_kind": "afk",
+                        "parallelizable": True,
+                    },
+                ],
+            }
+        },
+    )
+    run_capability_compile(artifacts)
+    run_contract_extract(artifacts)
+    run_skill_synthesis(artifacts)
+    run_workspace_bootstrap(artifacts, workspace_root=ws_root)
+
+    hints = yaml.safe_load(
+        (artifacts / "scaffolds" / "v1" / "DISPATCH_HINTS.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assignments = hints["dispatch_hints"]["assignments"]
+    assert assignments, "no dispatch hints written"
+    auto_cap = next(a for a in assignments if a["capability"] == "auto-cap")
+    assert auto_cap["dispatch_kind"] == "afk"
+    assert auto_cap["parallelizable"] is True
+    # Verification spec paths are listed alongside the legacy hook ids.
+    assert auto_cap["verification_spec_paths"] == [
+        "verification/ver-auto-cap-001_spec.yaml"
+    ]
+
+
 def test_bootstrap_writes_context_md(tmp_path):
     """Change B: scaffolds/v{N}/CONTEXT.md is rendered with five
     sections (Domain Glossary / Architecture Glossary / Requirements &

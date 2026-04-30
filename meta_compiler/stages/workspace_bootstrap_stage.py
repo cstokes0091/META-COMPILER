@@ -339,7 +339,16 @@ def _write_dispatch_hints(
                     "skill_path": f"skills/{cap.name}/SKILL.md",
                     "contract_ref": cap.io_contract_ref,
                     "verification_hook_ids": list(cap.verification_hook_ids),
+                    "verification_spec_paths": [
+                        f"verification/{hook}_spec.yaml"
+                        for hook in cap.verification_hook_ids
+                    ] if cap.verification_required else [],
                     "expected_work_dir_relative": f"work/{cap.name}/",
+                    # Change C: dispatch_kind + parallelizable feed the
+                    # Stage 4 orchestrator's batch logic (AFK auto-loop vs
+                    # HITL operator pause; parallel work-dir scheduling).
+                    "dispatch_kind": cap.dispatch_kind,
+                    "parallelizable": cap.parallelizable,
                 }
                 for cap in graph.capabilities
             ],
