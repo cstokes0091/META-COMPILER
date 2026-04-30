@@ -276,10 +276,15 @@ def _render_acceptance_criteria_with_spec_link(cap: Capability) -> list[str]:
     """
     out: list[str] = []
     if cap.verification_required and cap.verification_hook_ids:
-        hook = cap.verification_hook_ids[0]
+        spec_paths = [
+            f"`verification/{hook}_spec.yaml`" for hook in cap.verification_hook_ids
+        ]
         out.append(
-            f"See `verification/{hook}_spec.yaml` (runnable; verifies the "
-            "User Story above). Human-readable criteria:"
+            "Runnable spec"
+            + ("s" if len(spec_paths) != 1 else "")
+            + ": "
+            + ", ".join(spec_paths)
+            + " (verifies the User Story above). Human-readable criteria:"
         )
     out.extend(_render_acceptance_criteria(cap))
     return out

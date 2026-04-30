@@ -20,7 +20,11 @@ from meta_compiler.io import parse_frontmatter
 from meta_compiler.schemas import SkillFrontmatter, SkillIndex
 from meta_compiler.stages.capability_compile_stage import run_capability_compile
 from meta_compiler.stages.contract_extract_stage import run_contract_extract
-from meta_compiler.stages.skill_synthesis_stage import run_skill_synthesis
+from meta_compiler.schemas.capability import Capability
+from meta_compiler.stages.skill_synthesis_stage import (
+    _render_acceptance_criteria_with_spec_link,
+    run_skill_synthesis,
+)
 
 
 def _write(path: Path, data) -> None:
@@ -389,6 +393,28 @@ def test_skill_renders_v2_1_failure_mode_sections(tmp_path):
     assert "_spec.yaml" in accept_section
     assert "verifies the User Story above" in accept_section
     assert oos_idx < accept_idx
+
+
+def test_acceptance_criteria_lists_all_verification_specs():
+    cap = Capability(
+        name="multi-hook",
+        description="multi hook cap",
+        io_contract_ref="contract-a",
+        verification_type="behavioral",
+        verification_hook_ids=["ver-one", "ver-two"],
+        requirement_ids=["REQ-001"],
+        citation_ids=["src-test"],
+        when_to_use=["multi hook trigger"],
+        required_finding_ids=["src-test#abc"],
+        verification_required=True,
+        acceptance_criteria=["Both specs pass."],
+    )
+
+    lines = _render_acceptance_criteria_with_spec_link(cap)
+
+    rendered = "\n".join(lines)
+    assert "verification/ver-one_spec.yaml" in rendered
+    assert "verification/ver-two_spec.yaml" in rendered
 
 
 def test_skill_requires_capability_graph(tmp_path):

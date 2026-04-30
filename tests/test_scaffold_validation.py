@@ -277,6 +277,30 @@ def test_missing_verification_stub_flagged(tmp_path):
     assert any("verification hook missing" in msg for msg in issues)
 
 
+def test_example_io_spec_requires_concrete_input_and_expected(tmp_path):
+    _, artifacts = _seed_fixture(tmp_path)
+    scaffold = _scaffold_root(artifacts)
+    spec = next((scaffold / "verification").glob("ver-*_spec.yaml"))
+    payload = yaml.safe_load(spec.read_text(encoding="utf-8"))
+    payload["verification_spec"]["spec_status"] = "planner_provided"
+    payload["verification_spec"]["format"] = "example_io"
+    payload["verification_spec"]["scenarios"] = [
+        {
+            "name": "empty_example",
+            "given": "an input",
+            "when": "the capability runs",
+            "then": "the expected output appears",
+            "examples": [{"input": None, "expected": {}}],
+        }
+    ]
+    _write(spec, payload)
+
+    issues = validate_scaffold(scaffold)
+
+    assert any("input" in msg and "non-empty mapping" in msg for msg in issues)
+    assert any("expected" in msg and "non-empty mapping" in msg for msg in issues)
+
+
 def test_missing_palette_agent_flagged(tmp_path):
     """Change E: PALETTE_AGENTS dropped `planner` (replaced with
     deterministic _dispatch.yaml denormalization in phase4_stage). The
